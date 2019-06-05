@@ -2,6 +2,7 @@
  * blendbench.c : blending benchmark plugin for vlc
  *****************************************************************************
  * Copyright (C) 2007 VLC authors and VideoLAN
+ * $Id: d33fc3cb871631e3ac951eb8cd06c394bdf9faa6 $
  *
  * Author: Søren Bøg <avacore@videolan.org>
  *
@@ -84,14 +85,14 @@ vlc_module_begin ()
               ALPHA_LONGTEXT, false )
 
     set_section( N_("Base image"), NULL )
-    add_loadfile(CFG_PREFIX "base-image", NULL,
-                 BASE_IMAGE_TEXT, BASE_IMAGE_LONGTEXT)
+    add_loadfile( CFG_PREFIX "base-image", NULL, BASE_IMAGE_TEXT,
+                  BASE_IMAGE_LONGTEXT, false )
     add_string( CFG_PREFIX "base-chroma", "I420", BASE_CHROMA_TEXT,
               BASE_CHROMA_LONGTEXT, false )
 
     set_section( N_("Blend image"), NULL )
-    add_loadfile(CFG_PREFIX "blend-image", NULL,
-                 BLEND_IMAGE_TEXT, BLEND_IMAGE_LONGTEXT)
+    add_loadfile( CFG_PREFIX "blend-image", NULL, BLEND_IMAGE_TEXT,
+                  BLEND_IMAGE_LONGTEXT, false )
     add_string( CFG_PREFIX "blend-chroma", "YUVA", BLEND_CHROMA_TEXT,
               BLEND_CHROMA_LONGTEXT, false )
 
@@ -106,7 +107,7 @@ static const char *const ppsz_filter_options[] = {
 /*****************************************************************************
  * filter_sys_t: filter method descriptor
  *****************************************************************************/
-typedef struct
+struct filter_sys_t
 {
     bool b_done;
     int i_loops, i_alpha;
@@ -116,19 +117,20 @@ typedef struct
 
     vlc_fourcc_t i_base_chroma;
     vlc_fourcc_t i_blend_chroma;
-} filter_sys_t;
+};
 
 static int blendbench_LoadImage( vlc_object_t *p_this, picture_t **pp_pic,
                                  vlc_fourcc_t i_chroma, char *psz_file, const char *psz_name )
 {
     image_handler_t *p_image;
-    video_format_t fmt_out;
+    video_format_t fmt_in, fmt_out;
 
-    video_format_Init( &fmt_out, i_chroma );
+    memset( &fmt_in, 0, sizeof(video_format_t) );
+    memset( &fmt_out, 0, sizeof(video_format_t) );
 
+    fmt_out.i_chroma = i_chroma;
     p_image = image_HandlerCreate( p_this );
-    *pp_pic = image_ReadUrl( p_image, psz_file, &fmt_out );
-    video_format_Clean( &fmt_out );
+    *pp_pic = image_ReadUrl( p_image, psz_file, &fmt_in, &fmt_out );
     image_HandlerDelete( p_image );
 
     if( *pp_pic == NULL )
@@ -245,30 +247,30 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
     if( !p_blend->p_module )
     {
         picture_Release( p_pic );
-        vlc_object_delete(p_blend);
+        vlc_object_release( p_blend );
         return NULL;
     }
 
-    vlc_tick_t time = vlc_tick_now();
+    mtime_t time = mdate();
     for( int i_iter = 0; i_iter < p_sys->i_loops; ++i_iter )
     {
         p_blend->pf_video_blend( p_blend,
                                  p_sys->p_base_image, p_sys->p_blend_image,
                                  0, 0, p_sys->i_alpha );
     }
-    time = vlc_tick_now() - time;
+    time = mdate() - time;
 
     msg_Info( p_filter, "Blended %d images in %f sec", p_sys->i_loops,
-              secf_from_vlc_tick(time) );
+              time / 1000000.0f );
     msg_Info( p_filter, "Speed is: %f images/second, %f pixels/second",
-              (float) p_sys->i_loops / time * CLOCK_FREQ,
-              (float) p_sys->i_loops / time * CLOCK_FREQ *
+              (float) p_sys->i_loops / time * 1000000,
+              (float) p_sys->i_loops / time * 1000000 *
                   p_sys->p_blend_image->p[Y_PLANE].i_visible_pitch *
                   p_sys->p_blend_image->p[Y_PLANE].i_visible_lines );
 
     module_unneed( p_blend, p_blend->p_module );
 
-    vlc_object_delete(p_blend);
+    vlc_object_release( p_blend );
 
     p_sys->b_done = true;
     return p_pic;

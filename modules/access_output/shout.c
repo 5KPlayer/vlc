@@ -2,6 +2,7 @@
  * shout.c: This module forwards vorbis streams to an icecast server
  *****************************************************************************
  * Copyright (C) 2005 VLC authors and VideoLAN
+ * $Id: fbc81a0ddd91281584373aaa062001a12b4d35b1 $
  *
  * Authors: Daniel Fischer <dan at subsignal dot org>
  *          Derk-Jan Hartman <hartman at videolan dot org>
@@ -151,10 +152,10 @@ static const char *const ppsz_sout_options[] = {
 static ssize_t Write( sout_access_out_t *, block_t * );
 static int Control( sout_access_out_t *, int, va_list );
 
-typedef struct
+struct sout_access_out_sys_t
 {
     shout_t *p_shout;
-} sout_access_out_sys_t;
+};
 
 /*****************************************************************************
  * Open: open the shout connection
@@ -174,6 +175,13 @@ static int Open( vlc_object_t *p_this )
     vlc_url_t url;
 
     config_ChainParse( p_access, SOUT_CFG_PREFIX, ppsz_sout_options, p_access->p_cfg );
+
+    if( !p_access->psz_path )
+    {
+        msg_Err( p_access,
+                 "please specify url=user:password@host:port/mountpoint" );
+        return VLC_EGENERIC;
+    }
 
     vlc_UrlParse( &url , p_access->psz_path );
     if( url.i_port <= 0 )
@@ -366,7 +374,7 @@ static int Open( vlc_object_t *p_this )
         if ( i_ret != SHOUTERR_CONNECTED )
         {
             msg_Warn( p_access, "unable to establish connection, retrying..." );
-            vlc_tick_sleep( VLC_TICK_FROM_SEC(30) );
+            msleep( 30000000 );
         }
     }
 

@@ -25,6 +25,7 @@
 
 #include <vlc_common.h>
 #include <vlc_plugin.h>
+#include <vlc_memory.h>
 #include <assert.h>
 #include <stdarg.h>
 #include <limits.h>
@@ -105,8 +106,9 @@ vlc_plugin_t *vlc_plugin_create(void)
     plugin->conf.booleans = 0;
 #ifdef HAVE_DYNAMIC_PLUGINS
     plugin->abspath = NULL;
+    atomic_init(&plugin->loaded, false);
     plugin->unloadable = true;
-    atomic_init(&plugin->handle, 0);
+    plugin->handle = NULL;
     plugin->abspath = NULL;
     plugin->path = NULL;
 #endif
@@ -124,7 +126,7 @@ void vlc_plugin_destroy(vlc_plugin_t *plugin)
 {
     assert(plugin != NULL);
 #ifdef HAVE_DYNAMIC_PLUGINS
-    assert(!plugin->unloadable || atomic_load(&plugin->handle) == 0);
+    assert(!plugin->unloadable || !atomic_load(&plugin->loaded));
 #endif
 
     if (plugin->module != NULL)
@@ -361,6 +363,10 @@ static int vlc_plugin_desc_cb(void *ctx, void *tgt, int propid, ...)
             }
             break;
         }
+
+        case VLC_CONFIG_ADVANCED:
+            item->b_advanced = true;
+            break;
 
         case VLC_CONFIG_VOLATILE:
             item->b_unsaveable = true;

@@ -2,6 +2,7 @@
  * voc.c : Creative Voice File (.VOC) demux module for vlc
  *****************************************************************************
  * Copyright (C) 2005 Rémi Denis-Courmont
+ * $Id: f5bcd52e02afe2ed0dda0f00a2f48a49803e761d $
  *
  * Authors: Rémi Denis-Courmont <rem # videolan.org>
  *
@@ -28,8 +29,6 @@
 # include "config.h"
 #endif
 
-#include <assert.h>
-
 #include <vlc_common.h>
 #include <vlc_plugin.h>
 #include <vlc_demux.h>
@@ -38,13 +37,14 @@
  * Module descriptor
  *****************************************************************************/
 static int  Open ( vlc_object_t * );
+static void Close( vlc_object_t * );
 
 vlc_module_begin ()
     set_description( N_("VOC demuxer") )
     set_category( CAT_INPUT )
     set_subcategory( SUBCAT_INPUT_DEMUX )
     set_capability( "demux", 10 )
-    set_callbacks( Open, NULL )
+    set_callbacks( Open, Close )
 vlc_module_end ()
 
 /*****************************************************************************
@@ -53,7 +53,7 @@ vlc_module_end ()
 static int Demux  ( demux_t * );
 static int Control( demux_t *, int i_query, va_list args );
 
-typedef struct
+struct demux_sys_t
 {
     es_format_t     fmt;
     es_out_id_t     *p_es;
@@ -66,7 +66,7 @@ typedef struct
     unsigned        i_silence_countdown;
 
     date_t          pts;
-} demux_sys_t;
+};
 
 static const char ct_header[] = "Creative Voice File\x1a";
 
@@ -76,6 +76,7 @@ static const char ct_header[] = "Creative Voice File\x1a";
 static int Open( vlc_object_t * p_this )
 {
     demux_t     *p_demux = (demux_t*)p_this;
+    demux_sys_t *p_sys;
     const uint8_t *p_buf;
     uint16_t    i_data_offset, i_version;
 
@@ -107,8 +108,10 @@ static int Open( vlc_object_t * p_this )
     if( vlc_stream_Read( p_demux->s, NULL, i_data_offset ) < i_data_offset )
         return VLC_EGENERIC;
 
-    demux_sys_t *p_sys = vlc_obj_malloc( p_this, sizeof (*p_sys) );
-    if( unlikely(p_sys == NULL) )
+    p_demux->pf_demux   = Demux;
+    p_demux->pf_control = Control;
+    p_demux->p_sys      = p_sys = malloc( sizeof( demux_sys_t ) );
+    if( p_sys == NULL )
         return VLC_ENOMEM;
 
     p_sys->i_silence_countdown = p_sys->i_block_start = p_sys->i_block_end =
@@ -116,15 +119,13 @@ static int Open( vlc_object_t * p_this )
     p_sys->p_es = NULL;
 
     date_Init( &p_sys->pts, 1, 1 );
-    date_Set( &p_sys->pts, VLC_TICK_0 );
+    date_Set( &p_sys->pts, 1 );
 
     es_format_Init( &p_sys->fmt, AUDIO_ES, 0 );
-    p_demux->pf_demux = Demux;
-    p_demux->pf_control = Control;
-    p_demux->p_sys = p_sys;
 
     return VLC_SUCCESS;
 }
+
 
 static int fmtcmp( es_format_t *ofmt, es_format_t *nfmt )
 {
@@ -351,8 +352,6 @@ static int ReadBlockHeader( demux_t *p_demux )
                 goto corrupt;
 
             new_fmt.audio.i_rate = GetDWLE( buf );
-            if( !new_fmt.audio.i_rate )
-                goto corrupt;
             new_fmt.audio.i_bitspersample = buf[4];
             new_fmt.audio.i_channels = buf[5];
 
@@ -451,8 +450,6 @@ static int ReadBlockHeader( demux_t *p_demux )
             memcpy( &p_sys->fmt, &new_fmt, sizeof( p_sys->fmt ) );
             date_Change( &p_sys->pts, p_sys->fmt.audio.i_rate, 1 );
             p_sys->p_es = es_out_Add( p_demux->out, &p_sys->fmt );
-            if( unlikely(p_sys->p_es == NULL) )
-                return VLC_ENOMEM;
         }
     }
 
@@ -481,8 +478,8 @@ static int Demux( demux_t *p_demux )
         if( i_offset >= p_sys->i_block_end )
         {
             if( ReadBlockHeader( p_demux ) != VLC_SUCCESS )
-                return VLC_DEMUXER_EOF;
-            return VLC_DEMUXER_SUCCESS;
+                return 0;
+            return 1;
         }
 
         i_read_frames = ( p_sys->i_block_end - i_offset )
@@ -497,7 +494,7 @@ static int Demux( demux_t *p_demux )
         if( p_block == NULL )
         {
             msg_Warn( p_demux, "cannot read data" );
-            return VLC_DEMUXER_EOF;
+            return 0;
         }
     }
     else
@@ -514,14 +511,23 @@ static int Demux( demux_t *p_demux )
         p_sys->i_silence_countdown -= i_read_frames;
     }
 
-    p_block->i_dts = p_block->i_pts = VLC_TICK_0 + date_Get( &p_sys->pts );
+    p_block->i_dts = p_block->i_pts = VLC_TS_0 + date_Get( &p_sys->pts );
     p_block->i_nb_samples = i_read_frames * p_sys->fmt.audio.i_frame_length;
     date_Increment( &p_sys->pts, p_block->i_nb_samples );
     es_out_SetPCR( p_demux->out, p_block->i_pts );
-    assert(p_sys->p_es != NULL);
     es_out_Send( p_demux->out, p_sys->p_es, p_block );
 
-    return VLC_DEMUXER_SUCCESS;
+    return 1;
+}
+
+/*****************************************************************************
+ * Close: frees unused data
+ *****************************************************************************/
+static void Close ( vlc_object_t * p_this )
+{
+    demux_sys_t *p_sys  = ((demux_t *)p_this)->p_sys;
+
+    free( p_sys );
 }
 
 /*****************************************************************************

@@ -60,7 +60,7 @@ SegmentTrackerEvent::SegmentTrackerEvent(const ID &id, bool enabled)
     u.buffering.id = &id;
 }
 
-SegmentTrackerEvent::SegmentTrackerEvent(const ID &id, vlc_tick_t min, vlc_tick_t current, vlc_tick_t target)
+SegmentTrackerEvent::SegmentTrackerEvent(const ID &id, mtime_t min, mtime_t current, mtime_t target)
 {
     type = BUFFERING_LEVEL_CHANGE;
     u.buffering_level.minimum = min;
@@ -69,17 +69,15 @@ SegmentTrackerEvent::SegmentTrackerEvent(const ID &id, vlc_tick_t min, vlc_tick_
     u.buffering.id = &id;
 }
 
-SegmentTrackerEvent::SegmentTrackerEvent(const ID &id, vlc_tick_t duration)
+SegmentTrackerEvent::SegmentTrackerEvent(const ID &id, mtime_t duration)
 {
     type = SEGMENT_CHANGE;
     u.segment.duration = duration;
     u.segment.id = &id;
 }
 
-SegmentTracker::SegmentTracker(SharedResources *res,
-        AbstractAdaptationLogic *logic_, BaseAdaptationSet *adaptSet)
+SegmentTracker::SegmentTracker(AbstractAdaptationLogic *logic_, BaseAdaptationSet *adaptSet)
 {
-    resources = res;
     first = true;
     curNumber = next = 0;
     initializing = true;
@@ -88,7 +86,7 @@ SegmentTracker::SegmentTracker(SharedResources *res,
     curRepresentation = NULL;
     setAdaptationLogic(logic_);
     adaptationSet = adaptSet;
-    format = StreamFormat::UNKNOWN;
+    format = StreamFormat::UNSUPPORTED;
 }
 
 SegmentTracker::~SegmentTracker()
@@ -111,35 +109,10 @@ StreamFormat SegmentTracker::getCurrentFormat() const
     {
         /* Ensure ephemere content is updated/loaded */
         if(rep->needsUpdate())
-            (void) rep->runLocalUpdates(resources, 0, curNumber, false);
+            (void) rep->runLocalUpdates(0, curNumber, false);
         return rep->getStreamFormat();
     }
     return StreamFormat();
-}
-
-std::list<std::string> SegmentTracker::getCurrentCodecs() const
-{
-    BaseRepresentation *rep = curRepresentation;
-    if(!rep)
-        rep = logic->getNextRepresentation(adaptationSet, NULL);
-    if(rep)
-        return rep->getCodecs();
-    return std::list<std::string>();
-}
-
-const std::string & SegmentTracker::getStreamDescription() const
-{
-    return adaptationSet->description.Get();
-}
-
-const std::string & SegmentTracker::getStreamLanguage() const
-{
-    return adaptationSet->getLang();
-}
-
-const Role & SegmentTracker::getStreamRole() const
-{
-    return adaptationSet->getRole();
 }
 
 bool SegmentTracker::segmentsListReady() const
@@ -159,7 +132,7 @@ void SegmentTracker::reset()
     init_sent = false;
     index_sent = false;
     initializing = true;
-    format = StreamFormat::UNKNOWN;
+    format = StreamFormat::UNSUPPORTED;
 }
 
 SegmentChunk * SegmentTracker::getNextChunk(bool switch_allowed,
@@ -181,7 +154,7 @@ SegmentChunk * SegmentTracker::getNextChunk(bool switch_allowed,
     }
 
     if( !switch_allowed ||
-       (curRepresentation && !curRepresentation->getAdaptationSet()->isSegmentAligned()) )
+       (curRepresentation && curRepresentation->getSwitchPolicy() == SegmentInformation::SWITCH_UNAVAILABLE) )
         rep = curRepresentation;
     else
         rep = logic->getNextRepresentation(adaptationSet, curRepresentation);
@@ -203,7 +176,7 @@ SegmentChunk * SegmentTracker::getNextChunk(bool switch_allowed,
     bool b_updated = false;
     /* Ensure ephemere content is updated/loaded */
     if(rep->needsUpdate())
-        b_updated = rep->runLocalUpdates(resources, getPlaybackTime(), curNumber, false);
+        b_updated = rep->runLocalUpdates(getPlaybackTime(), curNumber, false);
 
     if(prevRep && !rep->consistentSegmentNumber())
     {
@@ -217,12 +190,16 @@ SegmentChunk * SegmentTracker::getNextChunk(bool switch_allowed,
     }
 
     if(b_updated)
+    {
+        if(!rep->consistentSegmentNumber())
+            curRepresentation->pruneBySegmentNumber(curNumber);
         curRepresentation->scheduleNextUpdate(next);
+    }
 
     if(rep->getStreamFormat() != format)
     {
         /* Initial format ? */
-        if(format == StreamFormat(StreamFormat::UNKNOWN))
+        if(format == StreamFormat(StreamFormat::UNSUPPORTED))
         {
             format = rep->getStreamFormat();
         }
@@ -244,7 +221,7 @@ SegmentChunk * SegmentTracker::getNextChunk(bool switch_allowed,
         init_sent = true;
         segment = rep->getSegment(BaseRepresentation::INFOTYPE_INIT);
         if(segment)
-            return segment->toChunk(resources, connManager, next, rep);
+            return segment->toChunk(next, rep, connManager);
     }
 
     if(!index_sent)
@@ -252,7 +229,7 @@ SegmentChunk * SegmentTracker::getNextChunk(bool switch_allowed,
         index_sent = true;
         segment = rep->getSegment(BaseRepresentation::INFOTYPE_INDEX);
         if(segment)
-            return segment->toChunk(resources, connManager, next, rep);
+            return segment->toChunk(next, rep, connManager);
     }
 
     bool b_gap = false;
@@ -269,7 +246,7 @@ SegmentChunk * SegmentTracker::getNextChunk(bool switch_allowed,
         initializing = false;
     }
 
-    SegmentChunk *chunk = segment->toChunk(resources, connManager, next, rep);
+    SegmentChunk *chunk = segment->toChunk(next, rep, connManager);
 
     /* Notify new segment length for stats / logic */
     if(chunk)
@@ -301,21 +278,12 @@ SegmentChunk * SegmentTracker::getNextChunk(bool switch_allowed,
     return chunk;
 }
 
-bool SegmentTracker::setPositionByTime(vlc_tick_t time, bool restarted, bool tryonly)
+bool SegmentTracker::setPositionByTime(mtime_t time, bool restarted, bool tryonly)
 {
     uint64_t segnumber;
     BaseRepresentation *rep = curRepresentation;
     if(!rep)
         rep = logic->getNextRepresentation(adaptationSet, NULL);
-
-    /* Stream might not have been loaded at all (HLS) or expired */
-    if(rep && rep->needsUpdate() &&
-       !rep->runLocalUpdates(resources, time, curNumber, false))
-    {
-        msg_Err(rep->getAdaptationSet()->getPlaylist()->getVLCObject(),
-                "Failed to update Representation %s", rep->getID().str().c_str());
-        return false;
-    }
 
     if(rep &&
        rep->getSegmentNumberByTime(time, &segnumber))
@@ -338,9 +306,9 @@ void SegmentTracker::setPositionByNumber(uint64_t segnumber, bool restarted)
     curNumber = next = segnumber;
 }
 
-vlc_tick_t SegmentTracker::getPlaybackTime() const
+mtime_t SegmentTracker::getPlaybackTime() const
 {
-    vlc_tick_t time, duration;
+    mtime_t time, duration;
 
     BaseRepresentation *rep = curRepresentation;
     if(!rep)
@@ -354,15 +322,7 @@ vlc_tick_t SegmentTracker::getPlaybackTime() const
     return 0;
 }
 
-bool SegmentTracker::getMediaPlaybackRange(vlc_tick_t *start, vlc_tick_t *end,
-                                           vlc_tick_t *length) const
-{
-    if(!curRepresentation)
-        return false;
-    return curRepresentation->getMediaPlaybackRange(start, end, length);
-}
-
-vlc_tick_t SegmentTracker::getMinAheadTime() const
+mtime_t SegmentTracker::getMinAheadTime() const
 {
     BaseRepresentation *rep = curRepresentation;
     if(!rep)
@@ -377,7 +337,7 @@ void SegmentTracker::notifyBufferingState(bool enabled) const
     notify(SegmentTrackerEvent(adaptationSet->getID(), enabled));
 }
 
-void SegmentTracker::notifyBufferingLevel(vlc_tick_t min, vlc_tick_t current, vlc_tick_t target) const
+void SegmentTracker::notifyBufferingLevel(mtime_t min, mtime_t current, mtime_t target) const
 {
     notify(SegmentTrackerEvent(adaptationSet->getID(), min, current, target));
 }
@@ -391,7 +351,7 @@ void SegmentTracker::updateSelected()
 {
     if(curRepresentation && curRepresentation->needsUpdate())
     {
-        curRepresentation->runLocalUpdates(resources, getPlaybackTime(), curNumber, true);
+        curRepresentation->runLocalUpdates(getPlaybackTime(), curNumber, true);
         curRepresentation->scheduleNextUpdate(curNumber);
     }
 }

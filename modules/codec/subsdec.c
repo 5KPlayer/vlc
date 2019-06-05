@@ -2,6 +2,7 @@
  * subsdec.c : text subtitle decoder
  *****************************************************************************
  * Copyright (C) 2000-2006 VLC authors and VideoLAN
+ * $Id: a440140d1ad65ede614e1489c8a1ba3e640af667 $
  *
  * Authors: Gildas Bazin <gbazin@videolan.org>
  *          Samuel Hocevar <sam@zoy.org>
@@ -200,13 +201,13 @@ vlc_module_end ()
  *****************************************************************************/
 #define NO_BREAKING_SPACE  "&#160;"
 
-typedef struct
+struct decoder_sys_t
 {
     int                 i_align;          /* Subtitles alignment on the vout */
 
     vlc_iconv_t         iconv_handle;            /* handle to iconv instance */
     bool                b_autodetect_utf8;
-} decoder_sys_t;
+};
 
 
 static int             DecodeBlock   ( decoder_t *, block_t * );
@@ -366,7 +367,7 @@ static subpicture_t *ParseText( decoder_t *p_dec, block_t *p_block )
         return NULL;
 
     /* We cannot display a subpicture with no date */
-    if( p_block->i_pts == VLC_TICK_INVALID )
+    if( p_block->i_pts <= VLC_TS_INVALID )
     {
         msg_Warn( p_dec, "subtitle without a date" );
         return NULL;
@@ -456,10 +457,10 @@ static subpicture_t *ParseText( decoder_t *p_dec, block_t *p_block )
     }
     p_spu->i_start    = p_block->i_pts;
     p_spu->i_stop     = p_block->i_pts + p_block->i_length;
-    p_spu->b_ephemer  = (p_block->i_length == VLC_TICK_INVALID);
+    p_spu->b_ephemer  = (p_block->i_length == 0);
     p_spu->b_absolute = false;
 
-    subtext_updater_sys_t *p_spu_sys = p_spu->updater.p_sys;
+    subpicture_updater_sys_t *p_spu_sys = p_spu->updater.p_sys;
 
     int i_inline_align = -1;
     p_spu_sys->region.p_segments = ParseSubtitles( &i_inline_align, psz_subtitle );
@@ -897,14 +898,14 @@ static text_segment_t* ParseSubtitles( int *pi_align, const char *psz_subtitle )
             }
             else if( !strncmp( psz_subtitle, "</", 2 ))
             {
-                char* psz_closetagname = GetTag( &psz_subtitle, true );
-                if ( psz_closetagname != NULL )
+                char* psz_tagname = GetTag( &psz_subtitle, true );
+                if ( psz_tagname != NULL )
                 {
-                    if ( !strcasecmp( psz_closetagname, "b" ) ||
-                         !strcasecmp( psz_closetagname, "i" ) ||
-                         !strcasecmp( psz_closetagname, "u" ) ||
-                         !strcasecmp( psz_closetagname, "s" ) ||
-                         !strcasecmp( psz_closetagname, "font" ) )
+                    if ( !strcasecmp( psz_tagname, "b" ) ||
+                         !strcasecmp( psz_tagname, "i" ) ||
+                         !strcasecmp( psz_tagname, "u" ) ||
+                         !strcasecmp( psz_tagname, "s" ) ||
+                         !strcasecmp( psz_tagname, "font" ) )
                     {
                         // A closing tag for one of the tags we handle, meaning
                         // we pushed a style onto the stack earlier
@@ -913,10 +914,10 @@ static text_segment_t* ParseSubtitles( int *pi_align, const char *psz_subtitle )
                     else
                     {
                         // Unknown closing tag. If it is closing an unknown tag, ignore it. Otherwise, display it
-                        if ( !HasTag( &p_tag_stack, psz_closetagname ) )
+                        if ( !HasTag( &p_tag_stack, psz_tagname ) )
                         {
                             AppendString( p_segment, "</" );
-                            AppendString( p_segment, psz_closetagname );
+                            AppendString( p_segment, psz_tagname );
                             AppendCharacter( p_segment, '>' );
                         }
                     }
@@ -924,7 +925,7 @@ static text_segment_t* ParseSubtitles( int *pi_align, const char *psz_subtitle )
                         psz_subtitle++;
                     if ( *psz_subtitle == '>' )
                         psz_subtitle++;
-                    free( psz_closetagname );
+                    free( psz_tagname );
                 }
                 else
                 {

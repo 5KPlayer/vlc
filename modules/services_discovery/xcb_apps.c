@@ -57,7 +57,7 @@ vlc_module_begin ()
     VLC_SD_PROBE_SUBMODULE
 vlc_module_end ()
 
-typedef struct
+struct services_discovery_sys_t
 {
     xcb_connection_t *conn;
     vlc_thread_t      thread;
@@ -66,7 +66,7 @@ typedef struct
     xcb_window_t      root_window;
     void             *apps;
     input_item_t     *apps_root;
-} services_discovery_sys_t;
+};
 
 static void *Run (void *);
 static void UpdateApps (services_discovery_t *);
@@ -164,8 +164,7 @@ static int Open (vlc_object_t *obj)
     }
 
     p_sys->apps = NULL;
-    p_sys->apps_root = input_item_NewExt(INPUT_ITEM_URI_NOP, _("Applications"),
-                                         INPUT_DURATION_INDEFINITE,
+    p_sys->apps_root = input_item_NewExt("vlc://nop", _("Applications"), -1,
                                          ITEM_TYPE_NODE, ITEM_LOCAL);
     if (likely(p_sys->apps_root != NULL))
         services_discovery_AddItem(sd, p_sys->apps_root);

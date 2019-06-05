@@ -2,6 +2,7 @@
  * subtitle.c: subtitle decoder using libavcodec library
  *****************************************************************************
  * Copyright (C) 2009 Laurent Aimar
+ * $Id: 5cac6339d60e736270ae08725e58fe22c894ac82 $
  *
  * Authors: Laurent Aimar <fenrir _AT_ videolan _DOT_ org>
  *
@@ -37,14 +38,13 @@
 
 #include "avcodec.h"
 
-typedef struct
-{
+struct decoder_sys_t {
     AVCodecContext *p_context;
     const AVCodec  *p_codec;
     bool b_need_ephemer; /* Does the format need the ephemer flag (no end time set) */
-} decoder_sys_t;
+};
 
-static subpicture_t *ConvertSubtitle(decoder_t *, AVSubtitle *, vlc_tick_t pts,
+static subpicture_t *ConvertSubtitle(decoder_t *, AVSubtitle *, mtime_t pts,
                                      AVCodecContext *avctx);
 static int  DecodeSubtitle(decoder_t *, block_t *);
 static void Flush(decoder_t *);
@@ -89,29 +89,6 @@ int InitSubtitleDec(vlc_object_t *obj)
     /* */
     context->extradata_size = 0;
     context->extradata = NULL;
-
-    if( codec->id == AV_CODEC_ID_DVB_SUBTITLE )
-    {
-        if( dec->fmt_in.i_extra > 3 )
-        {
-            context->extradata = malloc( dec->fmt_in.i_extra );
-            if( context->extradata )
-            {
-                context->extradata_size = dec->fmt_in.i_extra;
-                memcpy( context->extradata, dec->fmt_in.p_extra, dec->fmt_in.i_extra );
-            }
-        }
-        else
-        {
-            context->extradata = malloc( 4 );
-            if( context->extradata )
-            {
-                context->extradata_size = 4;
-                SetWBE( &context->extradata[0], dec->fmt_in.subs.dvb.i_id & 0xFFFF );
-                SetWBE( &context->extradata[2], dec->fmt_in.subs.dvb.i_id >> 16 );
-            }
-        }
-    }
 
 #if LIBAVFORMAT_VERSION_MICRO >= 100
     av_codec_set_pkt_timebase(context, AV_TIME_BASE_Q);
@@ -205,12 +182,6 @@ static subpicture_t *DecodeBlock(decoder_t *dec, block_t **block_ptr)
     block->i_buffer -= FF_INPUT_BUFFER_PADDING_SIZE;
     memset(&block->p_buffer[block->i_buffer], 0, FF_INPUT_BUFFER_PADDING_SIZE);
 
-    if( sys->p_codec->id == AV_CODEC_ID_DVB_SUBTITLE && block->i_buffer > 3 )
-    {
-        block->p_buffer += 2; /* drop data identifier / stream id */
-        block->i_buffer -= 3; /* drop 0x3F/FF */
-    }
-
     /* */
     AVSubtitle subtitle;
     memset(&subtitle, 0, sizeof(subtitle));
@@ -219,7 +190,7 @@ static subpicture_t *DecodeBlock(decoder_t *dec, block_t **block_ptr)
     av_init_packet(&pkt);
     pkt.data = block->p_buffer;
     pkt.size = block->i_buffer;
-    pkt.pts  = TO_AV_TS(block->i_pts);
+    pkt.pts  = block->i_pts;
 
     int has_subtitle = 0;
     int used = avcodec_decode_subtitle2(sys->p_context,
@@ -242,7 +213,7 @@ static subpicture_t *DecodeBlock(decoder_t *dec, block_t **block_ptr)
     subpicture_t *spu = NULL;
     if (has_subtitle)
         spu = ConvertSubtitle(dec, &subtitle,
-                              FROM_AV_TS(subtitle.pts),
+                              subtitle.pts,
                               sys->p_context);
 
     /* */
@@ -310,21 +281,19 @@ static subpicture_region_t *ConvertRegionRGBA(AVSubtitleRect *ffregion)
 /**
  * Convert a libavcodec subtitle to our format.
  */
-static subpicture_t *ConvertSubtitle(decoder_t *dec, AVSubtitle *ffsub, vlc_tick_t pts,
+static subpicture_t *ConvertSubtitle(decoder_t *dec, AVSubtitle *ffsub, mtime_t pts,
                                      AVCodecContext *avctx)
 {
     subpicture_t *spu = decoder_NewSubpicture(dec, NULL);
     if (!spu)
         return NULL;
 
-    decoder_sys_t *p_sys = dec->p_sys;
-
     //msg_Err(dec, "%lld %d %d",
     //        pts, ffsub->start_display_time, ffsub->end_display_time);
-    spu->i_start    = pts + VLC_TICK_FROM_MS(ffsub->start_display_time);
-    spu->i_stop     = pts + VLC_TICK_FROM_MS(ffsub->end_display_time);
+    spu->i_start    = pts + ffsub->start_display_time * INT64_C(1000);
+    spu->i_stop     = pts + ffsub->end_display_time * INT64_C(1000);
     spu->b_absolute = true; /* We have offset and size for subtitle */
-    spu->b_ephemer  = p_sys->b_need_ephemer;
+    spu->b_ephemer  = dec->p_sys->b_need_ephemer;
                     /* We only show subtitle for i_stop time only */
 
     if (avctx->coded_width != 0 && avctx->coded_height != 0) {

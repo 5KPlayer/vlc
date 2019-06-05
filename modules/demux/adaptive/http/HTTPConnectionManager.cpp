@@ -47,7 +47,7 @@ AbstractConnectionManager::~AbstractConnectionManager()
 
 }
 
-void AbstractConnectionManager::updateDownloadRate(const adaptive::ID &sourceid, size_t size, vlc_tick_t time)
+void AbstractConnectionManager::updateDownloadRate(const adaptive::ID &sourceid, size_t size, mtime_t time)
 {
     if(rateObserver)
         rateObserver->updateDownloadRate(sourceid, size, time);
@@ -58,6 +58,14 @@ void AbstractConnectionManager::setDownloadRateObserver(IDownloadRateObserver *o
     rateObserver = obs;
 }
 
+HTTPConnectionManager::HTTPConnectionManager    (vlc_object_t *p_object_, AbstractConnectionFactory *factory_)
+    : AbstractConnectionManager( p_object_ )
+{
+    vlc_mutex_init(&lock);
+    downloader = new (std::nothrow) Downloader();
+    downloader->start();
+    factory = factory_;
+}
 
 HTTPConnectionManager::HTTPConnectionManager    (vlc_object_t *p_object_, AuthStorage *storage)
     : AbstractConnectionManager( p_object_ )

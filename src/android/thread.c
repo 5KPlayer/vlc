@@ -29,11 +29,11 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_atomic.h>
 
 #include "libvlc.h"
 #include <signal.h>
 #include <errno.h>
-#include <stdatomic.h>
 #include <time.h>
 #include <assert.h>
 
@@ -113,21 +113,25 @@ void vlc_mutex_destroy (vlc_mutex_t *p_mutex)
     VLC_THREAD_ASSERT ("destroying mutex");
 }
 
+#ifndef NDEBUG
+void vlc_assert_locked (vlc_mutex_t *p_mutex)
+{
+    assert (pthread_mutex_lock (p_mutex) == EDEADLK);
+}
+#endif
+
 void vlc_mutex_lock (vlc_mutex_t *p_mutex)
 {
     int val = pthread_mutex_lock( p_mutex );
     VLC_THREAD_ASSERT ("locking mutex");
-    vlc_mutex_mark(p_mutex);
 }
 
 int vlc_mutex_trylock (vlc_mutex_t *p_mutex)
 {
     int val = pthread_mutex_trylock( p_mutex );
 
-    if (val != EBUSY) {
+    if (val != EBUSY)
         VLC_THREAD_ASSERT ("locking mutex");
-        vlc_mutex_mark(p_mutex);
-    }
     return val;
 }
 
@@ -135,13 +139,6 @@ void vlc_mutex_unlock (vlc_mutex_t *p_mutex)
 {
     int val = pthread_mutex_unlock( p_mutex );
     VLC_THREAD_ASSERT ("unlocking mutex");
-    vlc_mutex_unmark(p_mutex);
-}
-
-void vlc_once(vlc_once_t *once, void (*cb)(void))
-{
-    int val = pthread_once(once, cb);
-    VLC_THREAD_ASSERT("initializing once");
 }
 
 struct vlc_thread
@@ -406,14 +403,14 @@ void *vlc_threadvar_get (vlc_threadvar_t key)
 }
 
 /* time */
-vlc_tick_t vlc_tick_now (void)
+mtime_t mdate (void)
 {
     struct timespec ts;
 
     if (unlikely(clock_gettime (CLOCK_MONOTONIC, &ts) != 0))
         abort ();
 
-    return vlc_tick_from_timespec( &ts );
+    return (INT64_C(1000000) * ts.tv_sec) + (ts.tv_nsec / 1000);
 }
 
 /* cpu */

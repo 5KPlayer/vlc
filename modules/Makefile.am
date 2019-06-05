@@ -3,7 +3,6 @@ check_LTLIBRARIES =
 pkglib_LTLIBRARIES =
 noinst_HEADERS =
 check_PROGRAMS =
-pkglibexec_PROGRAMS =
 EXTRA_DIST =
 
 EXTRA_SUBDIRS = \
@@ -17,7 +16,8 @@ endif
 
 TESTS =
 
-dist_noinst_SCRIPTS = module.rc.in
+dist_noinst_SCRIPTS = list.sh module.rc.in
+dist_noinst_DATA = MODULES_LIST
 EXTRA_LTLIBRARIES =
 
 include common.am
@@ -87,5 +87,5 @@ SUFFIXES += -client-protocol.h -protocol.c .xml
 	$(AM_V_at)mv -f -- "$@.tmp" "$@"
 
 .xml-protocol.c:
-	$(AM_V_GEN)$(WAYLAND_SCANNER) private-code < "$^" > "$@.tmp"
+	$(AM_V_GEN)$(WAYLAND_SCANNER) code < "$^" > "$@.tmp"
 	$(AM_V_at)mv -f -- "$@.tmp" "$@"

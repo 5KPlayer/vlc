@@ -2,6 +2,7 @@
  * cmd_quit.cpp
  *****************************************************************************
  * Copyright (C) 2003 the VideoLAN team
+ * $Id: 691b61399e1f7833ae0f71adb2c2736639caf308 $
  *
  * Authors: Cyril Deguet     <asmax@via.ecp.fr>
  *          Olivier Teulière <ipkiss@via.ecp.fr>
@@ -42,12 +43,12 @@ void CmdQuit::execute()
         if( pVout )
         {
             vout_OSDMessage( pVout, VOUT_SPU_CHANNEL_OSD, "%s", _( "Quit" ) );
-            vout_Release(pVout);
+            vlc_object_release( pVout );
         }
     }
 
     // Kill libvlc
-    libvlc_Quit( vlc_object_instance(getIntf()) );
+    libvlc_Quit( getIntf()->obj.libvlc );
 }
 
 

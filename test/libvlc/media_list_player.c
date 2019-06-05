@@ -1,6 +1,7 @@
 /*
  * media_list_player.c - libvlc smoke test
  *
+ * $Id: ab9af3bd6ca3ba11b814d2c30ed2e9e18c1bcd68 $
  */
 
 /**********************************************************************
@@ -22,9 +23,9 @@
 
 #include "test.h"
 
- // For vlc_tick_sleep
+ // For msleep
 #include <vlc_common.h>
-#include <vlc_tick.h>
+#include <vlc_mtime.h>
 
 #include "libvlc_additions.h"
 
@@ -33,7 +34,6 @@
     This allows for the direct addition of subitems in the playback options test.
     This would not be necessary if there were an add subitems function.
 */
-#include "../../lib/libvlc_internal.h"
 #include "../../lib/media_internal.h"
 
 struct check_items_order_data {
@@ -78,7 +78,7 @@ static inline void wait_stopped(libvlc_media_list_player_t *mlp)
 
 static inline void stop_and_wait(libvlc_media_list_player_t *mlp)
 {
-    libvlc_media_list_player_stop_async (mlp);
+    libvlc_media_list_player_stop (mlp);
     wait_stopped (mlp);
 }
 
@@ -90,18 +90,18 @@ static void check_items_order_callback(const libvlc_event_t * p_event, void * us
     if (checks->items[checks->index] != md)
     {
         char *title = libvlc_media_get_meta(md, libvlc_meta_Title);
-        test_log ("Got items %s\n", title);
+        log ("Got items %s\n", title);
         free(title);
     }
     assert(checks->items[checks->index] == md);
 
     char *title = libvlc_media_get_meta(md, libvlc_meta_Title);
-    test_log ("Item %d '%s' was correctly queued\n", checks->index, title);
+    log ("Item %d '%s' was correctly queued\n", checks->index, title);
     free(title);
 
     if (checks->index == (checks->count - 1))
     {
-        test_log ("Done playing with success\n");
+        log ("Done playing with success\n");
         checks->done_playing = true;
     }
     checks->index++;
@@ -116,7 +116,7 @@ static void test_media_list_player_items_queue(const char** argv, int argc)
 
     const char * file = test_default_sample;
 
-    test_log ("Testing media player item queue-ing\n");
+    log ("Testing media player item queue-ing\n");
 
     vlc = libvlc_new (argc, argv);
     assert (vlc != NULL);
@@ -181,7 +181,7 @@ static void test_media_list_player_previous(const char** argv, int argc)
 
     const char * file = test_default_sample;
 
-    test_log ("Testing media player previous()\n");
+    log ("Testing media player previous()\n");
 
     vlc = libvlc_new (argc, argv);
     assert (vlc != NULL);
@@ -240,7 +240,7 @@ static void test_media_list_player_next(const char** argv, int argc)
 
     const char * file = test_default_sample;
 
-    test_log ("Testing media player next()\n");
+    log ("Testing media player next()\n");
 
     vlc = libvlc_new (argc, argv);
     assert (vlc != NULL);
@@ -299,7 +299,7 @@ static void test_media_list_player_pause_stop(const char** argv, int argc)
 
     const char * file = test_default_sample;
 
-    test_log ("Testing play and pause of %s using the media list.\n", file);
+    log ("Testing play and pause of %s using the media list.\n", file);
 
     vlc = libvlc_new (argc, argv);
     assert (vlc != NULL);
@@ -339,7 +339,7 @@ static void test_media_list_player_play_item_at_index(const char** argv, int arg
 
     const char * file = test_default_sample;
 
-    test_log ("Testing play_item_at_index of %s using the media list.\n", file);
+    log ("Testing play_item_at_index of %s using the media list.\n", file);
 
     vlc = libvlc_new (argc, argv);
     assert (vlc != NULL);
@@ -386,7 +386,7 @@ static void test_media_list_player_playback_options (const char** argv, int argc
 
     const char * file = test_default_sample;
 
-    test_log ("Testing media player playback options()\n");
+    log ("Testing media player playback options()\n");
 
     vlc = libvlc_new (argc, argv);
     assert (vlc != NULL);
@@ -484,13 +484,13 @@ static void test_media_list_player_playback_options (const char** argv, int argc
     libvlc_media_release (md4);
     libvlc_media_release (md5);
 
-    libvlc_media_list_player_stop_async (mlp);
+    libvlc_media_list_player_stop (mlp);
 
     while (libvlc_media_list_player_is_playing (mlp))
         sched_yield();
 
     // Test looping playback mode
-    test_log ("Testing media player playback option - Loop\n");
+    log ("Testing media player playback option - Loop\n");
     libvlc_media_list_player_set_playback_mode(mlp, libvlc_playback_mode_loop);
 
     libvlc_media_list_player_play_item (mlp, md);
@@ -500,7 +500,7 @@ static void test_media_list_player_playback_options (const char** argv, int argc
     stop_and_wait (mlp);
 
     // Test repeat playback mode
-    test_log ("Testing media player playback option - Repeat\n");
+    log ("Testing media player playback option - Repeat\n");
     libvlc_media_list_player_set_playback_mode(mlp, libvlc_playback_mode_repeat);
 
     libvlc_media_list_player_play_item (mlp, md);

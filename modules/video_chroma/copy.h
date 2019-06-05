@@ -2,6 +2,7 @@
  * copy.h: Fast YV12/NV12 copy
  *****************************************************************************
  * Copyright (C) 2009 Laurent Aimar
+ * $Id: 6c438378ef5152f0dff00cc450a22ba4e6cd625a $
  *
  * Authors: Laurent Aimar <fenrir_AT_ videolan _DOT_ org>
  *
@@ -29,8 +30,6 @@ typedef struct {
 # ifdef CAN_COMPILE_SSE2
     uint8_t *buffer;
     size_t  size;
-# else
-    char dummy;
 # endif
 } copy_cache_t;
 
@@ -73,6 +72,18 @@ void Copy420_16_P_to_SP(picture_t *dst, const uint8_t *src[static 3],
 void Copy420_16_SP_to_P(picture_t *dst, const uint8_t *src[static 2],
                         const size_t src_pitch[static 2], unsigned height,
                         int bitshift, const copy_cache_t *cache);
+
+/* XXX: Not optimized copy (no SEE) */
+void CopyFromI420_10ToP010(picture_t *dst, const uint8_t *src[static 3],
+                           const size_t src_pitch[static 3],
+                           unsigned height, const copy_cache_t *cache);
+
+/**
+ * Swap UV planes of a Tri Planars picture.
+ *
+ * It just swap the planes information without doing any copy.
+ */
+void picture_SwapUV(picture_t *picture);
 
 /**
  * This functions sets the internal plane pointers/dimensions for the given

@@ -69,18 +69,8 @@ ifeq ($(TIZEN_ABI), x86)
 GCRYPT_CONF += ac_cv_sys_symbol_underscore=no
 endif
 endif
-ifdef HAVE_NACL
-GCRYPT_CONF += --disable-asm --disable-aesni-support ac_cv_func_syslog=no --disable-sse41-support
-GCRYPT_CONF += --disable-avx-support --disable-avx2-support --disable-padlock-support
-GCRYPT_CONF += --disable-amd64-as-feature-detection --disable-drng-support
-GCRYPT_CONF += --disable-pclmul-support
-endif
 
 .gcrypt: gcrypt
-	# Reconfiguring this requires a git repo to be available, to
-	# successfully produce a nonempty mym4_revision_dec.
-	cd $< && git init && git config --local user.email "cone@example.com" && git config --local user.name "Cony Cone" && \
-		git commit --allow-empty -m "dummy commit"
 	$(RECONF)
 	cd $< && $(HOSTVARS) CFLAGS="$(CFLAGS) $(GCRYPT_EXTRA_CFLAGS)" ./configure $(HOSTCONF) $(GCRYPT_CONF)
 	cd $< && $(MAKE) install

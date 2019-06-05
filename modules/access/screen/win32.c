@@ -2,6 +2,7 @@
  * win32.c: Screen capture module.
  *****************************************************************************
  * Copyright (C) 2004-2011 VLC authors and VideoLAN
+ * $Id: d64eada92b5131ebffe301cdb73cb14272971cc9 $
  *
  * Authors: Gildas Bazin <gbazin@videolan.org>
  *
@@ -64,16 +65,14 @@ struct screen_data_t
  */
 static inline void FromScreenCoordinates( demux_t *p_demux, POINT *p_point )
 {
-    demux_sys_t *p_sys = p_demux->p_sys;
-    screen_data_t *p_data = p_sys->p_data;
+    screen_data_t *p_data = p_demux->p_sys->p_data;
     p_point->x += p_data->ptl.x;
     p_point->y += p_data->ptl.y;
 }
 
 static inline void ToScreenCoordinates( demux_t *p_demux, POINT *p_point )
 {
-    demux_sys_t *p_sys = p_demux->p_sys;
-    screen_data_t *p_data = p_sys->p_data;
+    screen_data_t *p_data = p_demux->p_sys->p_data;
     p_point->x -= p_data->ptl.x;
     p_point->y -= p_data->ptl.y;
 }
@@ -135,7 +134,7 @@ int screen_InitCapture( demux_t *p_demux )
     p_sys->fmt.video.i_sar_num = p_sys->fmt.video.i_sar_den = 1;
     p_sys->fmt.video.i_chroma         = i_chroma;
     p_sys->fmt.video.transfer         = TRANSFER_FUNC_SRGB;
-    p_sys->fmt.video.color_range      = COLOR_RANGE_FULL;
+    p_sys->fmt.video.b_color_range_full = true;
 
     switch( i_chroma )
     {
@@ -194,11 +193,6 @@ static void CaptureBlockRelease( block_t *p_block )
     free( p_block );
 }
 
-static const struct vlc_block_callbacks CaptureBlockCallbacks =
-{
-    CaptureBlockRelease,
-};
-
 static block_t *CaptureBlockNew( demux_t *p_demux )
 {
     demux_sys_t *p_sys = p_demux->p_sys;
@@ -230,7 +224,7 @@ static block_t *CaptureBlockNew( demux_t *p_demux )
                                             (int)p_sys->fmt.video.i_height :
                                             p_data->i_fragment_size;
         p_sys->f_fps *= (p_sys->fmt.video.i_height/p_data->i_fragment_size);
-        p_sys->i_incr = vlc_tick_rate_duration( p_sys->f_fps );
+        p_sys->i_incr = 1000000 / p_sys->f_fps;
         p_data->i_fragment = 0;
         p_data->p_block = 0;
     }
@@ -258,14 +252,15 @@ static block_t *CaptureBlockNew( demux_t *p_demux )
     }
 
     /* Build block */
-    if( !(p_block = malloc( sizeof( struct block_sys_t ) )) )
+    if( !(p_block = malloc( sizeof( block_t ) + sizeof( struct block_sys_t ) )) )
         goto error;
 
     /* Fill all fields */
     int i_stride =
         ( ( ( ( p_sys->fmt.video.i_width * p_sys->fmt.video.i_bits_per_pixel ) + 31 ) & ~31 ) >> 3 );
     i_buffer = i_stride * p_sys->fmt.video.i_height;
-    block_Init( &p_block->self, &CaptureBlockCallbacks, p_buffer, i_buffer );
+    block_Init( &p_block->self, p_buffer, i_buffer );
+    p_block->self.pf_release = CaptureBlockRelease;
     p_block->hbmp            = hbmp;
 
     return &p_block->self;

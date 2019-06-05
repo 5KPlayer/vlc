@@ -45,7 +45,7 @@ xml_t *xml_Create( vlc_object_t *p_this )
     p_xml->p_module = module_need( p_xml, "xml", NULL, false );
     if( !p_xml->p_module )
     {
-        vlc_object_delete(p_xml);
+        vlc_object_release( p_xml );
         msg_Err( p_this, "XML provider not found" );
         return NULL;
     }
@@ -59,7 +59,7 @@ xml_t *xml_Create( vlc_object_t *p_this )
 void xml_Delete( xml_t *p_xml )
 {
     module_unneed( p_xml, p_xml->p_module );
-    vlc_object_delete(p_xml);
+    vlc_object_release( p_xml );
 }
 
 
@@ -81,7 +81,7 @@ xml_reader_t *xml_ReaderCreate(vlc_object_t *obj, stream_t *stream)
     if (unlikely(reader->p_module == NULL))
     {
         msg_Err(reader, "XML reader not found");
-        vlc_object_delete(reader);
+        vlc_object_release(reader);
         return NULL;
     }
     return reader;
@@ -94,6 +94,34 @@ xml_reader_t *xml_ReaderCreate(vlc_object_t *obj, stream_t *stream)
  */
 void xml_ReaderDelete(xml_reader_t *reader)
 {
-    module_unneed(reader, reader->p_module);
-    vlc_object_delete(reader);
+    if (reader->p_stream)
+        module_stop(reader, reader->p_module);
+    vlc_object_release(reader);
+}
+
+
+/**
+ * Resets an existing XML reader.
+ * If you need to parse several XML files, this function is much faster than
+ * xml_ReaderCreate() and xml_ReaderDelete() combined.
+ * If the stream parameter is NULL, the XML reader will be stopped, but
+ * not restarted until the next xml_ReaderReset() call with a non-NULL stream.
+ *
+ * @param reader XML reader to reinitialize
+ * @param stream new stream to read XML data from (or NULL)
+ * @return reader on success,
+ *         NULL on error (in that case, the reader is destroyed).
+ */
+xml_reader_t *xml_ReaderReset(xml_reader_t *reader, stream_t *stream)
+{
+    if (reader->p_stream)
+        module_stop(reader, reader->p_module);
+
+    reader->p_stream = stream;
+    if ((stream != NULL) && module_start(reader, reader->p_module))
+    {
+        vlc_object_release(reader);
+        return NULL;
+    }
+    return reader;
 }

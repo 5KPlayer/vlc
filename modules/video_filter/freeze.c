@@ -2,6 +2,7 @@
  * freeze.c : Freezing video filter
  *****************************************************************************
  * Copyright (C) 2013      Vianney Boyer
+ * $Id: a8b2087e5adcb8023dffd00f19d0c215a4d036b5 $
  *
  * Authors: Vianney Boyer <vlcvboyer -at- gmail -dot- com>
  *
@@ -39,8 +40,7 @@
 #   define MOD(a, b) ((((a)%(b)) + (b))%(b))
 #endif
 
-typedef struct
-{
+struct filter_sys_t {
     bool b_init;
 
     int32_t i_planes;
@@ -51,7 +51,7 @@ typedef struct
     int16_t **pi_freezing_countdown; /* freezed pixel delay    */
     bool    **pb_update_cache;       /* update chache request  */
 
-} filter_sys_t;
+};
 
 /*****************************************************************************
  * Prototypes

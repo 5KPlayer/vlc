@@ -2,6 +2,7 @@
  * xspf.c : XSPF playlist export functions
  ******************************************************************************
  * Copyright (C) 2006-2009 the VideoLAN team
+ * $Id: 885563a5e90673e3beb510a2ea9ac06fd72bc424 $
  *
  * Authors: Daniel Stränger <vlc at schmaller dot de>
  *          Yoann Peronneau <yoann@videolan.org>
@@ -30,8 +31,8 @@
 #endif
 
 #include <vlc_common.h>
-#include <vlc_input_item.h>
-#include <vlc_playlist_export.h>
+#include <vlc_playlist.h>
+#include <vlc_input.h>
 #include <vlc_strings.h>
 #include <vlc_url.h>
 
@@ -55,11 +56,28 @@ static char *input_xml( input_item_t *p_item, char *(*func)(input_item_t *) )
  * \param p_file file to write xml-converted item to
  * \param p_i_count counter for track identifiers
  */
-static void xspf_export_item( input_item_t *p_input, FILE *p_file, uint64_t id)
+static void xspf_export_item( playlist_item_t *p_item, FILE *p_file,
+                              int *p_i_count )
 {
-    char *psz;
-    vlc_tick_t i_duration;
+    if( !p_item ) return;
 
+    /* if we get a node here, we must traverse it */
+    if( p_item->i_children > 0 )
+    {
+        for( int i = 0; i < p_item->i_children; i++ )
+            xspf_export_item( p_item->pp_children[i], p_file, p_i_count );
+        return;
+    }
+
+    /* don't write empty nodes */
+    if( p_item->i_children == 0 )
+        return;
+
+    input_item_t *p_input = p_item->p_input;
+    char *psz;
+    mtime_t i_duration;
+
+    /* leaves can be written directly */
     fputs( "\t\t<track>\n", p_file );
 
     /* -> the location */
@@ -75,7 +93,7 @@ static void xspf_export_item( input_item_t *p_input, FILE *p_file, uint64_t id)
     free( psz );
     free( psz_uri );
 
-    if( p_input->p_meta == NULL )
+    if( p_item->p_input->p_meta == NULL )
     {
         goto xspfexportitem_end;
     }
@@ -121,22 +139,23 @@ static void xspf_export_item( input_item_t *p_input, FILE *p_file, uint64_t id)
 
 xspfexportitem_end:
     /* -> the duration */
-    i_duration = input_item_GetDuration( p_input );
+    i_duration = input_item_GetDuration( p_item->p_input );
     if( i_duration > 0 )
         fprintf( p_file, "\t\t\t<duration>%"PRIu64"</duration>\n",
-                 MS_FROM_VLC_TICK(i_duration) );
+                 i_duration / 1000 );
 
     /* export the intenal id and the input's options (bookmarks, ...)
      * in <extension> */
     fputs( "\t\t\t<extension application=\""
            "http://www.videolan.org/vlc/playlist/0\">\n", p_file );
 
-    /* print the id */
-    fprintf( p_file, "\t\t\t\t<vlc:id>%"PRIu64"</vlc:id>\n", id );
+    /* print the id and increase the counter */
+    fprintf( p_file, "\t\t\t\t<vlc:id>%i</vlc:id>\n", *p_i_count );
+    ( *p_i_count )++;
 
-    for( int i = 0; i < p_input->i_options; i++ )
+    for( int i = 0; i < p_item->p_input->i_options; i++ )
     {
-        char* psz_src = p_input->ppsz_options[i];
+        char* psz_src = p_item->p_input->ppsz_options[i];
         char* psz_ret = NULL;
 
         if ( psz_src[0] == ':' )
@@ -154,37 +173,103 @@ xspfexportitem_end:
 }
 
 /**
+ * \brief exports one item in extension to file and traverse if item is a node
+ * \param p_item playlist item to export
+ * \param p_file file to write xml-converted item to
+ * \param p_i_count counter for track identifiers
+ * \param i_depth identation depth
+ */
+static void xspf_extension_item( playlist_item_t *p_item, FILE *p_file,
+                                 int *p_i_count, int i_depth )
+{
+    if( !p_item ) return;
+
+    /* if we get a node here, we must traverse it */
+    if( p_item->i_children >= 0 )
+    {
+        int i;
+        char *psz_temp = NULL;
+        if( p_item->p_input->psz_name )
+            psz_temp = vlc_xml_encode( p_item->p_input->psz_name );
+        for(int j=0;j<i_depth;j++)
+            fprintf( p_file, "\t" );
+        fprintf( p_file, "<vlc:node title=\"%s\">\n",
+                 psz_temp ? psz_temp : "" );
+        free( psz_temp );
+
+        for( i = 0; i < p_item->i_children; i++ )
+        {
+            xspf_extension_item( p_item->pp_children[i], p_file, p_i_count, i_depth + 1 );
+        }
+
+        for(int j=0;j<i_depth;j++)
+            fprintf( p_file, "\t" );
+        fprintf( p_file, "</vlc:node>\n" );
+        return;
+    }
+
+    /* print leaf and increase the counter */
+    for(int j=0;j<i_depth;j++)
+        fprintf( p_file, "\t" );
+    fprintf( p_file, "<vlc:item tid=\"%i\"/>\n", *p_i_count );
+    ( *p_i_count )++;
+
+    return;
+}
+
+/**
  * \brief Prints the XSPF header to file, writes each item by xspf_export_item()
  * and closes the open xml elements
  * \param p_this the VLC playlist object
- * \return VLC_SUCCESS if some memory is available, otherwise VLC_ENOMEM
+ * \return VLC_SUCCESS if some memory is available, otherwise VLC_ENONMEM
  */
 int xspf_export_playlist( vlc_object_t *p_this )
 {
-    struct vlc_playlist_export *p_export = (struct vlc_playlist_export *) p_this;
+    const playlist_export_t *p_export = (playlist_export_t *)p_this;
+    int               i, i_count;
+    char             *psz_temp;
+    playlist_item_t  *p_node = p_export->p_root;
 
     /* write XSPF XML header */
-    fprintf( p_export->file, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" );
-    fprintf( p_export->file,
+    fprintf( p_export->p_file, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" );
+    fprintf( p_export->p_file,
              "<playlist xmlns=\"http://xspf.org/ns/0/\" " \
               "xmlns:vlc=\"http://www.videolan.org/vlc/playlist/ns/0/\" " \
               "version=\"1\">\n" );
 
-    fprintf( p_export->file, "\t<trackList>\n" );
-    size_t count = vlc_playlist_view_Count(p_export->playlist_view);
-    for( size_t i = 0; i < count; ++i )
+    if( !p_node ) return VLC_SUCCESS;
+
+    /* save name of the playlist node */
+    psz_temp = vlc_xml_encode( p_node->p_input->psz_name );
+    if( *psz_temp )
     {
-        vlc_playlist_item_t *item =
-            vlc_playlist_view_Get(p_export->playlist_view, i);
-        input_item_t *media = vlc_playlist_item_GetMedia(item);
-
-        xspf_export_item(media, p_export->file, i);
+        fprintf(  p_export->p_file, "\t<title>%s</title>\n", psz_temp );
     }
+    free( psz_temp );
 
-    fprintf( p_export->file, "\t</trackList>\n" );
+    /* export all items in a flat format */
+    fprintf( p_export->p_file, "\t<trackList>\n" );
+    i_count = 0;
+    for( i = 0; i < p_node->i_children; i++ )
+    {
+        xspf_export_item( p_node->pp_children[i], p_export->p_file,
+                          &i_count );
+    }
+    fprintf( p_export->p_file, "\t</trackList>\n" );
+
+    /* export the tree structure in <extension> */
+    fprintf( p_export->p_file, "\t<extension application=\"" \
+             "http://www.videolan.org/vlc/playlist/0\">\n" );
+    i_count = 0;
+    for( i = 0; i < p_node->i_children; i++ )
+    {
+        xspf_extension_item( p_node->pp_children[i], p_export->p_file,
+                             &i_count, 2 );
+    }
+    fprintf( p_export->p_file, "\t</extension>\n" );
 
     /* close the header elements */
-    fprintf( p_export->file, "</playlist>\n" );
+    fprintf( p_export->p_file, "</playlist>\n" );
 
     return VLC_SUCCESS;
 }

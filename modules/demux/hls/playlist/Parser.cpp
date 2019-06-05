@@ -24,11 +24,9 @@
 #include "Parser.hpp"
 #include "HLSSegment.hpp"
 #include "Representation.hpp"
-#include "../adaptive/SharedResources.hpp"
 #include "../adaptive/playlist/BasePeriod.h"
 #include "../adaptive/playlist/BaseAdaptationSet.h"
 #include "../adaptive/playlist/SegmentList.h"
-#include "../adaptive/encryption/Keyring.hpp"
 #include "../adaptive/tools/Retrieve.hpp"
 #include "../adaptive/tools/Helper.h"
 #include "../adaptive/tools/Conversions.hpp"
@@ -47,9 +45,9 @@ using namespace adaptive;
 using namespace adaptive::playlist;
 using namespace hls::playlist;
 
-M3U8Parser::M3U8Parser(SharedResources *res)
+M3U8Parser::M3U8Parser( AuthStorage *auth_ )
 {
-    resources = res;
+    auth = auth_;
 }
 
 M3U8Parser::~M3U8Parser   ()
@@ -68,23 +66,42 @@ static std::list<Tag *> getTagsFromList(std::list<Tag *> &list, int tag)
     return ret;
 }
 
-static Tag * getTagFromList(std::list<Tag *> &list, int tag)
-{
-    std::list<Tag *>::const_iterator it;
-    for(it = list.begin(); it != list.end(); ++it)
-    {
-        if( (*it)->getType() == tag )
-            return *it;
-    }
-    return NULL;
-}
-
 static void releaseTagsList(std::list<Tag *> &list)
 {
     std::list<Tag *>::const_iterator it;
     for(it = list.begin(); it != list.end(); ++it)
         delete *it;
     list.clear();
+}
+
+void M3U8Parser::setFormatFromExtension(Representation *rep, const std::string &filename)
+{
+    std::size_t pos = filename.find_last_of('.');
+    if(pos != std::string::npos)
+    {
+        std::string extension = Helper::getFileExtension(filename);
+        transform(extension.begin(), extension.end(), extension.begin(), (int (*)(int))std::tolower);
+        if(extension == "aac")
+        {
+            rep->streamFormat = StreamFormat(StreamFormat::PACKEDAAC);
+        }
+        else if(extension == "ts" || extension == "mp2t" || extension == "mpeg" || extension == "m2ts")
+        {
+            rep->streamFormat = StreamFormat(StreamFormat::MPEG2TS);
+        }
+        else if(extension == "mp4" || extension == "m4s" || extension == "mov" || extension == "m4v")
+        {
+            rep->streamFormat = StreamFormat(StreamFormat::MP4);
+        }
+        else if(extension == "vtt" || extension == "wvtt" || extension == "webvtt")
+        {
+            rep->streamFormat = StreamFormat(StreamFormat::WEBVTT);
+        }
+        else
+        {
+            rep->streamFormat = StreamFormat(StreamFormat::UNSUPPORTED);
+        }
+    }
 }
 
 Representation * M3U8Parser::createRepresentation(BaseAdaptationSet *adaptSet, const AttributesTag * tag)
@@ -120,9 +137,6 @@ Representation * M3U8Parser::createRepresentation(BaseAdaptationSet *adaptSet, c
         if(bwAttr)
             rep->setBandwidth(bwAttr->decimal());
 
-        if(tag->getAttributeByName("CODECS"))
-            rep->addCodecs(tag->getAttributeByName("CODECS")->quotedString());
-
         if(resAttr)
         {
             std::pair<int, int> res = resAttr->getResolution();
@@ -157,8 +171,7 @@ void M3U8Parser::createAndFillRepresentation(vlc_object_t *p_obj, BaseAdaptation
 
 bool M3U8Parser::appendSegmentsFromPlaylistURI(vlc_object_t *p_obj, Representation *rep)
 {
-    block_t *p_block = Retrieve::HTTP(p_obj, resources->getAuthStorage(),
-                                      rep->getPlaylistUrl().toString());
+    block_t *p_block = Retrieve::HTTP(p_obj, auth, rep->getPlaylistUrl().toString());
     if(p_block)
     {
         stream_t *substream = vlc_stream_MemoryNew(p_obj, p_block->p_buffer, p_block->i_buffer, true);
@@ -177,41 +190,6 @@ bool M3U8Parser::appendSegmentsFromPlaylistURI(vlc_object_t *p_obj, Representati
     return false;
 }
 
-static bool parseEncryption(const AttributesTag *keytag, const Url &playlistUrl,
-                            CommonEncryption &encryption)
-{
-    if( keytag->getAttributeByName("METHOD") &&
-        keytag->getAttributeByName("METHOD")->value == "AES-128" &&
-        keytag->getAttributeByName("URI") )
-    {
-        encryption.method = CommonEncryption::Method::AES_128;
-        encryption.uri.clear();
-
-        Url keyurl(keytag->getAttributeByName("URI")->quotedString());
-        if(!keyurl.hasScheme())
-        {
-            keyurl.prepend(Helper::getDirectoryPath(playlistUrl.toString()).append("/"));
-        }
-
-        encryption.uri = keyurl.toString();
-
-        if(keytag->getAttributeByName("IV"))
-        {
-            encryption.iv.clear();
-            encryption.iv = keytag->getAttributeByName("IV")->hexSequence();
-        }
-        return true;
-    }
-    else
-    {
-        /* unsupported or invalid */
-        encryption.method = CommonEncryption::Method::NONE;
-        encryption.uri.clear();
-        encryption.iv.clear();
-        return false;
-    }
-}
-
 void M3U8Parser::parseSegments(vlc_object_t *, Representation *rep, const std::list<Tag *> &tagslist)
 {
     SegmentList *segmentList = new (std::nothrow) SegmentList(rep);
@@ -219,14 +197,14 @@ void M3U8Parser::parseSegments(vlc_object_t *, Representation *rep, const std::l
     rep->setTimescale(100);
     rep->b_loaded = true;
 
-    vlc_tick_t totalduration = 0;
-    vlc_tick_t nzStartTime = 0;
-    vlc_tick_t absReferenceTime = VLC_TICK_INVALID;
+    mtime_t totalduration = 0;
+    mtime_t nzStartTime = 0;
+    mtime_t absReferenceTime = VLC_TS_INVALID;
     uint64_t sequenceNumber = 0;
     bool discontinuity = false;
     std::size_t prevbyterangeoffset = 0;
     const SingleValueTag *ctx_byterange = NULL;
-    CommonEncryption encryption;
+    SegmentEncryption encryption;
     const ValuesListTag *ctx_extinf = NULL;
 
     std::list<Tag *>::const_iterator it;
@@ -263,6 +241,8 @@ void M3U8Parser::parseSegments(vlc_object_t *, Representation *rep, const std::l
                     break;
 
                 segment->setSourceUrl(uritag->getValue().value);
+                if((unsigned)rep->getStreamFormat() == StreamFormat::UNKNOWN)
+                    setFormatFromExtension(rep, uritag->getValue().value);
 
                 /* Need to use EXTXTARGETDURATION as default as some can't properly set segment one */
                 double duration = rep->targetDuration;
@@ -273,12 +253,12 @@ void M3U8Parser::parseSegments(vlc_object_t *, Representation *rep, const std::l
                         duration = durAttribute->floatingPoint();
                     ctx_extinf = NULL;
                 }
-                const vlc_tick_t nzDuration = vlc_tick_from_sec( duration );
+                const mtime_t nzDuration = CLOCK_FREQ * duration;
                 segment->duration.Set(duration * (uint64_t) rep->getTimescale());
                 segment->startTime.Set(rep->getTimescale().ToScaled(nzStartTime));
                 nzStartTime += nzDuration;
                 totalduration += nzDuration;
-                if(absReferenceTime != VLC_TICK_INVALID)
+                if(absReferenceTime > VLC_TS_INVALID)
                 {
                     segment->utcTime = absReferenceTime;
                     absReferenceTime += nzDuration;
@@ -302,7 +282,7 @@ void M3U8Parser::parseSegments(vlc_object_t *, Representation *rep, const std::l
                     discontinuity = false;
                 }
 
-                if(encryption.method != CommonEncryption::Method::NONE)
+                if(encryption.method != SegmentEncryption::NONE)
                     segment->setEncryption(encryption);
             }
             break;
@@ -321,13 +301,43 @@ void M3U8Parser::parseSegments(vlc_object_t *, Representation *rep, const std::l
 
             case SingleValueTag::EXTXPROGRAMDATETIME:
                 rep->b_consistent = false;
-                absReferenceTime = VLC_TICK_0 +
+                absReferenceTime = VLC_TS_0 +
                         UTCTime(static_cast<const SingleValueTag *>(tag)->getValue().value).mtime();
                 break;
 
             case AttributesTag::EXTXKEY:
-                parseEncryption(static_cast<const AttributesTag *>(tag),
-                                rep->getPlaylistUrl(), encryption);
+            {
+                const AttributesTag *keytag = static_cast<const AttributesTag *>(tag);
+                if( keytag->getAttributeByName("METHOD") &&
+                    keytag->getAttributeByName("METHOD")->value == "AES-128" &&
+                    keytag->getAttributeByName("URI") )
+                {
+                    encryption.method = SegmentEncryption::AES_128;
+                    encryption.key.clear();
+
+                    Url keyurl(keytag->getAttributeByName("URI")->quotedString());
+                    if(!keyurl.hasScheme())
+                    {
+                        keyurl.prepend(Helper::getDirectoryPath(rep->getPlaylistUrl().toString()).append("/"));
+                    }
+
+                    M3U8 *m3u8 = dynamic_cast<M3U8 *>(rep->getPlaylist());
+                    if(likely(m3u8))
+                        encryption.key = m3u8->getEncryptionKey(keyurl.toString());
+                    if(keytag->getAttributeByName("IV"))
+                    {
+                        encryption.iv.clear();
+                        encryption.iv = keytag->getAttributeByName("IV")->hexSequence();
+                    }
+                }
+                else
+                {
+                    /* unsupported or invalid */
+                    encryption.method = SegmentEncryption::NONE;
+                    encryption.key.clear();
+                    encryption.iv.clear();
+                }
+            }
             break;
 
             case AttributesTag::EXTXMAP:
@@ -372,7 +382,7 @@ void M3U8Parser::parseSegments(vlc_object_t *, Representation *rep, const std::l
         rep->getPlaylist()->duration.Set(totalduration);
     }
 
-    rep->updateSegmentList(segmentList, true);
+    rep->appendSegmentList(segmentList, true);
 }
 M3U8 * M3U8Parser::parse(vlc_object_t *p_object, stream_t *p_stream, const std::string &playlisturl)
 {
@@ -385,7 +395,7 @@ M3U8 * M3U8Parser::parse(vlc_object_t *p_object, stream_t *p_stream, const std::
     }
     free(psz_line);
 
-    M3U8 *playlist = new (std::nothrow) M3U8(p_object);
+    M3U8 *playlist = new (std::nothrow) M3U8(p_object, auth);
     if(!playlist)
         return NULL;
 
@@ -402,20 +412,6 @@ M3U8 * M3U8Parser::parse(vlc_object_t *p_object, stream_t *p_stream, const std::
     {
         std::list<Tag *>::const_iterator it;
         std::map<std::string, AttributesTag *> groupsmap;
-
-        /* Preload Session Key */
-        Tag *sessionKey = getTagFromList(tagslist, AttributesTag::EXTXSESSIONKEY);
-        if(sessionKey)
-        {
-            CommonEncryption sessionEncryption;
-            if(parseEncryption(static_cast<const AttributesTag *>(sessionKey),
-                                playlist->getUrlSegment(), sessionEncryption) &&
-               !sessionEncryption.uri.empty())
-            {
-                resources->getKeyring()->getKey(resources->getAuthStorage(),
-                                                sessionEncryption.uri);
-            }
-        }
 
         /* We'll need to create an adaptation set for each media group / alternative rendering
          * we create a list of playlist being and alternative/group */
@@ -434,7 +430,6 @@ M3U8 * M3U8Parser::parse(vlc_object_t *p_object, stream_t *p_stream, const std::
         BaseAdaptationSet *adaptSet = new (std::nothrow) BaseAdaptationSet(period);
         if(adaptSet)
         {
-            /* adaptSet->setSegmentAligned(true); FIXME: based on streamformat */
             std::list<Tag *> streaminfotags = getTagsFromList(tagslist, AttributesTag::EXTXSTREAMINF);
             for(it = streaminfotags.begin(); it != streaminfotags.end(); ++it)
             {
@@ -451,12 +446,6 @@ M3U8 * M3U8Parser::parse(vlc_object_t *p_object, stream_t *p_stream, const std::
                         }
                     }
                 }
-
-                if(adaptSet->description.Get().empty() &&
-                   tag && tag->getAttributeByName("NAME"))
-                {
-                    adaptSet->description.Set(tag->getAttributeByName("NAME")->quotedString());
-                }
             }
             if(!adaptSet->getRepresentations().empty())
                 period->addAdaptationSet(adaptSet);
@@ -469,13 +458,10 @@ M3U8 * M3U8Parser::parse(vlc_object_t *p_object, stream_t *p_stream, const std::
         std::map<std::string, AttributesTag *>::const_iterator groupsit;
         for(groupsit = groupsmap.begin(); groupsit != groupsmap.end(); ++groupsit)
         {
-            std::pair<std::string, AttributesTag *> pair = *groupsit;
-            if(!pair.second->getAttributeByName("TYPE"))
-                continue;
-
             BaseAdaptationSet *altAdaptSet = new (std::nothrow) BaseAdaptationSet(period);
             if(altAdaptSet)
             {
+                std::pair<std::string, AttributesTag *> pair = *groupsit;
                 Representation *rep  = createRepresentation(altAdaptSet, pair.second);
                 if(rep)
                 {
@@ -492,20 +478,6 @@ M3U8 * M3U8Parser::parse(vlc_object_t *p_object, stream_t *p_stream, const std::
                     desc += pair.second->getAttributeByName("NAME")->quotedString();
                 }
 
-                if(pair.second->getAttributeByName("CODECS"))
-                {
-                    rep->addCodecs(pair.second->getAttributeByName("CODECS")->quotedString());
-                }
-                else
-                {
-                    if(pair.second->getAttributeByName("TYPE")->value == "AUDIO")
-                        rep->addCodecs("mp4a");
-                    else if(pair.second->getAttributeByName("TYPE")->value == "VIDEO")
-                        rep->addCodecs("avc1");
-                    else if(pair.second->getAttributeByName("TYPE")->value == "SUBTITLES")
-                        rep->addCodecs("wvtt");
-                }
-
                 if(!desc.empty())
                 {
                     altAdaptSet->description.Set(desc);
@@ -513,35 +485,23 @@ M3U8 * M3U8Parser::parse(vlc_object_t *p_object, stream_t *p_stream, const std::
                 }
                 else altAdaptSet->setID(ID(set_id++));
 
-                if(pair.second->getAttributeByName("DEFAULT"))
-                {
-                    if(pair.second->getAttributeByName("DEFAULT")->value == "YES")
-                        altAdaptSet->setRole(Role(Role::ROLE_MAIN));
-                    else
-                        altAdaptSet->setRole(Role(Role::ROLE_ALTERNATE));
-                }
-
-                if(pair.second->getAttributeByName("AUTOSELECT"))
-                {
-                    if(pair.second->getAttributeByName("AUTOSELECT")->value == "NO" &&
-                       !pair.second->getAttributeByName("DEFAULT"))
-                        altAdaptSet->setRole(Role(Role::ROLE_SUPPLEMENTARY));
-                }
-
                 /* Subtitles unsupported for now */
-                const Attribute *typeattr = pair.second->getAttributeByName("TYPE");
-                if(typeattr->value == "SUBTITLES")
-                {
-                    altAdaptSet->setRole(Role(Role::ROLE_SUBTITLE));
-                    rep->streamFormat = StreamFormat(StreamFormat::UNSUPPORTED);
-                }
-                else if(typeattr->value != "AUDIO" && typeattr->value != "VIDEO")
+                if(pair.second->getAttributeByName("TYPE")->value != "AUDIO" &&
+                   pair.second->getAttributeByName("TYPE")->value != "VIDEO" &&
+                   pair.second->getAttributeByName("TYPE")->value != "SUBTITLES" )
                 {
                     rep->streamFormat = StreamFormat(StreamFormat::UNSUPPORTED);
                 }
 
                 if(pair.second->getAttributeByName("LANGUAGE"))
-                    altAdaptSet->setLang(pair.second->getAttributeByName("LANGUAGE")->quotedString());
+                {
+                    std::string lang = pair.second->getAttributeByName("LANGUAGE")->quotedString();
+                    std::size_t pos = lang.find_first_of('-');
+                    if(pos != std::string::npos && pos > 0)
+                        altAdaptSet->addLang(lang.substr(0, pos));
+                    else if (lang.size() < 4)
+                        altAdaptSet->addLang(lang);
+                }
 
                 if(!altAdaptSet->getRepresentations().empty())
                     period->addAdaptationSet(altAdaptSet);
@@ -556,13 +516,10 @@ M3U8 * M3U8Parser::parse(vlc_object_t *p_object, stream_t *p_stream, const std::
         BaseAdaptationSet *adaptSet = new (std::nothrow) BaseAdaptationSet(period);
         if(adaptSet)
         {
+            period->addAdaptationSet(adaptSet);
             AttributesTag *tag = new AttributesTag(AttributesTag::EXTXSTREAMINF, "");
             tag->addAttribute(new Attribute("URI", playlisturl));
             createAndFillRepresentation(p_object, adaptSet, tag, tagslist);
-            if(!adaptSet->getRepresentations().empty())
-                period->addAdaptationSet(adaptSet);
-            else
-                delete adaptSet;
             delete tag;
         }
     }

@@ -63,32 +63,27 @@ void vlc_timer_destroy (vlc_timer_t timer)
 }
 
 void vlc_timer_schedule (vlc_timer_t timer, bool absolute,
-                         vlc_tick_t value, vlc_tick_t interval)
+                         mtime_t value, mtime_t interval)
 {
     if (timer->handle != INVALID_HANDLE_VALUE)
     {
         DeleteTimerQueueTimer (NULL, timer->handle, INVALID_HANDLE_VALUE);
         timer->handle = INVALID_HANDLE_VALUE;
     }
-    if (value == VLC_TIMER_DISARM)
+    if (value == 0)
         return; /* Disarm */
 
     if (absolute)
     {
-        value -= vlc_tick_now ();
+        value -= mdate ();
         if (value < 0)
             value = 0;
     }
+    value = (value + 999) / 1000;
+    interval = (interval + 999) / 1000;
 
-    DWORD val    = MS_FROM_VLC_TICK(value);
-    DWORD interv = MS_FROM_VLC_TICK(interval);
-    if (val == 0 && value != 0)
-        val = 1; /* rounding error */
-    if (interv == 0 && interval != 0)
-        interv = 1; /* rounding error */
-
-    if (!CreateTimerQueueTimer(&timer->handle, NULL, vlc_timer_do, timer,
-                               val, interv, WT_EXECUTEDEFAULT))
+    if (!CreateTimerQueueTimer (&timer->handle, NULL, vlc_timer_do, timer,
+                                value, interval, WT_EXECUTEDEFAULT))
         abort ();
 }
 

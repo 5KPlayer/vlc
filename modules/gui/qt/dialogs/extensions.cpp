@@ -2,6 +2,7 @@
  * extensions.cpp: Extensions manager for Qt: dialogs manager
  ****************************************************************************
  * Copyright (C) 2009-2010 VideoLAN and authors
+ * $Id: 7b8a732e6c08add04e5692469cf9cc141357bd31 $
  *
  * Authors: Jean-Philippe André < jpeg # videolan.org >
  *
@@ -478,7 +479,7 @@ void ExtensionDialog::UpdateWidgets()
 {
     assert( p_dialog );
     extension_widget_t *p_widget;
-    ARRAY_FOREACH( p_widget, p_dialog->widgets )
+    FOREACH_ARRAY( p_widget, p_dialog->widgets )
     {
         if( !p_widget ) continue; /* Some widgets may be NULL at this point */
         QWidget *widget;
@@ -538,6 +539,7 @@ void ExtensionDialog::UpdateWidgets()
             this->resize( sizeHint() );
         }
     }
+    FOREACH_END()
 }
 
 QWidget* ExtensionDialog::UpdateWidget( extension_widget_t *p_widget )

@@ -2,6 +2,7 @@
  * anaglyph.c : Create an image compatible with anaglyph glasses from a 3D video
  *****************************************************************************
  * Copyright (C) 2000-2012 VLC authors and VideoLAN
+ * $Id: 4d05ab166247928f1e88099b477379aa348be730 $
  *
  * Authors: Antoine Cellerier <dionoea .t videolan d@t org>
  *
@@ -81,10 +82,10 @@ static const char *const ppsz_filter_options[] = {
     "scheme", NULL
 };
 
-typedef struct
+struct filter_sys_t
 {
     int left, right;
-} filter_sys_t;
+};
 
 
 static int Create(vlc_object_t *p_this)

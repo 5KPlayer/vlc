@@ -173,7 +173,7 @@ static struct
 void srand (unsigned int seed)
 {
     pthread_mutex_lock (&prng.lock);
-    LOG("Warning", "%u", seed);
+    LOG("Warning", "%d", seed);
     prng.seed = seed;
     pthread_mutex_unlock (&prng.lock);
 }

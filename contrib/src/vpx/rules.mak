@@ -1,33 +1,34 @@
 # libvpx
 
-VPX_VERSION := 1.8.0
-VPX_URL := http://github.com/webmproject/libvpx/archive/v${VPX_VERSION}.tar.gz
+VPX_VERSION := 1.6.1
+VPX_URL := http://storage.googleapis.com/downloads.webmproject.org/releases/webm/libvpx-$(VPX_VERSION).tar.bz2
 
 PKGS += vpx
 ifeq ($(call need_pkg,"vpx >= 1.5.0"),)
 PKGS_FOUND += vpx
 endif
 
-$(TARBALLS)/libvpx-$(VPX_VERSION).tar.gz:
+$(TARBALLS)/libvpx-$(VPX_VERSION).tar.bz2:
 	$(call download_pkg,$(VPX_URL),vpx)
 
-.sum-vpx: libvpx-$(VPX_VERSION).tar.gz
+.sum-vpx: libvpx-$(VPX_VERSION).tar.bz2
 
-libvpx: libvpx-$(VPX_VERSION).tar.gz .sum-vpx
+libvpx: libvpx-$(VPX_VERSION).tar.bz2 .sum-vpx
 	$(UNPACK)
 	$(APPLY) $(SRC)/vpx/libvpx-mac.patch
 	$(APPLY) $(SRC)/vpx/libvpx-ios.patch
 ifdef HAVE_ANDROID
 	$(APPLY) $(SRC)/vpx/libvpx-android.patch
-	$(APPLY) $(SRC)/vpx/libvpx-android-toolchain_path.patch
+endif
+	$(APPLY) $(SRC)/vpx/0001-ads2gas-Add-a-noelf-option.patch
+	$(APPLY) $(SRC)/vpx/0002-configure-Add-an-armv7-win32-gcc-target.patch
+	$(APPLY) $(SRC)/vpx/0003-configure-Add-an-arm64-win64-gcc-target.patch
+ifdef HAVE_WIN32
+	$(APPLY) $(SRC)/vpx/libvpx-pthread-w32.patch
 endif
 	$(MOVE)
 
 DEPS_vpx =
-
-ifdef HAVE_WIN32
-DEPS_vpx += pthreads $(DEPS_pthreads)
-endif
 
 ifdef HAVE_CROSS_COMPILE
 VPX_CROSS := $(HOST)-
@@ -68,7 +69,11 @@ VPX_OS := android
 else ifdef HAVE_LINUX
 VPX_OS := linux
 else ifdef HAVE_MACOSX
+ifeq ($(OSX_VERSION),10.5)
+VPX_OS := darwin9
+else
 VPX_OS := darwin10
+endif
 VPX_CROSS :=
 else ifdef HAVE_IOS
 ifeq ($(ARCH),$(filter $(ARCH), arm aarch64))
@@ -145,11 +150,10 @@ ifdef HAVE_ANDROID
 # vpx configure.sh overrides our sysroot and it looks for it itself, and
 # uses that path to look for the compiler (which we already know)
 VPX_CONF += --sdk-path=$(shell dirname $(shell which $(HOST)-clang))
-endif
-
+# broken text relocations
 ifneq ($(filter i386 x86_64,$(ARCH)),)
-# broken text relocations or invalid register for .seh_savexmm with gcc8
 VPX_CONF += --disable-mmx
+endif
 endif
 
 ifndef WITH_OPTIMIZATION
@@ -160,6 +164,6 @@ endif
 	cd $< && LDFLAGS="$(VPX_LDFLAGS)" CROSS=$(VPX_CROSS) ./configure --target=$(VPX_TARGET) \
 		$(VPX_CONF) --prefix=$(PREFIX)
 	cd $< && $(MAKE)
-	$(call pkg_static,"vpx.pc")
+	cd $< && ../../../contrib/src/pkg-static.sh vpx.pc
 	cd $< && $(MAKE) install
 	touch $@

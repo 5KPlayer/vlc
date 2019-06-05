@@ -29,7 +29,7 @@ namespace adaptive
         class AlwaysLowestAdaptationLogic : public AbstractAdaptationLogic
         {
             public:
-                AlwaysLowestAdaptationLogic(vlc_object_t *);
+                AlwaysLowestAdaptationLogic();
 
                 virtual BaseRepresentation* getNextRepresentation(BaseAdaptationSet *, BaseRepresentation *);
         };

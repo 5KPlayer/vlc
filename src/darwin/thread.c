@@ -42,27 +42,26 @@
 #include <mach/mach_time.h>
 #include <execinfo.h>
 
-static struct {
-    uint32_t quotient;
-    uint32_t remainder;
-    uint32_t divider;
-} vlc_clock_conversion;
+static mach_timebase_info_data_t vlc_clock_conversion_factor;
 
 static void vlc_clock_setup_once (void)
 {
-    mach_timebase_info_data_t timebase;
-    if (unlikely(mach_timebase_info (&timebase) != 0))
+    if (unlikely(mach_timebase_info (&vlc_clock_conversion_factor) != 0))
         abort ();
-    lldiv_t d = lldiv (timebase.numer, timebase.denom);
-    vlc_clock_conversion.quotient = (uint32_t)d.quot;
-    vlc_clock_conversion.remainder = (uint32_t)d.rem;
-    vlc_clock_conversion.divider = timebase.denom;
 }
 
 static pthread_once_t vlc_clock_once = PTHREAD_ONCE_INIT;
 
 #define vlc_clock_setup() \
     pthread_once(&vlc_clock_once, vlc_clock_setup_once)
+
+static struct timespec mtime_to_ts (mtime_t date)
+{
+    lldiv_t d = lldiv (date, CLOCK_FREQ);
+    struct timespec ts = { d.quot, d.rem * (1000000000 / CLOCK_FREQ) };
+
+    return ts;
+}
 
 /* Print a backtrace to the standard error for debugging purpose. */
 void vlc_trace (const char *fn, const char *file, unsigned line)
@@ -151,21 +150,33 @@ void vlc_mutex_destroy (vlc_mutex_t *p_mutex)
     VLC_THREAD_ASSERT ("destroying mutex");
 }
 
+#ifndef NDEBUG
+# ifdef HAVE_VALGRIND_VALGRIND_H
+#  include <valgrind/valgrind.h>
+# else
+#  define RUNNING_ON_VALGRIND (0)
+# endif
+
+void vlc_assert_locked (vlc_mutex_t *p_mutex)
+{
+    if (RUNNING_ON_VALGRIND > 0)
+        return;
+    assert (pthread_mutex_lock (p_mutex) == EDEADLK);
+}
+#endif
+
 void vlc_mutex_lock (vlc_mutex_t *p_mutex)
 {
     int val = pthread_mutex_lock( p_mutex );
     VLC_THREAD_ASSERT ("locking mutex");
-    vlc_mutex_mark(p_mutex);
 }
 
 int vlc_mutex_trylock (vlc_mutex_t *p_mutex)
 {
     int val = pthread_mutex_trylock( p_mutex );
 
-    if (val != EBUSY) {
+    if (val != EBUSY)
         VLC_THREAD_ASSERT ("locking mutex");
-        vlc_mutex_mark(p_mutex);
-    }
     return val;
 }
 
@@ -173,7 +184,6 @@ void vlc_mutex_unlock (vlc_mutex_t *p_mutex)
 {
     int val = pthread_mutex_unlock( p_mutex );
     VLC_THREAD_ASSERT ("unlocking mutex");
-    vlc_mutex_unmark(p_mutex);
 }
 
 void vlc_cond_init (vlc_cond_t *p_condvar)
@@ -234,22 +244,22 @@ void vlc_cond_wait (vlc_cond_t *p_condvar, vlc_mutex_t *p_mutex)
 }
 
 int vlc_cond_timedwait (vlc_cond_t *p_condvar, vlc_mutex_t *p_mutex,
-                        vlc_tick_t deadline)
+                        mtime_t deadline)
 {
     /* according to POSIX standards, cond_timedwait should be a cancellation point
      * Of course, Darwin does not care */
     pthread_testcancel();
 
     /*
-     * vlc_tick_now() is the monotonic clock, pthread_cond_timedwait expects
+     * mdate() is the monotonic clock, pthread_cond_timedwait expects
      * origin of gettimeofday(). Use timedwait_relative_np() instead.
      */
-    vlc_tick_t base = vlc_tick_now();
+    mtime_t base = mdate();
     deadline -= base;
     if (deadline < 0)
         deadline = 0;
 
-    struct timespec ts = timespec_from_vlc_tick(deadline);
+    struct timespec ts = mtime_to_ts(deadline);
     int val = pthread_cond_timedwait_relative_np(p_condvar, p_mutex, &ts);
     if (val != ETIMEDOUT)
         VLC_THREAD_ASSERT ("timed-waiting on condition");
@@ -275,7 +285,7 @@ int vlc_cond_timedwait_daytime (vlc_cond_t *p_condvar, vlc_mutex_t *p_mutex,
      * time deadline is passed, even if the real time is adjusted in between.
      * This is not fulfilled, as described above.
      */
-    struct timespec ts = { deadline, 0 };
+    struct timespec ts = mtime_to_ts(deadline);
     int val = pthread_cond_timedwait(p_condvar, p_mutex, &ts);
 
     if (val != ETIMEDOUT)
@@ -357,12 +367,6 @@ void vlc_rwlock_unlock (vlc_rwlock_t *lock)
 {
     int val = pthread_rwlock_unlock (lock);
     VLC_THREAD_ASSERT ("releasing R/W lock");
-}
-
-void vlc_once(vlc_once_t *once, void (*cb)(void))
-{
-    int val = pthread_once(once, cb);
-    VLC_THREAD_ASSERT("initializing once");
 }
 
 int vlc_threadvar_create (vlc_threadvar_t *key, void (*destr) (void *))
@@ -509,28 +513,35 @@ void vlc_control_cancel (int cmd, ...)
     vlc_assert_unreachable ();
 }
 
-vlc_tick_t vlc_tick_now (void)
+mtime_t mdate (void)
 {
     vlc_clock_setup();
     uint64_t date = mach_absolute_time();
 
-    date = date * vlc_clock_conversion.quotient +
-        date * vlc_clock_conversion.remainder / vlc_clock_conversion.divider;
-    return VLC_TICK_FROM_NS(date);
+    /* denom is uint32_t, switch to 64 bits to prevent overflow. */
+    uint64_t denom = vlc_clock_conversion_factor.denom;
+
+    /* Switch to microsecs */
+    denom *= 1000LL;
+
+    /* Split the division to prevent overflow */
+    lldiv_t d = lldiv (vlc_clock_conversion_factor.numer, denom);
+
+    return (d.quot * date) + ((d.rem * date) / denom);
 }
 
-#undef vlc_tick_wait
-void vlc_tick_wait (vlc_tick_t deadline)
+#undef mwait
+void mwait (mtime_t deadline)
 {
-    deadline -= vlc_tick_now ();
+    deadline -= mdate ();
     if (deadline > 0)
-        vlc_tick_sleep (deadline);
+        msleep (deadline);
 }
 
-#undef vlc_tick_sleep
-void vlc_tick_sleep (vlc_tick_t delay)
+#undef msleep
+void msleep (mtime_t delay)
 {
-    struct timespec ts = timespec_from_vlc_tick (delay);
+    struct timespec ts = mtime_to_ts (delay);
 
     /* nanosleep uses mach_absolute_time and mach_wait_until internally,
        but also handles kernel errors. Thus we use just this. */

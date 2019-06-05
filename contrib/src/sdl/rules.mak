@@ -31,6 +31,7 @@ SDLCONF := $(HOSTCONF) \
 	--disable-file \
 	--disable-assembly \
 	--disable-video-x11 \
+	--disable-video-aalib \
 	--disable-video-dga \
 	--disable-video-fbcon \
 	--disable-video-directfb \

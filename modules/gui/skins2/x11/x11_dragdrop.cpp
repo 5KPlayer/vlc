@@ -2,6 +2,7 @@
  * x11_dragdrop.cpp
  *****************************************************************************
  * Copyright (C) 2003 the VideoLAN team
+ * $Id: 9244a2532e9c167023384abeba9489e187e83f1f $
  *
  * Authors: Cyril Deguet     <asmax@via.ecp.fr>
  *          Olivier Teulière <ipkiss@via.ecp.fr>
@@ -60,10 +61,9 @@ void X11DragDrop::dndEnter( ldata_t data )
         unsigned long nitems, nbytes;
         Atom *dataList;
         Atom typeListAtom = XInternAtom( XDISPLAY, "XdndTypeList", 0 );
-        if( XGetWindowProperty( XDISPLAY, src, typeListAtom, 0, 65536,
-                      False, XA_ATOM, &type, &format, &nitems, &nbytes,
-                      (unsigned char**)&dataList ) != Success )
-            return;
+        XGetWindowProperty( XDISPLAY, src, typeListAtom, 0, 65536, False,
+                            XA_ATOM, &type, &format, &nitems, &nbytes,
+                            (unsigned char**)&dataList );
         for( unsigned long i=0; i<nitems; i++ )
         {
             std::string dataType = XGetAtomName( XDISPLAY, dataList[i] );
@@ -88,28 +88,20 @@ void X11DragDrop::dndEnter( ldata_t data )
     for( it = dataTypes.begin(); it != dataTypes.end(); ++it )
         msg_Dbg( getIntf(), "D&D data type: %s", (*it).c_str() );
 
-    // data formats we accept sorted by preference
-    static const char* preferred[] = {
-       "text/uri-list",
-       "text/plain;charset=utf-8",
-       "text/plain",
-       "UTF8_STRING",
-       "STRING",
-    };
+    // Find the right target
     m_target = None;
-    for( unsigned i = 0; i < sizeof(preferred)/sizeof(preferred[0]); i++ )
+    for( it = dataTypes.begin(); it != dataTypes.end(); ++it )
     {
-        for( it = dataTypes.begin(); it != dataTypes.end(); ++it )
+        if( *it == "text/uri-list" ||
+            *it == "text/plain" ||
+            *it == "text/plain;charset=utf-8" ||
+            *it == "STRING" ||
+            *it == "UTF8_STRING" )
         {
-            if( *it == preferred[i] )
-            {
-                m_target = XInternAtom( XDISPLAY, (*it).c_str(), 0 );
-                msg_Dbg( getIntf(), "Selected type: %s", (*it).c_str() );
-                break;
-            }
-        }
-        if( m_target != None )
+            m_target = XInternAtom( XDISPLAY, (*it).c_str(), 0 );
+            msg_Dbg( getIntf(), "D&D data type chosen: %s", (*it).c_str() );
             break;
+        }
     }
 
     // transmit DragEnter event
@@ -170,44 +162,32 @@ void X11DragDrop::dndDrop( ldata_t data )
     Window src = data[0];
     Time time = data[2];
 
-    // Convert the selection into the given target
     Atom selectionAtom = XInternAtom( XDISPLAY, "XdndSelection", 0 );
     Atom propAtom = XInternAtom( XDISPLAY, "VLC_SELECTION", 0 );
-    XConvertSelection( XDISPLAY, selectionAtom, m_target, propAtom,
-                       m_wnd, time );
-
-
-    // Tell the source we accepted the drop
-    Atom actionAtom = XInternAtom( XDISPLAY, "XdndActionCopy", 0 );
-    Atom typeAtom = XInternAtom( XDISPLAY, "XdndFinished", 0 );
-    XEvent event;
-    event.type = ClientMessage;
-    event.xclient.window = src;
-    event.xclient.display = XDISPLAY;
-    event.xclient.message_type = typeAtom;
-    event.xclient.format = 32;
-    event.xclient.data.l[0] = m_wnd;
-    event.xclient.data.l[1] = 1;            // drop accepted
-    event.xclient.data.l[2] = actionAtom;
-    XSendEvent( XDISPLAY, src, False, 0, &event );
-}
-
-
-void X11DragDrop::dndSelectionNotify( )
-{
-    std::list<std::string> files;
+    // Convert the selection into the given target
+    XConvertSelection( XDISPLAY, selectionAtom, m_target, propAtom, src,
+                       time );
+    // Needed to ensure XGetWindowProperty returns something
+    XSync( XDISPLAY, False );
 
     // Read the selection
     Atom type;
     int format;
     unsigned long nitems, nbytes_after_return;
     char *buffer;
-    Atom propAtom = XInternAtom( XDISPLAY, "VLC_SELECTION", 0 );
-    int ret = XGetWindowProperty( XDISPLAY, m_wnd, propAtom, 0, 65536, True,
-                                  AnyPropertyType, &type, &format, &nitems,
-                                  &nbytes_after_return,
-                                  (unsigned char**)&buffer );
-    if( ret == Success && buffer != NULL )
+    long length_max = 1024;
+    XGetWindowProperty( XDISPLAY, src, propAtom, 0, length_max, False,
+                        AnyPropertyType, &type, &format, &nitems,
+                        &nbytes_after_return, (unsigned char**)&buffer );
+    if( buffer && nbytes_after_return > 0 )
+    {
+        XFree( buffer );
+        length_max += nbytes_after_return;
+        XGetWindowProperty( XDISPLAY, src, propAtom, 0, length_max, False,
+                        AnyPropertyType, &type, &format, &nitems,
+                        &nbytes_after_return, (unsigned char**)&buffer );
+    }
+    if( buffer != NULL )
     {
         msg_Dbg( getIntf(), "buffer received: %s", buffer );
         char* psz_dup = strdup( buffer );
@@ -234,11 +214,26 @@ void X11DragDrop::dndSelectionNotify( )
         }
         free( psz_dup );
         XFree( buffer );
-
-        // transmit DragDrop event
-        EvtDragDrop evt( getIntf(), m_xPos, m_yPos, files );
-        m_pWin->processEvent( evt );
     }
+
+    Atom actionAtom = XInternAtom( XDISPLAY, "XdndActionCopy", 0 );
+    Atom typeAtom = XInternAtom( XDISPLAY, "XdndFinished", 0 );
+
+    // Tell the source we accepted the drop
+    XEvent event;
+    event.type = ClientMessage;
+    event.xclient.window = src;
+    event.xclient.display = XDISPLAY;
+    event.xclient.message_type = typeAtom;
+    event.xclient.format = 32;
+    event.xclient.data.l[0] = m_wnd;
+    event.xclient.data.l[1] = 1;            // drop accepted
+    event.xclient.data.l[2] = actionAtom;
+    XSendEvent( XDISPLAY, src, False, 0, &event );
+
+    // transmit DragDrop event
+    EvtDragDrop evt( getIntf(), m_xPos, m_yPos, files );
+    m_pWin->processEvent( evt );
 }
 
 #endif

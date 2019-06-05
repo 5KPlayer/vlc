@@ -2,6 +2,7 @@
  * cdda.c : CD digital audio input module for vlc
  *****************************************************************************
  * Copyright (C) 2000, 2003-2006, 2008-2009 VLC authors and VideoLAN
+ * $Id: e52594d30d746f58439619443cefab88e63c16ea $
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *          Gildas Bazin <gbazin@netcourrier.com>
@@ -39,25 +40,17 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
-#include <ctype.h>
 
 #include <vlc_common.h>
 #include <vlc_demux.h>
 #include <vlc_plugin.h>
-#include <vlc_input_item.h>
+#include <vlc_input.h>
 #include <vlc_access.h>
 #include <vlc_meta.h>
 #include <vlc_charset.h> /* ToLocaleDup */
 #include <vlc_url.h>
-#include <vlc_strings.h>
-#include <vlc_memstream.h>
-#ifdef HAVE_GCRYPT
-# include <gcrypt.h>
-# include <vlc_gcrypt.h>
-#endif
 
 #include "vcd/cdrom.h"  /* For CDDA_DATA_SIZE */
-#include "../misc/webservices/musicbrainz.h"
 
 #ifdef HAVE_LIBCDDB
  #include <cddb/cddb.h>
@@ -122,7 +115,7 @@ static vcddev_t *DiscOpen(vlc_object_t *obj, const char *location,
 /* how many blocks Demux() will read in each iteration */
 #define CDDA_BLOCKS_ONCE 20
 
-typedef struct
+struct demux_sys_t
 {
     vcddev_t    *vcddev;                            /* vcd device descriptor */
     es_out_id_t *es;
@@ -131,7 +124,7 @@ typedef struct
     unsigned start; /**< Track first sector */
     unsigned length; /**< Track total sectors */
     unsigned position; /**< Current offset within track sectors */
-} demux_sys_t;
+};
 
 static int Demux(demux_t *demux)
 {
@@ -163,11 +156,11 @@ static int Demux(demux_t *demux)
     sys->position += count;
 
     block->i_nb_samples = block->i_buffer / 4;
-    block->i_dts = block->i_pts = date_Get(&sys->pts);
+    block->i_dts = block->i_pts = VLC_TS_0 + date_Get(&sys->pts);
     date_Increment(&sys->pts, block->i_nb_samples);
 
     es_out_Send(demux->out, sys->es, block);
-    es_out_SetPCR(demux->out, date_Get(&sys->pts));
+    es_out_SetPCR(demux->out, VLC_TS_0 + date_Get(&sys->pts));
     return VLC_DEMUXER_SUCCESS;
 }
 
@@ -187,8 +180,8 @@ static int DemuxControl(demux_t *demux, int query, va_list args)
             *va_arg(args, bool*) = true;
             break;
         case DEMUX_GET_PTS_DELAY:
-            *va_arg(args, vlc_tick_t *) =
-                VLC_TICK_FROM_MS( var_InheritInteger(demux, "disc-caching") );
+            *va_arg(args, int64_t *) =
+                INT64_C(1000) * var_InheritInteger(demux, "disc-caching");
             break;
 
         case DEMUX_SET_PAUSE_STATE:
@@ -204,13 +197,13 @@ static int DemuxControl(demux_t *demux, int query, va_list args)
             break;
 
         case DEMUX_GET_LENGTH:
-            *va_arg(args, vlc_tick_t *) = (INT64_C(40000) * sys->length) / 3;
+            *va_arg(args, mtime_t *) = (INT64_C(40000) * sys->length) / 3;
             break;
         case DEMUX_GET_TIME:
-            *va_arg(args, vlc_tick_t *) = (INT64_C(40000) * sys->position) / 3;
+            *va_arg(args, mtime_t *) = (INT64_C(40000) * sys->position) / 3;
             break;
         case DEMUX_SET_TIME:
-            sys->position = (va_arg(args, vlc_tick_t) * 3) / INT64_C(40000);
+            sys->position = (va_arg(args, mtime_t) * 3) / INT64_C(40000);
             break;
 
         default:
@@ -219,72 +212,17 @@ static int DemuxControl(demux_t *demux, int query, va_list args)
     return VLC_SUCCESS;
 }
 
-/*
- * Check for Mixed Audio/CDROM data
- *
- * ioctl will return first track # and last track # from last TOC
- * (this could start > 1..  but where's the case ?)
- *
- * vcdev_toc stores i_tracks as the number of STORED sectors info,
- * this is last - first track, plus one (the LEADOUT one)
- *
- * tracks can be DATA in mixed data/audio mode (CDROM spec, not CDDA)
- * and this is control flag (Subcode Channel Q)
- *
- * first: 1 last 13
- * track:   1 lba:         0 (        0) 00:02:00 adr: 1 control: 0 mode: -1
- * track:   2 lba:     16462 (    65848) 03:41:37 adr: 1 control: 0 mode: -1
- * ...
- * track:  12 lba:    212405 (   849620) 47:14:05 adr: 1 control: 0 mode: -1
- * track:  13 lba:    250948 (  1003792) 55:47:73 adr: 1 control: 4 mode: -1
- * track:lout lba:    266286 (  1065144) 59:12:36 adr: 1 control: 4 mode: -1
-*/
-static int TOC_GetAudioRange(vcddev_toc_t *p_toc,
-                             int *pi_first, int *pi_last)
-{
-    if( p_toc->i_tracks < 1 )
-        return 0;
-
-    int i_first = p_toc->i_first_track;
-    int i_last = p_toc->i_last_track;
-    for(int i=i_first; i<p_toc->i_tracks; i++)
-    {
-        if((p_toc->p_sectors[i - 1].i_control & CD_ROM_DATA_FLAG) == 0)
-            break;
-        i_first++;
-    }
-    for(int i=i_last; i > 0; i--)
-    {
-        if((p_toc->p_sectors[i - 1].i_control & CD_ROM_DATA_FLAG) == 0)
-            break;
-        i_last--;
-    }
-
-    /* FIX copy protection TOC
-     * https://github.com/metabrainz/libdiscid/blob/e46249415eb6d657ecc63667b03d670a4347712f/src/toc.c#L101 */
-    do
-    {
-        vcddev_sector_t *p_last = &p_toc->p_sectors[i_last - p_toc->i_first_track];
-        vcddev_sector_t *p_lout = &p_toc->p_sectors[p_toc->i_tracks];
-        if(p_lout->i_lba > p_last->i_lba || i_last <= i_first)
-            break;
-        /* last audio is invalid, bigger than lead out */
-        i_last = i_last - 1;
-        p_toc->i_last_track = i_last;
-        p_last->i_lba -= CD_ROM_XA_INTERVAL;
-        p_toc->i_tracks--; /* change lead out */
-    } while( i_last > i_first );
-
-    *pi_first = i_first;
-    *pi_last = i_last;
-    return (i_last >= i_first) ? i_last - i_first + 1 : 0;
-}
-
-static int DemuxOpen(vlc_object_t *obj, vcddev_t *dev, unsigned track)
+static int DemuxOpen(vlc_object_t *obj)
 {
     demux_t *demux = (demux_t *)obj;
+    unsigned track;
 
-    if (demux->out == NULL)
+    vcddev_t *dev = DiscOpen(obj, demux->psz_location, demux->psz_file,
+                             &track);
+    if (dev == NULL)
+        return VLC_EGENERIC;
+
+    if (track == 0 /* Whole disc -> use access plugin */)
         goto error;
 
     demux_sys_t *sys = vlc_obj_malloc(obj, sizeof (*sys));
@@ -299,29 +237,19 @@ static int DemuxOpen(vlc_object_t *obj, vcddev_t *dev, unsigned track)
     /* Track number in input item */
     if (sys->start == (unsigned)-1 || sys->length == (unsigned)-1)
     {
-        vcddev_toc_t *p_toc = ioctl_GetTOC(obj, dev, true);
-        if(p_toc == NULL)
-            goto error;
+        int *sectors = NULL; /* Track sectors */
+        unsigned titles = ioctl_GetTracksMap(obj, dev, &sectors);
 
-        int i_cdda_tracks, i_cdda_first, i_cdda_last;
-        i_cdda_tracks = TOC_GetAudioRange(p_toc, &i_cdda_first, &i_cdda_last);
-
-        if (track == 0 || track > (unsigned) i_cdda_tracks)
+        if (track > titles)
         {
-            msg_Err(obj, "invalid track number: %u/%i", track, i_cdda_tracks);
-            vcddev_toc_Free(p_toc);
+            msg_Err(obj, "invalid track number: %u/%u", track, titles);
+            free(sectors);
             goto error;
         }
 
-        track--;
-        int i_first_sector = p_toc->p_sectors[track].i_lba;
-        int i_last_sector = p_toc->p_sectors[track + 1].i_lba;
-        if(i_cdda_first + track == (unsigned) i_cdda_last && p_toc->i_last_track > i_cdda_last)
-            i_last_sector -= CD_ROM_XA_INTERVAL;
-
-        sys->start = i_first_sector;
-        sys->length = i_last_sector - i_first_sector;
-        vcddev_toc_Free(p_toc);
+        sys->start = sectors[track - 1];
+        sys->length = sectors[track] - sys->start;
+        free(sectors);
     }
 
     es_format_t fmt;
@@ -332,7 +260,7 @@ static int DemuxOpen(vlc_object_t *obj, vcddev_t *dev, unsigned track)
     sys->es = es_out_Add(demux->out, &fmt);
 
     date_Init(&sys->pts, 44100, 1);
-    date_Set(&sys->pts, VLC_TICK_0);
+    date_Set(&sys->pts, 0);
 
     sys->position = 0;
     demux->pf_demux = Demux;
@@ -344,171 +272,37 @@ error:
     return VLC_EGENERIC;
 }
 
+static void DemuxClose(vlc_object_t *obj)
+{
+    demux_t *demux = (demux_t *)obj;
+    demux_sys_t *sys = demux->p_sys;
+
+    ioctl_Close(obj, sys->vcddev);
+}
+
 /*****************************************************************************
  * Access: local prototypes
  *****************************************************************************/
-typedef struct
+struct access_sys_t
 {
     vcddev_t    *vcddev;                            /* vcd device descriptor */
-    vcddev_toc_t *p_toc;                            /* Tracks TOC */
-    int          i_cdda_tracks;                     /* # of audio tracks in TOC */
-    int          i_cdda_first;                      /* First .. */
-    int          i_cdda_last;                       /* Last .. */
+    int         *p_sectors;                                 /* Track sectors */
+    int          titles;
     int          cdtextc;
     vlc_meta_t **cdtextv;
 #ifdef HAVE_LIBCDDB
     cddb_disc_t *cddb;
 #endif
-    musicbrainz_recording_t *mbrecord;
-} access_sys_t;
-
-static inline int LBAPregap( int i_sector )
-{
-    /* LBA to sector pregap fixup
-       see libdiscid/src/toc.c #L80 */
-    return i_sector + 150;
-}
-
-#ifdef HAVE_GCRYPT
-static char * BuildMusicbrainzDiscID( const vcddev_toc_t *p_toc,
-                                      int i_total, int i_first, int i_last )
-{
-    gcry_md_hd_t hd;
-    gcry_error_t err = gcry_md_open( &hd, GCRY_MD_SHA1, 0 );
-    if(err)
-        return NULL;
-
-    if(gcry_md_enable( hd, GCRY_MD_SHA1 ))
-    {
-        gcry_md_close( hd );
-        return NULL;
-    }
-
-    char buffer[16];
-
-    sprintf( buffer, "%02X", i_first );
-    gcry_md_write( hd, buffer, 2 );
-    sprintf( buffer, "%02X", i_last );
-    gcry_md_write( hd, buffer, 2 );
-    /* LEAD OUT sector info */
-
-    /* LEAD OUT sector info
-     * https://github.com/metabrainz/libdiscid/blob/e46249415eb6d657ecc63667b03d670a4347712f/src/toc.c#L90 */
-    int i_last_track_end;
-    if (p_toc->i_tracks > i_total)
-        i_last_track_end = LBAPregap(p_toc->p_sectors[i_total].i_lba) - CD_ROM_XA_INTERVAL;
-    else
-        i_last_track_end = LBAPregap(p_toc->p_sectors[p_toc->i_tracks].i_lba);
-
-    sprintf( buffer, "%08X", i_last_track_end );
-    gcry_md_write( hd, buffer, 8 );
-
-    for( int i = 0; i<i_total; i++ ) /* skip LEAD OUT */
-    {
-        sprintf( buffer, "%08X", LBAPregap(p_toc->p_sectors[i].i_lba) );
-        gcry_md_write( hd, buffer, 8 );
-    }
-
-    for( int i = i_total; i<100; i++ )
-    {
-        if( i == p_toc->i_tracks )
-            continue;
-        gcry_md_write( hd, "00000000", 8 );
-    }
-
-    gcry_md_final( hd );
-
-    size_t i_len = gcry_md_get_algo_dlen( GCRY_MD_SHA1 );
-    unsigned char *output = gcry_md_read( hd, GCRY_MD_SHA1 );
-    char *out = vlc_b64_encode_binary( output, i_len );
-    if( out )
-    {
-        i_len = strlen( out );
-        for( size_t i=0; i<i_len; i++ )
-        {
-            if( !isalpha(out[i]) )
-            {
-                if( out[i] == '+' )
-                    out[i] = '.';
-                else if( out[i] == '/' )
-                    out[i] = '_';
-                else if( out[i] == '=' )
-                    out[i] = '-';
-            }
-        }
-    }
-
-    gcry_md_close( hd );
-
-    return out;
-}
-#else
-# define BuildMusicbrainzDiscID(a, b, c, d) (NULL)
-#endif
-
-static musicbrainz_recording_t * GetMusicbrainzInfo( vlc_object_t *obj,
-                                                     const vcddev_toc_t *p_toc,
-                                                     int i_total, int i_first, int i_last )
-{
-    musicbrainz_recording_t *recording = NULL;
-
-    char *psz_mbserver = var_InheritString( obj, "musicbrainz-server" );
-    if( !psz_mbserver || !*psz_mbserver )
-        return NULL;
-
-    musicbrainz_config_t cfg = { .obj = obj,
-                                 .psz_mb_server = psz_mbserver,
-                                 .psz_coverart_server = NULL };
-
-    /* Build DISC ID based on SHA1 */
-    char *psz_disc_id = BuildMusicbrainzDiscID( p_toc,
-                                                i_total, i_first, i_last );
-    if( psz_disc_id )
-    {
-        recording = musicbrainz_lookup_recording_by_discid( &cfg, psz_disc_id );
-    }
-    else /* Fuzzy lookup using TOC */
-    {
-        struct vlc_memstream ms;
-        if( vlc_memstream_open(&ms) )
-        {
-            free( psz_mbserver );
-            return NULL;
-        }
-
-        vlc_memstream_printf(&ms, "toc=%u+%u", i_first, i_last );
-        /* LEAD OUT sector info
-         * https://github.com/metabrainz/libdiscid/blob/e46249415eb6d657ecc63667b03d670a4347712f/src/toc.c#L90 */
-        int i_last_track_end;
-        if (p_toc->i_tracks > i_total)
-            i_last_track_end = LBAPregap(p_toc->p_sectors[i_total].i_lba) - CD_ROM_XA_INTERVAL;
-        else
-            i_last_track_end = LBAPregap(p_toc->p_sectors[p_toc->i_tracks].i_lba);
-        vlc_memstream_printf(&ms, "+%u", i_last_track_end );
-        for( int i = 0; i<i_total; i++ ) /* skipped LEAD OUT, audio only */
-            vlc_memstream_printf(&ms, "+%u", LBAPregap(p_toc->p_sectors[i].i_lba) );
-        if( vlc_memstream_flush(&ms) )
-        {
-            if( vlc_memstream_close(&ms) )
-                free( ms.ptr );
-            free( psz_mbserver );
-            return NULL;
-        }
-
-        recording = musicbrainz_lookup_recording_by_toc( &cfg, ms.ptr );
-
-        if( vlc_memstream_close(&ms) == 0 )
-            free( ms.ptr );
-    }
-
-    free( psz_mbserver );
-    return recording;
-}
+};
 
 #ifdef HAVE_LIBCDDB
-static cddb_disc_t *GetCDDBInfo( vlc_object_t *obj, const vcddev_toc_t *p_toc )
+static cddb_disc_t *GetCDDBInfo( vlc_object_t *obj, int i_titles, int *p_sectors )
 {
-    msg_Dbg( obj, "retrieving metadata with CDDB" );
+    if( !var_InheritBool( obj, "metadata-network-access" ) )
+    {
+        msg_Dbg( obj, "album art policy set to manual: not fetching" );
+        return NULL;
+    }
 
     /* */
     cddb_conn_t *p_cddb = cddb_new();
@@ -558,17 +352,17 @@ static cddb_disc_t *GetCDDBInfo( vlc_object_t *obj, const vcddev_toc_t *p_toc )
     }
 
     int64_t i_length = 2000000; /* PreGap */
-    for( int i = 0; i < p_toc->i_tracks; i++ )
+    for( int i = 0; i < i_titles; i++ )
     {
         cddb_track_t *t = cddb_track_new();
-        cddb_track_set_frame_offset( t, p_toc->p_sectors[i].i_lba + 150 );  /* Pregap offset */
+        cddb_track_set_frame_offset( t, p_sectors[i] + 150 );  /* Pregap offset */
 
         cddb_disc_add_track( p_disc, t );
-        const int64_t i_size = ( p_toc->p_sectors[i+1].i_lba - p_toc->p_sectors[i].i_lba ) *
+        const int64_t i_size = ( p_sectors[i+1] - p_sectors[i] ) *
                                (int64_t)CDDA_DATA_SIZE;
         i_length += INT64_C(1000000) * i_size / 44100 / 4  ;
 
-        msg_Dbg( obj, "Track %i offset: %i", i, p_toc->p_sectors[i].i_lba + 150 );
+        msg_Dbg( obj, "Track %i offset: %i", i, p_sectors[i] + 150 );
     }
 
     msg_Dbg( obj, "Total length: %i", (int)(i_length/1000000) );
@@ -596,8 +390,6 @@ static cddb_disc_t *GetCDDBInfo( vlc_object_t *obj, const vcddev_toc_t *p_toc )
 
     cddb_read( p_cddb, p_disc );
 
-    msg_Dbg( obj, "disc ID: 0x%08x", cddb_disc_get_discid(p_disc) );
-
     cddb_destroy( p_cddb);
     return p_disc;
 
@@ -605,7 +397,6 @@ error:
     if( p_disc )
         cddb_disc_destroy( p_disc );
     cddb_destroy( p_cddb );
-    msg_Dbg( obj, "CDDB failure" );
     return NULL;
 }
 #endif /* HAVE_LIBCDDB */
@@ -650,7 +441,7 @@ static void AccessGetMeta(stream_t *access, vlc_meta_t *meta)
         str = cddb_disc_get_artist(sys->cddb);
         if (NONEMPTY(str))
         {
-            for (int i = 0; i < sys->p_toc->i_tracks; i++)
+            for (int i = 0; i < sys->titles; i++)
             {
                 cddb_track_t *t = cddb_disc_get_track(sys->cddb, i);
                 if (t == NULL)
@@ -677,33 +468,21 @@ static void AccessGetMeta(stream_t *access, vlc_meta_t *meta)
 static int ReadDir(stream_t *access, input_item_node_t *node)
 {
     access_sys_t *sys = access->p_sys;
-    const vcddev_toc_t *p_toc = sys->p_toc;
 
     /* Build title table */
-    const int i_start_track_offset = sys->i_cdda_first - sys->p_toc->i_first_track;
-    for (int i = 0; i < sys->i_cdda_tracks; i++)
+    for (int i = 0; i < sys->titles; i++)
     {
-        if(i < i_start_track_offset)
-            continue;
-
-        msg_Dbg(access, "track[%d] start=%d", i, p_toc->p_sectors[i].i_lba);
+        msg_Dbg(access, "track[%d] start=%d", i, sys->p_sectors[i]);
 
         /* Initial/default name */
         char *name;
 
-        if (unlikely(asprintf(&name, _("Audio CD - Track %02i"),
-                              i - i_start_track_offset + 1 ) == -1))
+        if (unlikely(asprintf(&name, _("Audio CD - Track %02i"), i + 1) == -1))
             name = NULL;
 
         /* Create playlist items */
-        int i_first_sector = p_toc->p_sectors[i].i_lba;
-        int i_last_sector = p_toc->p_sectors[i + 1].i_lba;
-        if(sys->i_cdda_first + i == sys->i_cdda_last &&
-           p_toc->i_last_track > sys->i_cdda_last)
-            i_last_sector -= CD_ROM_XA_INTERVAL;
-
-        const vlc_tick_t duration =
-            (vlc_tick_t)(i_last_sector - i_first_sector)
+        const mtime_t duration =
+            (mtime_t)(sys->p_sectors[i + 1] - sys->p_sectors[i])
             * CDDA_DATA_SIZE * CLOCK_FREQ / 44100 / 2 / 2;
 
         input_item_t *item = input_item_NewDisc(access->psz_url,
@@ -722,13 +501,14 @@ static int ReadDir(stream_t *access, input_item_node_t *node)
         }
 
         if (likely(asprintf(&opt, "cdda-first-sector=%i",
-                            p_toc->p_sectors[i].i_lba) != -1))
+                            sys->p_sectors[i]) != -1))
         {
             input_item_AddOption(item, opt, VLC_INPUT_OPTION_TRUSTED);
             free(opt);
         }
 
-        if (likely(asprintf(&opt, "cdda-last-sector=%i", i_last_sector) != -1))
+        if (likely(asprintf(&opt, "cdda-last-sector=%i",
+                            sys->p_sectors[i + 1]) != -1))
         {
             input_item_AddOption(item, opt, VLC_INPUT_OPTION_TRUSTED);
             free(opt);
@@ -775,37 +555,6 @@ static int ReadDir(stream_t *access, input_item_node_t *node)
             ON_EMPTY(description, vlc_meta_Get(m, vlc_meta_Description));
         }
 
-        if(sys->mbrecord && sys->mbrecord->i_release)
-        {
-            musicbrainz_release_t *r = sys->mbrecord->p_releases;
-            for(size_t j=0; j<r->i_tracks; j++)
-            {
-                if(r->p_tracks[j].i_index == (unsigned)i + 1)
-                {
-                    if (r->p_tracks[j].psz_title)
-                    {
-                        ON_EMPTY(title, r->p_tracks[j].psz_title);
-                        ON_EMPTY(artist, r->p_tracks[j].psz_artist);
-                    }
-                    break;
-                }
-            }
-            ON_EMPTY(album, r->psz_title);
-            if(NONEMPTY(r->psz_artist))
-            {
-                artist = r->psz_artist;
-                input_item_SetAlbumArtist(item, r->psz_artist);
-            }
-            if(year == 0 && r->psz_date)
-            {
-                unsigned i_year;
-                if(sscanf(r->psz_date, "%4d", &i_year) == 1)
-                    year = i_year;
-            }
-            if(NONEMPTY(r->psz_coverart_url))
-                input_item_SetArtworkURL(item, r->psz_coverart_url);
-        }
-
         if (NONEMPTY(title))
         {
             input_item_SetName(item, title);
@@ -833,10 +582,8 @@ static int ReadDir(stream_t *access, input_item_node_t *node)
         }
 
         char num[4];
-        if(snprintf(num, sizeof (num), "%u", i + 1) < 4)
-            input_item_SetTrackNum(item, num);
-        snprintf(num, sizeof (num), "%u", p_toc->i_tracks);
-        input_item_SetTrackTotal(item, num);
+        snprintf(num, sizeof (num), "%d", i + 1);
+        input_item_SetTrackNum(item, num);
 
         input_item_node_AppendItem(node, item);
         input_item_Release(item);
@@ -856,10 +603,22 @@ static int AccessControl(stream_t *access, int query, va_list args)
     return access_vaDirectoryControlHelper(access, query, args);
 }
 
-static int AccessOpen(vlc_object_t *obj, vcddev_t *dev)
+static int AccessOpen(vlc_object_t *obj)
 {
     stream_t *access = (stream_t *)obj;
-    /* Only whole discs here */
+    unsigned track;
+
+    vcddev_t *dev = DiscOpen(obj, access->psz_location, access->psz_filepath,
+                             &track);
+    if (dev == NULL)
+        return VLC_EGENERIC;
+
+    if (track != 0 /* Only whole discs here */)
+    {
+        ioctl_Close(obj, dev);
+        return VLC_EGENERIC;
+    }
+
     access_sys_t *sys = vlc_obj_malloc(obj, sizeof (*sys));
     if (unlikely(sys == NULL))
     {
@@ -868,20 +627,30 @@ static int AccessOpen(vlc_object_t *obj, vcddev_t *dev)
     }
 
     sys->vcddev = dev;
-    sys->p_toc = ioctl_GetTOC(obj, dev, true);
-    if (sys->p_toc == NULL)
+    sys->p_sectors = NULL;
+
+    sys->titles = ioctl_GetTracksMap(obj, dev, &sys->p_sectors);
+    if (sys->titles < 0)
     {
         msg_Err(obj, "cannot count tracks");
         goto error;
     }
 
-    sys->i_cdda_tracks = TOC_GetAudioRange(sys->p_toc, &sys->i_cdda_first, &sys->i_cdda_last);
-    if (sys->i_cdda_tracks == 0)
+    if (sys->titles == 0)
     {
         msg_Err(obj, "no audio tracks found");
-        vcddev_toc_Free(sys->p_toc);
         goto error;
     }
+
+#ifdef HAVE_LIBCDDB
+    msg_Dbg(obj, "retrieving metadata with CDDB");
+
+    sys->cddb = GetCDDBInfo(obj, sys->titles, sys->p_sectors);
+    if (sys->cddb != NULL)
+        msg_Dbg(obj, "disc ID: 0x%08x", cddb_disc_get_discid(sys->cddb));
+    else
+        msg_Dbg(obj, "CDDB failure");
+#endif
 
     if (ioctl_GetCdText(obj, dev, &sys->cdtextv, &sys->cdtextc))
     {
@@ -889,22 +658,6 @@ static int AccessOpen(vlc_object_t *obj, vcddev_t *dev)
         sys->cdtextv = NULL;
         sys->cdtextc = 0;
     }
-
-    sys->mbrecord = NULL;
-#ifdef HAVE_LIBCDDB
-    sys->cddb = NULL;
-#endif
-
-    if(var_InheritBool(obj, "metadata-network-access"))
-    {
-        sys->mbrecord = GetMusicbrainzInfo(obj, sys->p_toc, sys->i_cdda_tracks,
-                                           sys->i_cdda_first, sys->i_cdda_last );
-#ifdef HAVE_LIBCDDB
-        if(!sys->mbrecord)
-            sys->cddb = GetCDDBInfo(obj, sys->p_toc);
-#endif
-    }
-    else msg_Dbg(obj, "album art policy set to manual: not fetching");
 
     access->p_sys = sys;
     access->pf_read = NULL;
@@ -915,12 +668,16 @@ static int AccessOpen(vlc_object_t *obj, vcddev_t *dev)
     return VLC_SUCCESS;
 
 error:
+    free(sys->p_sectors);
     ioctl_Close(obj, dev);
     return VLC_EGENERIC;
 }
 
-static void AccessClose(access_sys_t *sys)
+static void AccessClose(vlc_object_t *obj)
 {
+    stream_t *access = (stream_t *)obj;
+    access_sys_t *sys = access->p_sys;
+
     for (int i = 0; i < sys->cdtextc; i++)
     {
         vlc_meta_t *meta = sys->cdtextv[i];
@@ -933,38 +690,9 @@ static void AccessClose(access_sys_t *sys)
     if (sys->cddb != NULL)
         cddb_disc_destroy(sys->cddb);
 #endif
-    if(sys->mbrecord)
-        musicbrainz_recording_release(sys->mbrecord);
-    vcddev_toc_Free(sys->p_toc);
-}
 
-static int Open(vlc_object_t *obj)
-{
-    stream_t *stream = (stream_t *)obj;
-    unsigned track;
-
-    vcddev_t *dev = DiscOpen(obj, stream->psz_location, stream->psz_filepath,
-                             &track);
-    if (dev == NULL)
-        return VLC_EGENERIC;
-
-    if (track == 0)
-        return AccessOpen(obj, dev);
-    else
-        return DemuxOpen(obj, dev, track);
-}
-
-static void Close(vlc_object_t *obj)
-{
-    stream_t *stream = (stream_t *)obj;
-    void *sys = stream->p_sys;
-
-    if (stream->pf_readdir != NULL)
-        AccessClose(sys);
-
-    static_assert(offsetof(demux_sys_t, vcddev) == 0, "Invalid cast");
-    static_assert(offsetof(access_sys_t, vcddev) == 0, "Invalid cast");
-    ioctl_Close(obj, *(vcddev_t **)sys);
+    free(sys->p_sectors);
+    ioctl_Close(obj, sys->vcddev);
 }
 
 /*****************************************************************************
@@ -991,12 +719,13 @@ static void Close(vlc_object_t *obj)
 vlc_module_begin ()
     set_shortname( N_("Audio CD") )
     set_description( N_("Audio CD input") )
-    set_capability( "access", 0 )
+    set_capability( "access", 10 )
     set_category( CAT_INPUT )
     set_subcategory( SUBCAT_INPUT_ACCESS )
-    set_callbacks(Open, Close)
+    set_callbacks(AccessOpen, AccessClose)
 
-    add_loadfile("cd-audio", CD_DEVICE, CDAUDIO_DEV_TEXT, CDAUDIO_DEV_LONGTEXT)
+    add_loadfile( "cd-audio", CD_DEVICE, CDAUDIO_DEV_TEXT,
+                  CDAUDIO_DEV_LONGTEXT, false )
 
     add_usage_hint( N_("[cdda:][device][@[track]]") )
     add_integer( "cdda-track", 0 , NULL, NULL, true )
@@ -1006,9 +735,6 @@ vlc_module_begin ()
     add_integer( "cdda-last-sector", -1, NULL, NULL, true )
         change_volatile ()
 
-    add_string( "musicbrainz-server", MUSICBRAINZ_DEFAULT_SERVER,
-                N_( "Musicbrainz Server" ),
-                N_( "Address of the musicbrainz server to use." ), true )
 #ifdef HAVE_LIBCDDB
     add_string( "cddb-server", "freedb.videolan.org", N_( "CDDB Server" ),
             N_( "Address of the CDDB server to use." ), true )
@@ -1018,4 +744,8 @@ vlc_module_begin ()
 #endif
 
     add_shortcut( "cdda", "cddasimple" )
+
+    add_submodule()
+    set_capability( "access_demux", 10 )
+    set_callbacks(DemuxOpen, DemuxClose)
 vlc_module_end ()

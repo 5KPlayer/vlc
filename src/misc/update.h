@@ -20,9 +20,8 @@
  * Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-#include <stdatomic.h>
-
 #include <vlc_update.h>
+#include <vlc_atomic.h>
 
 enum    /* Packet types */
 {
@@ -132,7 +131,7 @@ typedef struct public_key_t public_key_t;
  */
 typedef struct
 {
-    struct vlc_object_t obj;
+    VLC_COMMON_MEMBERS
 
     vlc_thread_t thread;
     atomic_bool aborted;

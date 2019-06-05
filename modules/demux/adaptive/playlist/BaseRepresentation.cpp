@@ -32,7 +32,6 @@
 #include "SegmentTemplate.h"
 #include "SegmentTimeline.h"
 #include "../ID.hpp"
-#include "../tools/Helper.h"
 
 using namespace adaptive;
 using namespace adaptive::playlist;
@@ -74,18 +73,9 @@ const std::list<std::string> & BaseRepresentation::getCodecs() const
     return codecs;
 }
 
-void BaseRepresentation::addCodecs(const std::string &s)
+void BaseRepresentation::addCodec(const std::string &codec)
 {
-    std::list<std::string> list = Helper::tokenize(s, ',');
-    std::list<std::string>::const_iterator it;
-    for(it=list.begin(); it!=list.end(); ++it)
-    {
-        std::size_t pos = (*it).find_first_of('.', 0);
-        if(pos != std::string::npos)
-            codecs.push_back((*it).substr(0, pos));
-        else
-            codecs.push_back(*it);
-    }
+    codecs.push_back(codec);
 }
 
 bool BaseRepresentation::needsUpdate() const
@@ -93,8 +83,7 @@ bool BaseRepresentation::needsUpdate() const
     return false;
 }
 
-bool BaseRepresentation::runLocalUpdates(SharedResources *,
-                                         vlc_tick_t, uint64_t, bool)
+bool BaseRepresentation::runLocalUpdates(mtime_t, uint64_t, bool)
 {
     return false;
 }
@@ -109,14 +98,14 @@ bool BaseRepresentation::consistentSegmentNumber() const
     return b_consistent;
 }
 
-void BaseRepresentation::pruneByPlaybackTime(vlc_tick_t time)
+void BaseRepresentation::pruneByPlaybackTime(mtime_t time)
 {
     uint64_t num;
     if(getSegmentNumberByTime(time, &num))
         pruneBySegmentNumber(num);
 }
 
-vlc_tick_t BaseRepresentation::getMinAheadTime(uint64_t curnum) const
+mtime_t BaseRepresentation::getMinAheadTime(uint64_t curnum) const
 {
     std::vector<ISegment *> seglist;
     getSegments(INFOTYPE_MEDIA, seglist);
@@ -132,10 +121,10 @@ vlc_tick_t BaseRepresentation::getMinAheadTime(uint64_t curnum) const
         }
 
         /* should not happen */
-        return VLC_TICK_FROM_SEC(1);
+        return CLOCK_FREQ;
     }
 
-    vlc_tick_t minTime = 0;
+    mtime_t minTime = 0;
     const Timescale timescale = inheritTimescale();
     std::vector<ISegment *>::const_iterator it;
     for(it = seglist.begin(); it != seglist.end(); ++it)
@@ -153,14 +142,6 @@ void BaseRepresentation::debug(vlc_object_t *obj, int indent) const
     std::string text(indent, ' ');
     text.append("Representation ");
     text.append(id.str());
-    if(!codecs.empty())
-    {
-        std::list<std::string>::const_iterator c = codecs.begin();
-        text.append(" [" + *c++);
-        while(c != codecs.end())
-            text.append("," + *c++);
-        text.append("]");
-    }
     msg_Dbg(obj, "%s", text.c_str());
     std::vector<ISegment *> list;
     getAllSegments(list);

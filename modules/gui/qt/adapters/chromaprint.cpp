@@ -56,8 +56,8 @@ bool Chromaprint::enqueue( input_item_t *p_item )
     if ( ! p_fingerprinter ) return false;
     fingerprint_request_t *p_r = fingerprint_request_New( p_item );
     if ( ! p_r ) return false;
-    vlc_tick_t t = input_item_GetDuration( p_item );
-    if ( t != 0 ) p_r->i_duration = (unsigned int) SEC_FROM_VLC_TICK( t );
+    mtime_t t = input_item_GetDuration( p_item );
+    if ( t ) p_r->i_duration = (unsigned int) ( t / 1000000 );
     if( p_fingerprinter->pf_enqueue( p_fingerprinter, p_r ) != 0 )
     {
         fingerprint_request_Delete( p_r );

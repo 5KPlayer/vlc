@@ -23,7 +23,7 @@ function VlcSyntax()
   syn keyword cConstant VLC_ESTATUS VLC_EEXIT VLC_EMODULE VLC_EOBJECT
   syn keyword cConstant VLC_ENOOBJ VLC_ENOMOD VLC_VAR_ADDRESS
   " custom types
-  syn keyword cType vlc_fixed_t vlc_tick_t byte_t dctelem_t ssize_t off_t
+  syn keyword cType vlc_fixed_t mtime_t byte_t dctelem_t ssize_t off_t
   syn keyword cType vlc_bool_t vlc_fourcc_t vlc_value_t
   " Core custom structures
   syn keyword cType vlc_t libvlc_t vlc_object_t vlc_error_t vlc_status_t 
@@ -103,7 +103,7 @@ function VlcSyntax()
   syn keyword cType md5_t vlc_meta_t vlc_callback_t iso639_lang_t
   
   " misc macros
-  syn keyword cOperator VLC_OBJECT VLC_EXPORT
+  syn keyword cOperator VLC_OBJECT VLC_EXPORT VLC_COMMON_MEMBERS
   " don't use these any more, please
   syn keyword cError u8 s8 u16 s16 u32 s32 u64 s64
   " don't put trailing spaces! DON'T USE TABS!!!

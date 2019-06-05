@@ -2,6 +2,7 @@
  * theme_loader.cpp
  *****************************************************************************
  * Copyright (C) 2003 the VideoLAN team
+ * $Id: d018b4e92eb389897b02f72888dd79e67726a3a9 $
  *
  * Authors: Cyril Deguet     <asmax@via.ecp.fr>
  *          Olivier Teulière <ipkiss@via.ecp.fr>
@@ -119,7 +120,7 @@ bool ThemeLoader::load( const std::string &fileName )
     getIntf()->p_sys->p_theme->loadConfig();
 
     // Retain new loaded skins in config
-    config_PutPsz( "skins2-last", fileName.c_str() );
+    config_PutPsz( getIntf(), "skins2-last", fileName.c_str() );
 
     return true;
 }

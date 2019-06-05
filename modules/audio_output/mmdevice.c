@@ -18,6 +18,11 @@
  * Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
+#if !defined(_WIN32_WINNT) || _WIN32_WINNT < _WIN32_WINNT_VISTA
+# undef _WIN32_WINNT
+# define _WIN32_WINNT _WIN32_WINNT_VISTA
+#endif
+
 #ifdef HAVE_CONFIG_H
 # include <config.h>
 #endif
@@ -37,6 +42,7 @@ DEFINE_PROPERTYKEY(PKEY_Device_FriendlyName, 0xa45c254e, 0xdf1c, 0x4efd,
    0x80, 0x20, 0x67, 0xd1, 0x46, 0xa8, 0x50, 0xe0, 14);
 
 #include <vlc_common.h>
+#include <vlc_memory.h>
 #include <vlc_atomic.h>
 #include <vlc_plugin.h>
 #include <vlc_aout.h>
@@ -74,7 +80,7 @@ static void LeaveMTA(void)
 static wchar_t default_device[1] = L"";
 static char default_device_b[1] = "";
 
-typedef struct
+struct aout_sys_t
 {
     aout_stream_t *stream; /**< Underlying audio output stream */
     module_t *module;
@@ -99,7 +105,7 @@ typedef struct
     CONDITION_VARIABLE work;
     CONDITION_VARIABLE ready;
     vlc_thread_t thread; /**< Thread for audio session control */
-} aout_sys_t;
+};
 
 /* NOTE: The Core Audio API documentation totally fails to specify the thread
  * safety (or lack thereof) of the interfaces. This code takes the most
@@ -124,7 +130,7 @@ static int vlc_FromHR(audio_output_t *aout, HRESULT hr)
 }
 
 /*** VLC audio output callbacks ***/
-static int TimeGet(audio_output_t *aout, vlc_tick_t *restrict delay)
+static int TimeGet(audio_output_t *aout, mtime_t *restrict delay)
 {
     aout_sys_t *sys = aout->sys;
     HRESULT hr;
@@ -136,7 +142,7 @@ static int TimeGet(audio_output_t *aout, vlc_tick_t *restrict delay)
     return SUCCEEDED(hr) ? 0 : -1;
 }
 
-static void Play(audio_output_t *aout, block_t *block, vlc_tick_t date)
+static void Play(audio_output_t *aout, block_t *block)
 {
     aout_sys_t *sys = aout->sys;
     HRESULT hr;
@@ -146,10 +152,9 @@ static void Play(audio_output_t *aout, block_t *block, vlc_tick_t date)
     LeaveMTA();
 
     vlc_FromHR(aout, hr);
-    (void) date;
 }
 
-static void Pause(audio_output_t *aout, bool paused, vlc_tick_t date)
+static void Pause(audio_output_t *aout, bool paused, mtime_t date)
 {
     aout_sys_t *sys = aout->sys;
     HRESULT hr;
@@ -162,13 +167,13 @@ static void Pause(audio_output_t *aout, bool paused, vlc_tick_t date)
     (void) date;
 }
 
-static void Flush(audio_output_t *aout)
+static void Flush(audio_output_t *aout, bool wait)
 {
     aout_sys_t *sys = aout->sys;
     HRESULT hr;
 
     EnterMTA();
-    hr = aout_stream_Flush(sys->stream);
+    hr = aout_stream_Flush(sys->stream, wait);
     LeaveMTA();
 
     vlc_FromHR(aout, hr);
@@ -756,7 +761,7 @@ static int DeviceSelectLocked(audio_output_t *aout, const char *id)
 
     if (id != NULL && strcmp(id, default_device_b) != 0)
     {
-        sys->requested_device = ToWide(id); /* FIXME leak */
+        sys->requested_device = ToWide(id);
         if (unlikely(sys->requested_device == NULL))
             return -1;
     }
@@ -777,14 +782,25 @@ static int DeviceRestartLocked(audio_output_t *aout)
 
 static int DeviceSelect(audio_output_t *aout, const char *id)
 {
-    aout_sys_t *sys = aout->sys;
-    EnterCriticalSection(&sys->lock);
+    EnterCriticalSection(&aout->sys->lock);
     int ret = DeviceSelectLocked(aout, id);
-    LeaveCriticalSection(&sys->lock);
+    LeaveCriticalSection(&aout->sys->lock);
     return ret;
 }
 
 /*** Initialization / deinitialization **/
+static wchar_t *var_InheritWide(vlc_object_t *obj, const char *name)
+{
+    char *v8 = var_InheritString(obj, name);
+    if (v8 == NULL)
+        return NULL;
+
+    wchar_t *v16 = ToWide(v8);
+    free(v8);
+    return v16;
+}
+#define var_InheritWide(o,n) var_InheritWide(VLC_OBJECT(o),n)
+
 /** MMDevice audio output thread.
  * This thread takes cares of the audio session control. Inconveniently enough,
  * the audio session control interface must:
@@ -884,17 +900,9 @@ static HRESULT MMSession(audio_output_t *aout, IMMDeviceEnumerator *it)
                                                          &control);
         if (SUCCEEDED(hr))
         {
-            char *ua = var_InheritString(aout, "user-agent");
-            if (ua != NULL)
-            {
-                wchar_t *wua = ToWide(ua);
-                if (likely(wua != NULL))
-                {
-                    IAudioSessionControl_SetDisplayName(control, wua, NULL);
-                    free(wua);
-                }
-                free(ua);
-            }
+            wchar_t *ua = var_InheritWide(aout, "user-agent");
+            IAudioSessionControl_SetDisplayName(control, ua, NULL);
+            free(ua);
 
             IAudioSessionControl_RegisterAudioSessionNotification(control,
                                                          &sys->session_events);
@@ -1091,7 +1099,7 @@ static HRESULT ActivateDevice(void *opaque, REFIID iid, PROPVARIANT *actparms,
     return IMMDevice_Activate(dev, iid, CLSCTX_ALL, actparms, pv);
 }
 
-static int aout_stream_Start(void *func, bool forced, va_list ap)
+static int aout_stream_Start(void *func, va_list ap)
 {
     aout_stream_start_t start = func;
     aout_stream_t *s = va_arg(ap, aout_stream_t *);
@@ -1099,7 +1107,6 @@ static int aout_stream_Start(void *func, bool forced, va_list ap)
     HRESULT *hr = va_arg(ap, HRESULT *);
     LPCGUID sid = var_InheritBool(s, "volume-save") ? &GUID_VLC_AUD_OUT : NULL;
 
-    (void) forced;
     *hr = start(s, fmt, sid);
     if (*hr == AUDCLNT_E_DEVICE_INVALIDATED)
         return VLC_ETIMEOUT;
@@ -1153,19 +1160,17 @@ static int Start(audio_output_t *aout, audio_sample_format_t *restrict fmt)
          * failed. */
         LeaveCriticalSection(&sys->lock);
         LeaveMTA();
-        vlc_object_delete(s);
+        vlc_object_release(s);
         return -1;
     }
 
     for (;;)
     {
-        char *modlist = var_InheritString(aout, "mmdevice-backend");
         HRESULT hr;
         s->owner.device = sys->dev;
 
-        sys->module = vlc_module_load(s, "aout stream", modlist,
+        sys->module = vlc_module_load(s, "aout stream", "$mmdevice-backend",
                                       false, aout_stream_Start, s, fmt, &hr);
-        free(modlist);
 
         int ret = -1;
         if (hr == AUDCLNT_E_ALREADY_INITIALIZED)
@@ -1221,7 +1226,7 @@ static int Start(audio_output_t *aout, audio_sample_format_t *restrict fmt)
 
     if (sys->module == NULL)
     {
-        vlc_object_delete(s);
+        vlc_object_release(s);
         return -1;
     }
 
@@ -1238,10 +1243,10 @@ static void Stop(audio_output_t *aout)
     assert(sys->stream != NULL);
 
     EnterMTA();
-    vlc_module_unload(sys->module, aout_stream_Stop, sys->stream);
+    vlc_module_unload(sys->stream, sys->module, aout_stream_Stop, sys->stream);
     LeaveMTA();
 
-    vlc_object_delete(sys->stream);
+    vlc_object_release(sys->stream);
     sys->stream = NULL;
 }
 
@@ -1282,7 +1287,7 @@ static int Open(vlc_object_t *obj)
     char *saved_device_b = var_InheritString(aout, "mmdevice-audio-device");
     if (saved_device_b != NULL && strcmp(saved_device_b, default_device_b) != 0)
     {
-        sys->requested_device = ToWide(saved_device_b); /* FIXME leak */
+        sys->requested_device = ToWide(saved_device_b);
         free(saved_device_b);
 
         if (unlikely(sys->requested_device == NULL))
@@ -1393,7 +1398,8 @@ static void Reload_DevicesEnum_Added(void *data, LPCWSTR wid, IMMDevice *dev)
     list->count = new_count;
 }
 
-static int ReloadAudioDevices(char const *name, char ***values, char ***descs)
+static int ReloadAudioDevices(vlc_object_t *this, char const *name,
+                              char ***values, char ***descs)
 {
     (void) name;
 
@@ -1470,7 +1476,8 @@ vlc_module_begin()
     set_subcategory(SUBCAT_AUDIO_AOUT)
     set_callbacks(Open, Close)
     add_module("mmdevice-backend", "aout stream", "any",
-               N_("Output back-end"), N_("Audio output back-end interface."))
+               N_("Output back-end"), N_("Audio output back-end interface."),
+               true)
     add_integer( "mmdevice-passthrough", MM_PASSTHROUGH_DEFAULT,
                  MM_PASSTHROUGH_TEXT, MM_PASSTHROUGH_LONGTEXT, false )
         change_integer_list( pi_mmdevice_passthrough_values,

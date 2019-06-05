@@ -2,6 +2,7 @@
  * copy.c: Fast YV12/NV12 copy
  *****************************************************************************
  * Copyright (C) 2010 Laurent Aimar
+ * $Id: 2baf076d535a65f790b728c7ead160c97bb992fe $
  *
  * Authors: Laurent Aimar <fenrir _AT_ videolan _DOT_ org>
  *          Victorien Le Couviour--Tuffet <victorien.lecouviour.tuffet@gmail.com>
@@ -468,7 +469,7 @@ static void SSE_CopyPlane(uint8_t *dst, size_t dst_pitch,
     const size_t copy_pitch = __MIN(src_pitch, dst_pitch);
     const unsigned w16 = (copy_pitch+15) & ~15;
     const unsigned hstep = cache_size / w16;
-    const unsigned cache_width = __MIN(src_pitch, cache_size);
+    const unsigned cache_width = __MIN(src_pitch, hstep);
     assert(hstep > 0);
 
     /* If SSE4.1: CopyFromUswc is faster than memcpy */
@@ -501,8 +502,8 @@ SSE_InterleavePlanes(uint8_t *dst, size_t dst_pitch,
     size_t copy_pitch = __MIN(dst_pitch / 2, srcu_pitch);
     unsigned int const  w16 = (srcu_pitch+15) & ~15;
     unsigned int const  hstep = (cache_size) / (2*w16);
-    const unsigned cacheu_width = __MIN(srcu_pitch, cache_size);
-    const unsigned cachev_width = __MIN(srcv_pitch, cache_size);
+    const unsigned cacheu_width = __MIN(srcu_pitch, hstep);
+    const unsigned cachev_width = __MIN(srcv_pitch, hstep);
     assert(hstep > 0);
 
     for (unsigned int y = 0; y < height; y += hstep)
@@ -535,7 +536,7 @@ static void SSE_SplitPlanes(uint8_t *dstu, size_t dstu_pitch,
     size_t copy_pitch = __MIN(__MIN(src_pitch / 2, dstu_pitch), dstv_pitch);
     const unsigned w16 = (src_pitch+15) & ~15;
     const unsigned hstep = cache_size / w16;
-    const unsigned cache_width = __MIN(src_pitch, cache_size);
+    const unsigned cache_width = __MIN(src_pitch, hstep);
     assert(hstep > 0);
 
     for (unsigned y = 0; y < height; y += hstep) {
@@ -831,9 +832,7 @@ void Copy420_P_to_SP(picture_t *dst, const uint8_t *src[static 3],
               src[0], src_pitch[0], height, 0);
 
     const unsigned copy_lines = (height+1) / 2;
-    unsigned copy_pitch = src_pitch[1];
-    if (copy_pitch > (size_t)dst->p[1].i_pitch / 2)
-        copy_pitch = dst->p[1].i_pitch / 2;
+    const unsigned copy_pitch = __MIN(src_pitch[1], dst->p[1].i_pitch / 2);
 
     const int i_extra_pitch_uv = dst->p[1].i_pitch - 2 * copy_pitch;
     const int i_extra_pitch_u  = src_pitch[U_PLANE] - copy_pitch;
@@ -880,6 +879,47 @@ void Copy420_16_P_to_SP(picture_t *dst, const uint8_t *src[static 3],
         INTERLEAVE_UV_SHIFTL((-bitshift) & 0xf);
 }
 
+void CopyFromI420_10ToP010(picture_t *dst, const uint8_t *src[static 3],
+                           const size_t src_pitch[static 3],
+                           unsigned height, const copy_cache_t *cache)
+{
+    (void) cache;
+
+    const int i_extra_pitch_dst_y = (dst->p[0].i_pitch  - src_pitch[0]) / 2;
+    const int i_extra_pitch_src_y = (src_pitch[Y_PLANE] - src_pitch[0]) / 2;
+    uint16_t *dstY = (uint16_t *) dst->p[0].p_pixels;
+    const uint16_t *srcY = (const uint16_t *) src[Y_PLANE];
+    for (unsigned y = 0; y < height; y++) {
+        for (unsigned x = 0; x < (src_pitch[0] / 2); x++) {
+            *dstY++ = *srcY++ << 6;
+        }
+        dstY += i_extra_pitch_dst_y;
+        srcY += i_extra_pitch_src_y;
+    }
+
+    const unsigned copy_lines = height / 2;
+    const unsigned copy_pitch = src_pitch[1] / 2;
+
+    const int i_extra_pitch_uv = dst->p[1].i_pitch / 2 - 2 * copy_pitch;
+    const int i_extra_pitch_u  = src_pitch[U_PLANE] / 2 - copy_pitch;
+    const int i_extra_pitch_v  = src_pitch[V_PLANE] / 2 - copy_pitch;
+
+    uint16_t *dstUV = (uint16_t *) dst->p[1].p_pixels;
+    const uint16_t *srcU  = (const uint16_t *) src[U_PLANE];
+    const uint16_t *srcV  = (const uint16_t *) src[V_PLANE];
+    for ( unsigned int line = 0; line < copy_lines; line++ )
+    {
+        for ( unsigned int col = 0; col < copy_pitch; col++ )
+        {
+            *dstUV++ = *srcU++ << 6;
+            *dstUV++ = *srcV++ << 6;
+        }
+        dstUV += i_extra_pitch_uv;
+        srcU  += i_extra_pitch_u;
+        srcV  += i_extra_pitch_v;
+    }
+}
+
 void Copy420_P_to_P(picture_t *dst, const uint8_t *src[static 3],
                     const size_t src_pitch[static 3], unsigned height,
                     const copy_cache_t *cache)
@@ -898,6 +938,15 @@ void Copy420_P_to_P(picture_t *dst, const uint8_t *src[static 3],
                src[1], src_pitch[1], (height+1) / 2, 0);
      CopyPlane(dst->p[2].p_pixels, dst->p[2].i_pitch,
                src[2], src_pitch[2], (height+1) / 2, 0);
+}
+
+void picture_SwapUV(picture_t *picture)
+{
+    assert(picture->i_planes == 3);
+
+    plane_t tmp_plane   = picture->p[U_PLANE];
+    picture->p[U_PLANE] = picture->p[V_PLANE];
+    picture->p[V_PLANE] = tmp_plane;
 }
 
 int picture_UpdatePlanes(picture_t *picture, uint8_t *data, unsigned pitch)
@@ -920,7 +969,7 @@ int picture_UpdatePlanes(picture_t *picture, uint8_t *data, unsigned pitch)
 
             p->p_pixels = o->p_pixels + o->i_lines * o->i_pitch;
             p->i_pitch  = pitch;
-            p->i_lines  = picture->format.i_height / 2;
+            p->i_lines  = picture->format.i_height;
             assert(p->i_visible_pitch <= p->i_pitch);
             assert(p->i_visible_lines <= p->i_lines);
         }
@@ -946,8 +995,11 @@ int picture_UpdatePlanes(picture_t *picture, uint8_t *data, unsigned pitch)
             p->i_lines  = picture->format.i_height / 2;
         }
         /* The dx/d3d buffer is always allocated as YV12 */
-        if (vlc_fourcc_AreUVPlanesSwapped(picture->format.i_chroma, VLC_CODEC_YV12))
-            picture_SwapUV( picture );
+        if (vlc_fourcc_AreUVPlanesSwapped(picture->format.i_chroma, VLC_CODEC_YV12)) {
+            uint8_t *p_tmp = picture->p[1].p_pixels;
+            picture->p[1].p_pixels = picture->p[2].p_pixels;
+            picture->p[2].p_pixels = p_tmp;
+        }
     }
     return VLC_SUCCESS;
 }
@@ -1076,7 +1128,7 @@ static void piccheck(picture_t *pic, const vlc_chroma_description_t *dsc,
                 vlc_assert_unreachable();
         }
 
-        uint32_t color_16_UV = GetDWLE( &colors_16_P[1] );
+        uint32_t color_16_UV = (colors_16_P[2] << 16) | colors_16_P[1];
 
         PICCHECK(uint16_t, uint32_t, colors_16_P, color_16_UV, 2);
     }
@@ -1086,6 +1138,7 @@ static void pic_rsc_destroy(picture_t *pic)
 {
     for (unsigned i = 0; i < 3; i++)
         free(pic->p[i].p_pixels);
+    free(pic);
 }
 
 static picture_t *pic_new_unaligned(const video_format_t *fmt)

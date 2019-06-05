@@ -699,7 +699,7 @@ static void ARIB_CDT_RawCallback( dvbpsi_t *p_handle, const dvbpsi_psi_section_t
     VLC_UNUSED(p_cdtpid);
     demux_t *p_demux = (demux_t *) p_handle->p_sys;
     demux_sys_t *p_sys = p_demux->p_sys;
-    const ts_pat_t *p_pat = GetPID(p_sys, 0)->u.p_pat;
+    const ts_pat_t *p_pat = GetPID(p_demux->p_sys, 0)->u.p_pat;
 
     while( p_section )
     {
@@ -746,7 +746,7 @@ static void ARIB_CDT_RawCallback( dvbpsi_t *p_handle, const dvbpsi_psi_section_t
                             if( p_att )
                             {
                                 vlc_dictionary_insert( &p_sys->attachments, psz_name, p_att );
-                                p_sys->updates |= INPUT_UPDATE_META;
+                                p_demux->info.i_update |= INPUT_UPDATE_META;
                             }
                             free( p_png );
                         }

@@ -4,6 +4,7 @@
  * Copyright (C) 2009 Geoffroy Couprie
  * Copyright (C) 2009 Laurent Aimar
  * Copyright (C) 2015 Steve Lhomme
+ * $Id: e12704729ba882cd1152fb38199021b0af8a1373 $
  *
  * Authors: Geoffroy Couprie <geal@videolan.org>
  *          Laurent Aimar <fenrir _AT_ videolan _DOT_ org>
@@ -38,10 +39,9 @@
 #define D3D_DecoderType     IUnknown
 #define D3D_DecoderDevice   IUnknown
 #define D3D_DecoderSurface  IUnknown
-typedef struct
-{
+struct picture_sys_t {
     void *dummy;
-} picture_sys_t;
+};
 #include "directx_va.h"
 
 #include "avcodec.h"
@@ -57,9 +57,6 @@ static const int PROF_H264_HIGH[]    = { FF_PROFILE_H264_BASELINE,
 static const int PROF_HEVC_MAIN[]    = { FF_PROFILE_HEVC_MAIN, 0 };
 static const int PROF_HEVC_MAIN10[]  = { FF_PROFILE_HEVC_MAIN,
                                          FF_PROFILE_HEVC_MAIN_10, 0 };
-
-static const int PROF_VP9_MAIN[]    = { FF_PROFILE_VP9_0, 0 };
-static const int PROF_VP9_10[]      = { FF_PROFILE_VP9_2, 0 };
 
 #include <winapifamily.h>
 #if defined(WINAPI_FAMILY)
@@ -259,12 +256,11 @@ static const directx_va_mode_t DXVA_MODES[] = {
     /* VPx */
     { "VP8",                                                                          &DXVA_ModeVP8_VLD,                      0, NULL },
 #if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT( 57, 17, 100 ) && LIBAVCODEC_VERSION_MICRO >= 100
-    { "VP9 profile 0",                                                                &DXVA_ModeVP9_VLD_Profile0,             AV_CODEC_ID_VP9, PROF_VP9_MAIN },
-    { "VP9 profile 2",                                                                &DXVA_ModeVP9_VLD_10bit_Profile2,       AV_CODEC_ID_VP9, PROF_VP9_10 },
+    { "VP9 profile 0",                                                                &DXVA_ModeVP9_VLD_Profile0,             AV_CODEC_ID_VP9, NULL },
 #else
     { "VP9 profile 0",                                                                &DXVA_ModeVP9_VLD_Profile0,             0, NULL },
-    { "VP9 profile 2",                                                                &DXVA_ModeVP9_VLD_10bit_Profile2,       0, NULL },
 #endif
+    { "VP9 profile 2",                                                                &DXVA_ModeVP9_VLD_10bit_Profile2,       0, NULL },
     { "VP9 profile Intel",                                                            &DXVA_ModeVP9_VLD_Intel,                0, NULL },
 
     { NULL, NULL, 0, NULL }
@@ -345,13 +341,19 @@ void directx_va_Close(vlc_va_t *va, directx_sys_t *dx_sys)
 
 int directx_va_Open(vlc_va_t *va, directx_sys_t *dx_sys)
 {
-    return va_pool_Open(va, &dx_sys->va_pool);
+    if (va_pool_Open(va, &dx_sys->va_pool) != VLC_SUCCESS)
+        goto error;
+
+    return VLC_SUCCESS;
+
+error:
+    return VLC_EGENERIC;
 }
 
 static bool profile_supported(const directx_va_mode_t *mode, const es_format_t *fmt,
                               const AVCodecContext *avctx)
 {
-    bool is_supported = mode->p_profiles == NULL;
+    bool is_supported = mode->p_profiles == NULL || !mode->p_profiles[0];
     if (!is_supported)
     {
         int profile = fmt->i_profile >= 0 ? fmt->i_profile : avctx->profile;

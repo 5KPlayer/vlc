@@ -2,6 +2,7 @@
  * autodel.c: monitor mux inputs and automatically add/delete streams
  *****************************************************************************
  * Copyright (C) 2006 VLC authors and VideoLAN
+ * $Id: 91f95e3bb819a52fac610b2fe0dc3e303753dccd $
  *
  * Authors: Christophe Massiot <massiot@via.ecp.fr>
  *
@@ -53,24 +54,23 @@ vlc_module_end ()
 /*****************************************************************************
  * Local prototypes
  *****************************************************************************/
-static void *Add( sout_stream_t *, const es_format_t * );
-static void  Del( sout_stream_t *, void * );
-static int   Send( sout_stream_t *, void *, block_t * );
+static sout_stream_id_sys_t *Add( sout_stream_t *, const es_format_t * );
+static void              Del   ( sout_stream_t *, sout_stream_id_sys_t * );
+static int               Send  ( sout_stream_t *, sout_stream_id_sys_t *, block_t * );
 
-typedef struct sout_stream_id_sys_t sout_stream_id_sys_t;
 struct sout_stream_id_sys_t
 {
     sout_stream_id_sys_t *id;
     es_format_t fmt;
-    vlc_tick_t i_last;
+    mtime_t i_last;
     bool b_error;
 };
 
-typedef struct
+struct sout_stream_sys_t
 {
     sout_stream_id_sys_t **pp_es;
     int i_es_num;
-} sout_stream_sys_t;
+};
 
 /*****************************************************************************
  * Open:
@@ -111,7 +111,8 @@ static void Close( vlc_object_t * p_this )
     free( p_sys );
 }
 
-static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
+static sout_stream_id_sys_t * Add( sout_stream_t *p_stream,
+                                   const es_format_t *p_fmt )
 {
     sout_stream_sys_t *p_sys = (sout_stream_sys_t *)p_stream->p_sys;
     sout_stream_id_sys_t *p_es = malloc( sizeof(sout_stream_id_sys_t) );
@@ -121,17 +122,16 @@ static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
     es_format_Copy( &p_es->fmt, p_fmt );
 
     p_es->id = NULL;
-    p_es->i_last = VLC_TICK_INVALID;
+    p_es->i_last = VLC_TS_INVALID;
     p_es->b_error = false;
     TAB_APPEND( p_sys->i_es_num, p_sys->pp_es, p_es );
 
     return p_es;
 }
 
-static void Del( sout_stream_t *p_stream, void *_p_es )
+static void Del( sout_stream_t *p_stream, sout_stream_id_sys_t *p_es )
 {
     sout_stream_sys_t *p_sys = (sout_stream_sys_t *)p_stream->p_sys;
-    sout_stream_id_sys_t *p_es = (sout_stream_id_sys_t *)_p_es;
 
     if( p_es->id != NULL )
         sout_StreamIdDel( p_stream->p_next, p_es->id );
@@ -141,17 +141,17 @@ static void Del( sout_stream_t *p_stream, void *_p_es )
     free( p_es );
 }
 
-static int Send( sout_stream_t *p_stream, void *_p_es, block_t *p_buffer )
+static int Send( sout_stream_t *p_stream, sout_stream_id_sys_t *p_es,
+                 block_t *p_buffer )
 {
     sout_stream_sys_t *p_sys = (sout_stream_sys_t *)p_stream->p_sys;
-    sout_stream_id_sys_t *p_es = (sout_stream_id_sys_t *)_p_es;
-    vlc_tick_t i_current = vlc_tick_now();
+    mtime_t i_current = mdate();
     int i;
 
     p_es->i_last = p_buffer->i_dts;
     if ( !p_es->id && !p_es->b_error )
     {
-        p_es->id = sout_StreamIdAdd( p_stream->p_next, &p_es->fmt );
+        p_es->id = p_stream->p_next->pf_add( p_stream->p_next, &p_es->fmt );
         if ( p_es->id == NULL )
         {
             p_es->b_error = true;
@@ -161,7 +161,7 @@ static int Send( sout_stream_t *p_stream, void *_p_es, block_t *p_buffer )
     }
 
     if ( !p_es->b_error )
-        sout_StreamIdSend( p_stream->p_next, p_es->id, p_buffer );
+        p_stream->p_next->pf_send( p_stream->p_next, p_es->id, p_buffer );
     else
         block_ChainRelease( p_buffer );
 
@@ -172,7 +172,7 @@ static int Send( sout_stream_t *p_stream, void *_p_es, block_t *p_buffer )
                    || p_sys->pp_es[i]->fmt.i_cat == AUDIO_ES)
               && p_sys->pp_es[i]->i_last < i_current )
         {
-            sout_StreamIdDel( p_stream->p_next, p_sys->pp_es[i]->id );
+            p_stream->p_next->pf_del( p_stream->p_next, p_sys->pp_es[i]->id );
             p_sys->pp_es[i]->id = NULL;
         }
     }

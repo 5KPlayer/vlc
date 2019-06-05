@@ -2,6 +2,7 @@
  * adjust.c : Contrast/Hue/Saturation/Brightness video plugin for vlc
  *****************************************************************************
  * Copyright (C) 2000-2006 VLC authors and VideoLAN
+ * $Id: fc12d666402bafcaa9ea1ac13d6696ddc578953a $
  *
  * Authors: Simon Latapie <garf@via.ecp.fr>
  *          Antoine Cellerier <dionoea -at- videolan d0t org>
@@ -31,7 +32,6 @@
 #endif
 
 #include <math.h>
-#include <stdatomic.h>
 
 #include <vlc_common.h>
 #include <vlc_atomic.h>
@@ -111,7 +111,7 @@ static const char *const ppsz_filter_options[] = {
 /*****************************************************************************
  * filter_sys_t: adjust filter method descriptor
  *****************************************************************************/
-typedef struct
+struct filter_sys_t
 {
     vlc_atomic_float f_contrast;
     vlc_atomic_float f_brightness;
@@ -123,7 +123,7 @@ typedef struct
                                int, int );
     int (*pf_process_sat_hue_clip)( picture_t *, picture_t *, int, int,
                                     int, int, int );
-} filter_sys_t;
+};
 
 /*****************************************************************************
  * Create: allocates adjust video filter
@@ -296,7 +296,7 @@ static picture_t *FilterPlanar( filter_t *p_filter, picture_t *p_pic )
         /* Fill the luma lookup table */
         for( unsigned i = 0 ; i < i_size; i++ )
         {
-            pi_luma[ i ] = pi_gamma[VLC_CLIP( (int)(i_lum + i_cont * i / i_range), 0, (int) i_max )];
+            pi_luma[ i ] = pi_gamma[VLC_CLIP( (int)(i_lum + i_cont * i / i_range), 0, i_max )];
         }
     }
     else

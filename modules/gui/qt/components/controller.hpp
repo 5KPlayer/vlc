@@ -2,6 +2,7 @@
  * controller.hpp : Controller for the main interface
  ****************************************************************************
  * Copyright (C) 2006-2008 the VideoLAN team
+ * $Id: 25d4f4b00cf5ab1dfb7a29dff41875cc1e5f34af $
  *
  * Authors: Jean-Baptiste Kempf <jb@videolan.org>
  *
@@ -32,7 +33,6 @@
 #include <QFrame>
 #include <QString>
 #include <QSizeGrip>
-#include "components/player_controller.hpp"
 
 #define MAIN_TB1_DEFAULT "64;39;64;38;65"
 #define MAIN_TB2_DEFAULT "0-2;64;3;1;4;64;7;9;64;10;20;19;64-4;37;65;35-4"
@@ -157,6 +157,7 @@ public:
 protected:
     intf_thread_t       *p_intf;
 
+    QSignalMapper       *toolbarActionsMapper;
     QBoxLayout          *controlLayout;
     /* Change to BoxLayout if both dir are needed */
 
@@ -176,15 +177,12 @@ private:
 
     QHBoxLayout         *buttonGroupLayout;
 protected slots:
-    virtual void setStatus( PlayerController::PlayingState );
-
-    void playAction();
-    void playlistAction();
-    void fullwidthAction();
+    virtual void setStatus( int );
 
 signals:
     void inputExists( bool ); /// This might be useful in the IM ?
     void inputPlaying( bool ); /// This might be useful in the IM ?
+    void inputIsRecordable( bool ); /// same ?
     void inputIsTrickPlayable( bool ); /// same ?
 };
 
@@ -230,6 +228,12 @@ protected slots:
 signals:
     void advancedControlsToggled( bool );
 };
+
+
+/* to trying transparency with fullscreen controller on windows enable that */
+/* it can be enabled on-non windows systems,
+   but it will be transparent only with composite manager */
+#define HAVE_TRANSPARENCY 1
 
 /* Default value of opacity for FS controller */
 #define DEFAULT_OPACITY 0.70
@@ -288,10 +292,12 @@ private slots:
 
 private:
     QTimer *p_hideTimer;
+#if HAVE_TRANSPARENCY
     QTimer *p_slowHideTimer;
     bool b_slow_hide_begin;
     int  i_slow_hide_timeout;
     float f_opacity;
+#endif
 
     int i_mouse_last_x, i_mouse_last_y;
     bool b_mouse_over;

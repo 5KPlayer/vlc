@@ -2,6 +2,7 @@
  * visual.c : Visualisation system
  *****************************************************************************
  * Copyright (C) 2002-2009 VLC authors and VideoLAN
+ * $Id: b4c72201b8fffeb88d9c5849140cc374c533ac04 $
  *
  * Authors: Clément Stenac <zorglub@via.ecp.fr>
  *
@@ -174,17 +175,16 @@ vlc_module_end ()
  * Local prototypes
  *****************************************************************************/
 static block_t *DoWork( filter_t *, block_t * );
-static void Flush( filter_t * );
 static void *Thread( void *);
 
-typedef struct
+struct filter_sys_t
 {
     block_fifo_t    *fifo;
     vout_thread_t   *p_vout;
     visual_effect_t **effect;
     int             i_effect;
     vlc_thread_t    thread;
-} filter_sys_t;
+};
 
 /*****************************************************************************
  * Open: open the visualizer
@@ -302,7 +302,7 @@ static int Open( vlc_object_t *p_this )
         .primaries = COLOR_PRIMARIES_SRGB,
         .space = COLOR_SPACE_SRGB,
     };
-    p_sys->p_vout = aout_filter_GetVout( p_filter, &fmt );
+    p_sys->p_vout = aout_filter_RequestVout( p_filter, NULL, &fmt );
     if( p_sys->p_vout == NULL )
     {
         msg_Err( p_filter, "no suitable vout module" );
@@ -312,7 +312,7 @@ static int Open( vlc_object_t *p_this )
     p_sys->fifo = block_FifoNew();
     if( unlikely( p_sys->fifo == NULL ) )
     {
-        vout_Close( p_sys->p_vout );
+        aout_filter_RequestVout( p_filter, p_sys->p_vout, NULL );
         goto error;
     }
 
@@ -320,14 +320,13 @@ static int Open( vlc_object_t *p_this )
                    VLC_THREAD_PRIORITY_VIDEO ) )
     {
         block_FifoRelease( p_sys->fifo );
-        vout_Close( p_sys->p_vout );
+        aout_filter_RequestVout( p_filter, p_sys->p_vout, NULL );
         goto error;
     }
 
     p_filter->fmt_in.audio.i_format = VLC_CODEC_FL32;
     p_filter->fmt_out.audio = p_filter->fmt_in.audio;
     p_filter->pf_audio_filter = DoWork;
-    p_filter->pf_flush = Flush;
     return VLC_SUCCESS;
 
 error:
@@ -392,16 +391,9 @@ static void *Thread( void *data )
 static block_t *DoWork( filter_t *p_filter, block_t *p_in_buf )
 {
     block_t *block = block_Duplicate( p_in_buf );
-    filter_sys_t *p_sys = p_filter->p_sys;
     if( likely(block != NULL) )
-        block_FifoPut( p_sys->fifo, block );
+        block_FifoPut( p_filter->p_sys->fifo, block );
     return p_in_buf;
-}
-
-static void Flush( filter_t *p_filter )
-{
-    filter_sys_t *p_sys = p_filter->p_sys;
-    vout_FlushAll( p_sys->p_vout );
 }
 
 /*****************************************************************************
@@ -415,7 +407,7 @@ static void Close( vlc_object_t *p_this )
     vlc_cancel( p_sys->thread );
     vlc_join( p_sys->thread, NULL );
     block_FifoRelease( p_sys->fifo );
-    vout_Close( p_sys->p_vout );
+    aout_filter_RequestVout( p_filter, p_filter->p_sys->p_vout, NULL );
 
     /* Free the list */
     for( int i = 0; i < p_sys->i_effect; i++ )

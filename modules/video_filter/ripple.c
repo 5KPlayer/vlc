@@ -2,6 +2,7 @@
  * ripple.c : Ripple video effect plugin for vlc
  *****************************************************************************
  * Copyright (C) 2000-2006 VLC authors and VideoLAN
+ * $Id: d676e72ec81100a8c24d7bf9b89ca1b951fda133 $
  *
  * Authors: Samuel Hocevar <sam@zoy.org>
  *          Antoine Cellerier <dionoea -at- videolan -dot- org>
@@ -65,11 +66,11 @@ vlc_module_end ()
  * This structure is part of the video output thread descriptor.
  * It describes the Distort specific properties of an output thread.
  *****************************************************************************/
-typedef struct
+struct filter_sys_t
 {
     double  f_angle;
-    vlc_tick_t last_date;
-} filter_sys_t;
+    mtime_t last_date;
+};
 
 /*****************************************************************************
  * Create: allocates Distort video thread output method
@@ -86,14 +87,14 @@ static int Create( vlc_object_t *p_this )
         return VLC_EGENERIC;
 
     /* Allocate structure */
-    filter_sys_t *p_sys = malloc( sizeof( filter_sys_t ) );
-    if( p_sys == NULL )
+    p_filter->p_sys = malloc( sizeof( filter_sys_t ) );
+    if( p_filter->p_sys == NULL )
         return VLC_ENOMEM;
-    p_filter->p_sys = p_sys;
+
     p_filter->pf_video_filter = Filter;
 
-    p_sys->f_angle = 0.0;
-    p_sys->last_date = 0;
+    p_filter->p_sys->f_angle = 0.0;
+    p_filter->p_sys->last_date = 0;
 
     return VLC_SUCCESS;
 }
@@ -120,7 +121,7 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
 {
     picture_t *p_outpic;
     double f_angle;
-    vlc_tick_t new_date = vlc_tick_now();
+    mtime_t new_date = mdate();
 
     if( !p_pic ) return NULL;
 
@@ -131,15 +132,13 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
         return NULL;
     }
 
-    filter_sys_t *p_sys = p_filter->p_sys;
-
-    p_sys->f_angle -= 10.0f * secf_from_vlc_tick(p_sys->last_date - new_date);
-    p_sys->last_date = new_date;
-    f_angle = p_sys->f_angle;
+    p_filter->p_sys->f_angle -= (p_filter->p_sys->last_date - new_date) / 100000.0;
+    p_filter->p_sys->last_date = new_date;
+    f_angle = p_filter->p_sys->f_angle;
 
     for( int i_index = 0; i_index < p_pic->i_planes; i_index++ )
     {
-        int i_first_line, i_visible_pitch, i_num_lines, i_offset, i_pixel_pitch,
+        int i_first_line, i_num_lines, i_offset, i_pixel_pitch,
             i_visible_pixels;
         uint16_t black_pixel;
         uint8_t *p_in, *p_out;
@@ -148,7 +147,6 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
                                                                     : 0x80;
 
         i_num_lines = p_pic->p[i_index].i_visible_lines;
-        i_visible_pitch = p_pic->p[i_index].i_visible_pitch;
         i_pixel_pitch = p_pic->p[i_index].i_pixel_pitch;
 
         switch( p_filter->fmt_in.video.i_chroma )
@@ -169,7 +167,7 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
                 black_pixel = 0x00;
         }
 
-        i_visible_pixels = i_visible_pitch/i_pixel_pitch;
+        i_visible_pixels = p_pic->p[i_index].i_visible_pitch/i_pixel_pitch;
 
         i_first_line = i_num_lines * 4 / 5;
 
@@ -178,7 +176,7 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
 
         for( int i_line = 0; i_line < i_first_line; i_line++ )
         {
-            memcpy( p_out, p_in, i_visible_pitch );
+            memcpy( p_out, p_in, p_pic->p[i_index].i_visible_pitch );
             p_in += p_pic->p[i_index].i_pitch;
             p_out += p_outpic->p[i_index].i_pitch;
         }
@@ -201,15 +199,19 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
                 if( i_offset < 0 )
                 {
                     memcpy( p_out, p_in - i_offset,
-                                i_visible_pitch + i_offset );
-                    p_black_out = &p_out[i_visible_pitch + i_offset];
+                                p_pic->p[i_index].i_visible_pitch + i_offset );
+                    p_in -= p_pic->p[i_index].i_pitch;
+                    p_out += p_outpic->p[i_index].i_pitch;
+                    p_black_out = &p_out[i_offset];
                     i_offset = -i_offset;
                 }
                 else
                 {
                     memcpy( p_out + i_offset, p_in,
-                                i_visible_pitch - i_offset );
+                                p_pic->p[i_index].i_visible_pitch - i_offset );
                     p_black_out = p_out;
+                    p_in -= p_pic->p[i_index].i_pitch;
+                    p_out += p_outpic->p[i_index].i_pitch;
                 }
                 if (black_pixel > 0xFF)
                 {
@@ -222,10 +224,11 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
             }
             else
             {
-                memcpy( p_out, p_in, i_visible_pitch );
+                memcpy( p_out, p_in, p_pic->p[i_index].i_visible_pitch );
+                p_in -= p_pic->p[i_index].i_pitch;
+                p_out += p_outpic->p[i_index].i_pitch;
             }
-            p_in -= p_pic->p[i_index].i_pitch;
-            p_out += p_outpic->p[i_index].i_pitch;
+
         }
     }
 

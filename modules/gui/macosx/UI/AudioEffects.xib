@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <document type="com.apple.InterfaceBuilder3.Cocoa.XIB" version="3.0" toolsVersion="10117" systemVersion="17E199" targetRuntime="MacOSX.Cocoa" propertyAccessControl="none" useAutolayout="YES">
     <dependencies>
+        <deployment version="1070" identifier="macosx"/>
         <development version="7000" identifier="xcode"/>
         <plugIn identifier="com.apple.InterfaceBuilder.CocoaPlugin" version="10117"/>
         <capability name="box content view" minToolsVersion="7.0"/>
@@ -57,7 +58,7 @@
                 <outlet property="filterScaleTempoCheckbox" destination="wYr-HG-zA2" id="Io2-dE-xoC"/>
                 <outlet property="filterStereoEnhancerCheckbox" destination="NUi-0U-gqN" id="aym-ex-fgv"/>
                 <outlet property="profilePopup" destination="701" id="fL3-Nz-1t7"/>
-                <outlet property="segmentView" destination="Jb1-f1-iF3" id="w66-bc-QSP"/>
+                <outlet property="segmentView" destination="Jb1-f1-iF3" id="TvH-EM-7Q5"/>
                 <outlet property="spatializerBand1Label" destination="277" id="pg6-1P-KW1"/>
                 <outlet property="spatializerBand1Slider" destination="266" id="Cdn-mQ-kxW"/>
                 <outlet property="spatializerBand1TextField" destination="265" id="Zi8-go-4Ct"/>
@@ -92,7 +93,7 @@
                 <subviews>
                     <segmentedControl verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="Jb1-f1-iF3">
                         <rect key="frame" x="72" y="254" width="330" height="24"/>
-                        <segmentedCell key="cell" borderStyle="border" alignment="left" style="rounded" trackingMode="selectOne" id="ZdJ-0F-LWH">
+                        <segmentedCell key="cell" borderStyle="border" alignment="left" style="rounded" trackingMode="selectOne" id="ZdJ-0F-LWH" customClass="VLCHUDSegmentedCell">
                             <font key="font" metaFont="system"/>
                             <segments>
                                 <segment label="Equalizer" selected="YES"/>
@@ -122,7 +123,7 @@
                                     <subviews>
                                         <button horizontalHuggingPriority="750" verticalHuggingPriority="750" mirrorLayoutDirectionWhenInternationalizing="always" translatesAutoresizingMaskIntoConstraints="NO" id="192">
                                             <rect key="frame" x="14" y="193" width="58" height="18"/>
-                                            <buttonCell key="cell" type="check" title="Enable" bezelStyle="regularSquare" imagePosition="left" alignment="left" controlSize="small" inset="2" id="193">
+                                            <buttonCell key="cell" type="check" title="Enable" bezelStyle="regularSquare" imagePosition="left" alignment="left" controlSize="small" inset="2" id="193" customClass="VLCHUDCheckboxCell">
                                                 <behavior key="behavior" changeContents="YES" doesNotDimImage="YES" lightByContents="YES"/>
                                                 <font key="font" metaFont="smallSystem"/>
                                             </buttonCell>
@@ -132,7 +133,7 @@
                                         </button>
                                         <button mirrorLayoutDirectionWhenInternationalizing="always" translatesAutoresizingMaskIntoConstraints="NO" id="194">
                                             <rect key="frame" x="92" y="193" width="57" height="18"/>
-                                            <buttonCell key="cell" type="check" title="2 Pass" bezelStyle="regularSquare" imagePosition="left" alignment="left" controlSize="small" inset="2" id="195">
+                                            <buttonCell key="cell" type="check" title="2 Pass" bezelStyle="regularSquare" imagePosition="left" alignment="left" controlSize="small" inset="2" id="195" customClass="VLCHUDCheckboxCell">
                                                 <behavior key="behavior" changeContents="YES" doesNotDimImage="YES" lightByContents="YES"/>
                                                 <font key="font" metaFont="smallSystem"/>
                                             </buttonCell>
@@ -142,7 +143,7 @@
                                         </button>
                                         <popUpButton horizontalHuggingPriority="249" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="168">
                                             <rect key="frame" x="156" y="190" width="310" height="22"/>
-                                            <popUpButtonCell key="cell" type="push" title="headphones" bezelStyle="rounded" alignment="left" controlSize="small" lineBreakMode="truncatingTail" state="on" borderStyle="borderAndBezel" inset="2" selectedItem="181" id="169">
+                                            <popUpButtonCell key="cell" type="push" title="headphones" bezelStyle="rounded" alignment="left" controlSize="small" lineBreakMode="truncatingTail" state="on" borderStyle="borderAndBezel" inset="2" selectedItem="181" id="169" customClass="VLCHUDPopUpButtonCell">
                                                 <behavior key="behavior" lightByBackground="YES" lightByGray="YES"/>
                                                 <font key="font" metaFont="smallSystem"/>
                                                 <menu key="menu" title="OtherViews" id="170">
@@ -213,14 +214,14 @@
                                             <subviews>
                                                 <slider horizontalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="196">
                                                     <rect key="frame" x="14" y="31" width="18" height="150"/>
-                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" minValue="-20" maxValue="20" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="197"/>
+                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" minValue="-20" maxValue="20" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="197" customClass="VLCHUDSliderCell"/>
                                                     <connections>
                                                         <action selector="equalizerPreAmpSliderUpdated:" target="-2" id="7Xa-Z8-5gG"/>
                                                     </connections>
                                                 </slider>
                                                 <textField verticalHuggingPriority="750" horizontalCompressionResistancePriority="250" preferredMaxLayoutWidth="60" translatesAutoresizingMaskIntoConstraints="NO" id="90">
                                                     <rect key="frame" x="38" y="170" width="36" height="11"/>
-                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="right" title="+20 dB" id="158">
+                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="right" title="+20 dB" id="158" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -228,7 +229,7 @@
                                                 </textField>
                                                 <textField verticalHuggingPriority="750" horizontalCompressionResistancePriority="250" preferredMaxLayoutWidth="60" translatesAutoresizingMaskIntoConstraints="NO" id="91">
                                                     <rect key="frame" x="38" y="101" width="25" height="11"/>
-                                                    <textFieldCell key="cell" controlSize="mini" continuous="YES" sendsActionOnEndEditing="YES" alignment="right" title="0 dB" id="157">
+                                                    <textFieldCell key="cell" controlSize="mini" continuous="YES" sendsActionOnEndEditing="YES" alignment="right" title="0 dB" id="157" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -236,7 +237,7 @@
                                                 </textField>
                                                 <textField verticalHuggingPriority="750" horizontalCompressionResistancePriority="250" preferredMaxLayoutWidth="60" translatesAutoresizingMaskIntoConstraints="NO" id="92">
                                                     <rect key="frame" x="38" y="32" width="35" height="11"/>
-                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="right" title="-20 dB" id="156">
+                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="right" title="-20 dB" id="156" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -244,7 +245,7 @@
                                                 </textField>
                                                 <textField verticalHuggingPriority="750" horizontalCompressionResistancePriority="250" preferredMaxLayoutWidth="0.0" translatesAutoresizingMaskIntoConstraints="NO" id="93" customClass="VLCWrappableTextField">
                                                     <rect key="frame" x="12" y="14" width="65" height="11"/>
-                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="Preamp" id="155">
+                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="Preamp" id="155" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -252,7 +253,7 @@
                                                 </textField>
                                                 <textField verticalHuggingPriority="750" horizontalCompressionResistancePriority="250" preferredMaxLayoutWidth="30" translatesAutoresizingMaskIntoConstraints="NO" id="95">
                                                     <rect key="frame" x="90" y="14" width="20" height="11"/>
-                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="60" id="153">
+                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="60" id="153" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -260,7 +261,7 @@
                                                 </textField>
                                                 <textField verticalHuggingPriority="750" horizontalCompressionResistancePriority="250" preferredMaxLayoutWidth="30" translatesAutoresizingMaskIntoConstraints="NO" id="96">
                                                     <rect key="frame" x="117" y="14" width="24" height="11"/>
-                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="170" id="152">
+                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="170" id="152" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -268,7 +269,7 @@
                                                 </textField>
                                                 <textField verticalHuggingPriority="750" horizontalCompressionResistancePriority="250" preferredMaxLayoutWidth="30" translatesAutoresizingMaskIntoConstraints="NO" id="100">
                                                     <rect key="frame" x="174" y="14" width="26" height="11"/>
-                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="600" id="148">
+                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="600" id="148" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -276,7 +277,7 @@
                                                 </textField>
                                                 <textField verticalHuggingPriority="750" horizontalCompressionResistancePriority="250" preferredMaxLayoutWidth="30" translatesAutoresizingMaskIntoConstraints="NO" id="101">
                                                     <rect key="frame" x="146" y="14" width="25" height="11"/>
-                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="310" id="147">
+                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="310" id="147" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -284,7 +285,7 @@
                                                 </textField>
                                                 <textField verticalHuggingPriority="750" horizontalCompressionResistancePriority="250" preferredMaxLayoutWidth="30" translatesAutoresizingMaskIntoConstraints="NO" id="102">
                                                     <rect key="frame" x="207" y="14" width="19" height="11"/>
-                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="1K" id="146">
+                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="1K" id="146" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -292,7 +293,7 @@
                                                 </textField>
                                                 <textField verticalHuggingPriority="750" horizontalCompressionResistancePriority="250" preferredMaxLayoutWidth="30" translatesAutoresizingMaskIntoConstraints="NO" id="104">
                                                     <rect key="frame" x="291" y="14" width="25" height="11"/>
-                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="12K" id="144">
+                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="12K" id="144" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -300,7 +301,7 @@
                                                 </textField>
                                                 <textField verticalHuggingPriority="750" horizontalCompressionResistancePriority="250" preferredMaxLayoutWidth="30" translatesAutoresizingMaskIntoConstraints="NO" id="107">
                                                     <rect key="frame" x="235" y="14" width="20" height="11"/>
-                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="3K" id="141">
+                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="3K" id="141" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -308,7 +309,7 @@
                                                 </textField>
                                                 <textField verticalHuggingPriority="750" horizontalCompressionResistancePriority="250" preferredMaxLayoutWidth="30" translatesAutoresizingMaskIntoConstraints="NO" id="109">
                                                     <rect key="frame" x="264" y="14" width="20" height="11"/>
-                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="6K" id="139">
+                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="6K" id="139" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -316,7 +317,7 @@
                                                 </textField>
                                                 <textField verticalHuggingPriority="750" horizontalCompressionResistancePriority="250" preferredMaxLayoutWidth="30" translatesAutoresizingMaskIntoConstraints="NO" id="110">
                                                     <rect key="frame" x="320" y="14" width="25" height="11"/>
-                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="14K" id="138">
+                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="14K" id="138" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -324,7 +325,7 @@
                                                 </textField>
                                                 <textField verticalHuggingPriority="750" horizontalCompressionResistancePriority="250" preferredMaxLayoutWidth="30" translatesAutoresizingMaskIntoConstraints="NO" id="111">
                                                     <rect key="frame" x="349" y="14" width="25" height="11"/>
-                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="16K" id="137">
+                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="16K" id="137" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -332,70 +333,70 @@
                                                 </textField>
                                                 <slider horizontalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="198">
                                                     <rect key="frame" x="91" y="31" width="18" height="150"/>
-                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" minValue="-20" maxValue="20" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="199"/>
+                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" minValue="-20" maxValue="20" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="199" customClass="VLCHUDSliderCell"/>
                                                     <connections>
                                                         <action selector="equalizerBandSliderUpdated:" target="-2" id="Pq9-mK-6gi"/>
                                                     </connections>
                                                 </slider>
                                                 <slider horizontalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="200">
                                                     <rect key="frame" x="120" y="31" width="18" height="150"/>
-                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" minValue="-20" maxValue="20" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="201"/>
+                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" minValue="-20" maxValue="20" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="201" customClass="VLCHUDSliderCell"/>
                                                     <connections>
                                                         <action selector="equalizerBandSliderUpdated:" target="-2" id="V5y-cd-ebf"/>
                                                     </connections>
                                                 </slider>
                                                 <slider horizontalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="202">
                                                     <rect key="frame" x="149" y="31" width="18" height="150"/>
-                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" minValue="-20" maxValue="20" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="203"/>
+                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" minValue="-20" maxValue="20" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="203" customClass="VLCHUDSliderCell"/>
                                                     <connections>
                                                         <action selector="equalizerBandSliderUpdated:" target="-2" id="KN9-Ll-nEK"/>
                                                     </connections>
                                                 </slider>
                                                 <slider horizontalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="204">
                                                     <rect key="frame" x="178" y="31" width="18" height="150"/>
-                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" minValue="-20" maxValue="20" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="205"/>
+                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" minValue="-20" maxValue="20" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="205" customClass="VLCHUDSliderCell"/>
                                                     <connections>
                                                         <action selector="equalizerBandSliderUpdated:" target="-2" id="35G-ln-i5e"/>
                                                     </connections>
                                                 </slider>
                                                 <slider horizontalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="206">
                                                     <rect key="frame" x="207" y="31" width="18" height="150"/>
-                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" minValue="-20" maxValue="20" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="207"/>
+                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" minValue="-20" maxValue="20" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="207" customClass="VLCHUDSliderCell"/>
                                                     <connections>
                                                         <action selector="equalizerBandSliderUpdated:" target="-2" id="LEn-my-NvY"/>
                                                     </connections>
                                                 </slider>
                                                 <slider horizontalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="208">
                                                     <rect key="frame" x="236" y="31" width="18" height="150"/>
-                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" minValue="-20" maxValue="20" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="209"/>
+                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" minValue="-20" maxValue="20" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="209" customClass="VLCHUDSliderCell"/>
                                                     <connections>
                                                         <action selector="equalizerBandSliderUpdated:" target="-2" id="h2x-ra-iQ3"/>
                                                     </connections>
                                                 </slider>
                                                 <slider horizontalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="210">
                                                     <rect key="frame" x="265" y="31" width="18" height="150"/>
-                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" minValue="-20" maxValue="20" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="211"/>
+                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" minValue="-20" maxValue="20" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="211" customClass="VLCHUDSliderCell"/>
                                                     <connections>
                                                         <action selector="equalizerBandSliderUpdated:" target="-2" id="m57-Q8-ZCE"/>
                                                     </connections>
                                                 </slider>
                                                 <slider horizontalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="212">
                                                     <rect key="frame" x="294" y="31" width="18" height="150"/>
-                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" minValue="-20" maxValue="20" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="213"/>
+                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" minValue="-20" maxValue="20" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="213" customClass="VLCHUDSliderCell"/>
                                                     <connections>
                                                         <action selector="equalizerBandSliderUpdated:" target="-2" id="wbc-hi-c1U"/>
                                                     </connections>
                                                 </slider>
                                                 <slider horizontalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="214">
                                                     <rect key="frame" x="323" y="31" width="18" height="150"/>
-                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" minValue="-20" maxValue="20" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="215"/>
+                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" minValue="-20" maxValue="20" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="215" customClass="VLCHUDSliderCell"/>
                                                     <connections>
                                                         <action selector="equalizerBandSliderUpdated:" target="-2" id="LPs-jK-YbG"/>
                                                     </connections>
                                                 </slider>
                                                 <slider horizontalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="216">
                                                     <rect key="frame" x="352" y="31" width="18" height="150"/>
-                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" minValue="-20" maxValue="20" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="217"/>
+                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" minValue="-20" maxValue="20" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="217" customClass="VLCHUDSliderCell"/>
                                                     <connections>
                                                         <action selector="equalizerBandSliderUpdated:" target="-2" id="ATa-AV-o2U"/>
                                                     </connections>
@@ -493,7 +494,7 @@
                                     <subviews>
                                         <button mirrorLayoutDirectionWhenInternationalizing="always" translatesAutoresizingMaskIntoConstraints="NO" id="218">
                                             <rect key="frame" x="14" y="190" width="203" height="18"/>
-                                            <buttonCell key="cell" type="check" title="Enable dynamic range compressor" bezelStyle="regularSquare" imagePosition="left" alignment="left" controlSize="small" inset="2" id="219">
+                                            <buttonCell key="cell" type="check" title="Enable dynamic range compressor" bezelStyle="regularSquare" imagePosition="left" alignment="left" controlSize="small" inset="2" id="219" customClass="VLCHUDCheckboxCell">
                                                 <behavior key="behavior" changeContents="YES" doesNotDimImage="YES" lightByContents="YES"/>
                                                 <font key="font" metaFont="smallSystem"/>
                                             </buttonCell>
@@ -503,7 +504,7 @@
                                         </button>
                                         <button verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="621">
                                             <rect key="frame" x="424" y="190" width="39" height="17"/>
-                                            <buttonCell key="cell" type="roundRect" title="Reset" bezelStyle="roundedRect" image="DBA9FF77-3F58-444F-902A-249EA5A23E3A" imagePosition="overlaps" alignment="center" controlSize="mini" borderStyle="border" inset="2" id="622">
+                                            <buttonCell key="cell" type="roundRect" title="Reset" bezelStyle="roundedRect" image="23B9454D-7C77-4D2E-AA65-0EE9DC365A2A" imagePosition="overlaps" alignment="center" controlSize="mini" borderStyle="border" inset="2" id="622" customClass="VLCHUDButtonCell">
                                                 <behavior key="behavior" pushIn="YES" lightByBackground="YES" lightByGray="YES"/>
                                                 <font key="font" metaFont="miniSystem"/>
                                             </buttonCell>
@@ -516,7 +517,7 @@
                                             <subviews>
                                                 <textField horizontalHuggingPriority="750" verticalHuggingPriority="750" horizontalCompressionResistancePriority="755" translatesAutoresizingMaskIntoConstraints="NO" id="220">
                                                     <rect key="frame" x="8" y="30" width="50" height="11"/>
-                                                    <textFieldCell key="cell" controlSize="mini" lineBreakMode="truncatingTail" sendsActionOnEndEditing="YES" alignment="center" title="0.0" usesSingleLineMode="YES" id="223">
+                                                    <textFieldCell key="cell" controlSize="mini" lineBreakMode="truncatingTail" sendsActionOnEndEditing="YES" alignment="center" title="0.0" usesSingleLineMode="YES" id="223" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -524,7 +525,7 @@
                                                 </textField>
                                                 <textField verticalHuggingPriority="749" horizontalCompressionResistancePriority="250" preferredMaxLayoutWidth="0.0" translatesAutoresizingMaskIntoConstraints="NO" id="248" customClass="VLCWrappableTextField">
                                                     <rect key="frame" x="8" y="4" width="50" height="22"/>
-                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="RMS/peak" id="261">
+                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="RMS/peak" id="261" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -535,14 +536,14 @@
                                                     <constraints>
                                                         <constraint firstAttribute="width" constant="46" id="JbG-c4-qiJ"/>
                                                     </constraints>
-                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" maxValue="1" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="222"/>
+                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" maxValue="1" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="222" customClass="VLCHUDSliderCell"/>
                                                     <connections>
                                                         <action selector="compressorSliderUpdated:" target="-2" id="scd-cx-Z2t"/>
                                                     </connections>
                                                 </slider>
                                                 <textField horizontalHuggingPriority="750" verticalHuggingPriority="750" horizontalCompressionResistancePriority="755" translatesAutoresizingMaskIntoConstraints="NO" id="224">
                                                     <rect key="frame" x="64" y="30" width="50" height="11"/>
-                                                    <textFieldCell key="cell" controlSize="mini" lineBreakMode="truncatingTail" sendsActionOnEndEditing="YES" alignment="center" title="24.9 ms" usesSingleLineMode="YES" id="227">
+                                                    <textFieldCell key="cell" controlSize="mini" lineBreakMode="truncatingTail" sendsActionOnEndEditing="YES" alignment="center" title="24.9 ms" usesSingleLineMode="YES" id="227" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -550,7 +551,7 @@
                                                 </textField>
                                                 <textField verticalHuggingPriority="749" horizontalCompressionResistancePriority="250" preferredMaxLayoutWidth="0.0" translatesAutoresizingMaskIntoConstraints="NO" id="249" customClass="VLCWrappableTextField">
                                                     <rect key="frame" x="64" y="4" width="50" height="22"/>
-                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="Attack" id="260">
+                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="Attack" id="260" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -558,14 +559,14 @@
                                                 </textField>
                                                 <slider horizontalHuggingPriority="240" translatesAutoresizingMaskIntoConstraints="NO" id="225">
                                                     <rect key="frame" x="66" y="44" width="46" height="134"/>
-                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" minValue="1.5" maxValue="400" doubleValue="25" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="226"/>
+                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" minValue="1.5" maxValue="400" doubleValue="25" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="226" customClass="VLCHUDSliderCell"/>
                                                     <connections>
                                                         <action selector="compressorSliderUpdated:" target="-2" id="TSd-Vu-uAC"/>
                                                     </connections>
                                                 </slider>
                                                 <textField horizontalHuggingPriority="750" verticalHuggingPriority="750" horizontalCompressionResistancePriority="755" translatesAutoresizingMaskIntoConstraints="NO" id="228">
                                                     <rect key="frame" x="120" y="30" width="50" height="11"/>
-                                                    <textFieldCell key="cell" controlSize="mini" lineBreakMode="truncatingTail" sendsActionOnEndEditing="YES" alignment="center" title="800.0 ms" usesSingleLineMode="YES" id="231">
+                                                    <textFieldCell key="cell" controlSize="mini" lineBreakMode="truncatingTail" sendsActionOnEndEditing="YES" alignment="center" title="800.0 ms" usesSingleLineMode="YES" id="231" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -573,7 +574,7 @@
                                                 </textField>
                                                 <textField verticalHuggingPriority="749" horizontalCompressionResistancePriority="250" preferredMaxLayoutWidth="0.0" translatesAutoresizingMaskIntoConstraints="NO" id="250" customClass="VLCWrappableTextField">
                                                     <rect key="frame" x="120" y="4" width="50" height="22"/>
-                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="Release" id="259">
+                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="Release" id="259" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -581,14 +582,14 @@
                                                 </textField>
                                                 <slider horizontalHuggingPriority="240" translatesAutoresizingMaskIntoConstraints="NO" id="229">
                                                     <rect key="frame" x="122" y="44" width="46" height="134"/>
-                                                    <sliderCell key="cell" controlSize="small" continuous="YES" state="on" alignment="left" minValue="2" maxValue="800" doubleValue="245.06977982954544" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="230"/>
+                                                    <sliderCell key="cell" controlSize="small" continuous="YES" state="on" alignment="left" minValue="2" maxValue="800" doubleValue="245.06977982954544" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="230" customClass="VLCHUDSliderCell"/>
                                                     <connections>
                                                         <action selector="compressorSliderUpdated:" target="-2" id="tJL-Vg-pRk"/>
                                                     </connections>
                                                 </slider>
                                                 <textField horizontalHuggingPriority="750" verticalHuggingPriority="750" horizontalCompressionResistancePriority="755" translatesAutoresizingMaskIntoConstraints="NO" id="232">
                                                     <rect key="frame" x="176" y="30" width="50" height="11"/>
-                                                    <textFieldCell key="cell" controlSize="mini" lineBreakMode="truncatingTail" sendsActionOnEndEditing="YES" alignment="center" title="-11.0 dB" usesSingleLineMode="YES" id="235">
+                                                    <textFieldCell key="cell" controlSize="mini" lineBreakMode="truncatingTail" sendsActionOnEndEditing="YES" alignment="center" title="-11.0 dB" usesSingleLineMode="YES" id="235" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -596,7 +597,7 @@
                                                 </textField>
                                                 <textField verticalHuggingPriority="749" horizontalCompressionResistancePriority="250" preferredMaxLayoutWidth="0.0" translatesAutoresizingMaskIntoConstraints="NO" id="251" customClass="VLCWrappableTextField">
                                                     <rect key="frame" x="176" y="4" width="50" height="22"/>
-                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="Threshold" id="258">
+                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="Threshold" id="258" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -604,14 +605,14 @@
                                                 </textField>
                                                 <slider horizontalHuggingPriority="240" translatesAutoresizingMaskIntoConstraints="NO" id="233">
                                                     <rect key="frame" x="178" y="44" width="46" height="134"/>
-                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" minValue="-30" doubleValue="-11" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="234"/>
+                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" minValue="-30" doubleValue="-11" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="234" customClass="VLCHUDSliderCell"/>
                                                     <connections>
                                                         <action selector="compressorSliderUpdated:" target="-2" id="Otq-ED-0CI"/>
                                                     </connections>
                                                 </slider>
                                                 <textField horizontalHuggingPriority="750" verticalHuggingPriority="750" horizontalCompressionResistancePriority="755" translatesAutoresizingMaskIntoConstraints="NO" id="236">
                                                     <rect key="frame" x="232" y="30" width="50" height="11"/>
-                                                    <textFieldCell key="cell" controlSize="mini" lineBreakMode="truncatingTail" sendsActionOnEndEditing="YES" alignment="center" title="8.0:1" usesSingleLineMode="YES" id="239">
+                                                    <textFieldCell key="cell" controlSize="mini" lineBreakMode="truncatingTail" sendsActionOnEndEditing="YES" alignment="center" title="8.0:1" usesSingleLineMode="YES" id="239" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -619,7 +620,7 @@
                                                 </textField>
                                                 <textField verticalHuggingPriority="749" horizontalCompressionResistancePriority="250" preferredMaxLayoutWidth="0.0" translatesAutoresizingMaskIntoConstraints="NO" id="252" customClass="VLCWrappableTextField">
                                                     <rect key="frame" x="232" y="4" width="50" height="22"/>
-                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="Ratio" id="257">
+                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="Ratio" id="257" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -627,14 +628,14 @@
                                                 </textField>
                                                 <slider horizontalHuggingPriority="240" translatesAutoresizingMaskIntoConstraints="NO" id="237">
                                                     <rect key="frame" x="234" y="44" width="46" height="134"/>
-                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" minValue="1" maxValue="20" doubleValue="8" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="238"/>
+                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" minValue="1" maxValue="20" doubleValue="8" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="238" customClass="VLCHUDSliderCell"/>
                                                     <connections>
                                                         <action selector="compressorSliderUpdated:" target="-2" id="Vee-cn-Xep"/>
                                                     </connections>
                                                 </slider>
                                                 <textField horizontalHuggingPriority="750" verticalHuggingPriority="750" horizontalCompressionResistancePriority="755" translatesAutoresizingMaskIntoConstraints="NO" id="240">
                                                     <rect key="frame" x="288" y="30" width="50" height="11"/>
-                                                    <textFieldCell key="cell" controlSize="mini" lineBreakMode="truncatingTail" sendsActionOnEndEditing="YES" alignment="center" title="2.5 dB" usesSingleLineMode="YES" id="243">
+                                                    <textFieldCell key="cell" controlSize="mini" lineBreakMode="truncatingTail" sendsActionOnEndEditing="YES" alignment="center" title="2.5 dB" usesSingleLineMode="YES" id="243" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -642,7 +643,7 @@
                                                 </textField>
                                                 <textField verticalHuggingPriority="749" horizontalCompressionResistancePriority="250" preferredMaxLayoutWidth="0.0" translatesAutoresizingMaskIntoConstraints="NO" id="253" customClass="VLCWrappableTextField">
                                                     <rect key="frame" x="288" y="4" width="50" height="22"/>
-                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="Knee radius" id="256">
+                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="Knee radius" id="256" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -650,14 +651,14 @@
                                                 </textField>
                                                 <slider horizontalHuggingPriority="240" translatesAutoresizingMaskIntoConstraints="NO" id="241">
                                                     <rect key="frame" x="290" y="44" width="46" height="134"/>
-                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" minValue="1" maxValue="10" doubleValue="2.5" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="242"/>
+                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" minValue="1" maxValue="10" doubleValue="2.5" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="242" customClass="VLCHUDSliderCell"/>
                                                     <connections>
                                                         <action selector="compressorSliderUpdated:" target="-2" id="gaI-my-uOm"/>
                                                     </connections>
                                                 </slider>
                                                 <textField horizontalHuggingPriority="750" verticalHuggingPriority="750" horizontalCompressionResistancePriority="755" translatesAutoresizingMaskIntoConstraints="NO" id="244">
                                                     <rect key="frame" x="344" y="30" width="50" height="11"/>
-                                                    <textFieldCell key="cell" controlSize="mini" lineBreakMode="truncatingTail" sendsActionOnEndEditing="YES" alignment="center" title="7.0 dB" usesSingleLineMode="YES" id="247">
+                                                    <textFieldCell key="cell" controlSize="mini" lineBreakMode="truncatingTail" sendsActionOnEndEditing="YES" alignment="center" title="7.0 dB" usesSingleLineMode="YES" id="247" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -665,14 +666,14 @@
                                                 </textField>
                                                 <slider horizontalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="245">
                                                     <rect key="frame" x="346" y="44" width="46" height="134"/>
-                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" maxValue="24" doubleValue="7" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="246"/>
+                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" maxValue="24" doubleValue="7" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="246" customClass="VLCHUDSliderCell"/>
                                                     <connections>
                                                         <action selector="compressorSliderUpdated:" target="-2" id="iSY-Me-sMB"/>
                                                     </connections>
                                                 </slider>
                                                 <textField verticalHuggingPriority="749" horizontalCompressionResistancePriority="250" preferredMaxLayoutWidth="0.0" translatesAutoresizingMaskIntoConstraints="NO" id="254" customClass="VLCWrappableTextField">
                                                     <rect key="frame" x="344" y="4" width="50" height="22"/>
-                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="Makeup gain" id="255">
+                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="Makeup gain" id="255" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -780,7 +781,7 @@
                                     <subviews>
                                         <button mirrorLayoutDirectionWhenInternationalizing="always" translatesAutoresizingMaskIntoConstraints="NO" id="262">
                                             <rect key="frame" x="7" y="190" width="116" height="18"/>
-                                            <buttonCell key="cell" type="check" title="Enable Spatializer" bezelStyle="regularSquare" imagePosition="left" alignment="left" controlSize="small" inset="2" id="305">
+                                            <buttonCell key="cell" type="check" title="Enable Spatializer" bezelStyle="regularSquare" imagePosition="left" alignment="left" controlSize="small" inset="2" id="305" customClass="VLCHUDCheckboxCell">
                                                 <behavior key="behavior" changeContents="YES" doesNotDimImage="YES" lightByContents="YES"/>
                                                 <font key="font" metaFont="smallSystem"/>
                                             </buttonCell>
@@ -790,7 +791,7 @@
                                         </button>
                                         <button verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="618">
                                             <rect key="frame" x="424" y="190" width="39" height="17"/>
-                                            <buttonCell key="cell" type="roundRect" title="Reset" bezelStyle="roundedRect" image="D57F690C-D42D-46B8-B0D9-BA04207B8D4D" imagePosition="overlaps" alignment="center" controlSize="mini" borderStyle="border" inset="2" id="619">
+                                            <buttonCell key="cell" type="roundRect" title="Reset" bezelStyle="roundedRect" image="27329F2C-5C68-4C17-B1D7-CC4B709BEF59" imagePosition="overlaps" alignment="center" controlSize="mini" borderStyle="border" inset="2" id="619" customClass="VLCHUDButtonCell">
                                                 <behavior key="behavior" pushIn="YES" lightByBackground="YES" lightByGray="YES"/>
                                                 <font key="font" metaFont="miniSystem"/>
                                             </buttonCell>
@@ -803,7 +804,7 @@
                                             <subviews>
                                                 <textField verticalHuggingPriority="750" horizontalCompressionResistancePriority="755" translatesAutoresizingMaskIntoConstraints="NO" id="265">
                                                     <rect key="frame" x="8" y="33" width="50" height="11"/>
-                                                    <textFieldCell key="cell" controlSize="mini" lineBreakMode="truncatingTail" sendsActionOnEndEditing="YES" alignment="center" title="2.0" usesSingleLineMode="YES" id="302">
+                                                    <textFieldCell key="cell" controlSize="mini" lineBreakMode="truncatingTail" sendsActionOnEndEditing="YES" alignment="center" title="2.0" usesSingleLineMode="YES" id="302" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -814,14 +815,14 @@
                                                     <constraints>
                                                         <constraint firstAttribute="width" constant="46" id="WiR-no-cPu"/>
                                                     </constraints>
-                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" maxValue="10" doubleValue="2" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="301"/>
+                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" maxValue="10" doubleValue="2" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="301" customClass="VLCHUDSliderCell"/>
                                                     <connections>
                                                         <action selector="spatializerSliderUpdated:" target="-2" id="TzD-ul-6Gx"/>
                                                     </connections>
                                                 </slider>
                                                 <textField verticalHuggingPriority="750" horizontalCompressionResistancePriority="755" translatesAutoresizingMaskIntoConstraints="NO" id="267">
                                                     <rect key="frame" x="64" y="33" width="50" height="11"/>
-                                                    <textFieldCell key="cell" controlSize="mini" lineBreakMode="truncatingTail" sendsActionOnEndEditing="YES" alignment="center" title="2.0" usesSingleLineMode="YES" id="300">
+                                                    <textFieldCell key="cell" controlSize="mini" lineBreakMode="truncatingTail" sendsActionOnEndEditing="YES" alignment="center" title="2.0" usesSingleLineMode="YES" id="300" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -829,14 +830,14 @@
                                                 </textField>
                                                 <slider translatesAutoresizingMaskIntoConstraints="NO" id="268">
                                                     <rect key="frame" x="66" y="47" width="46" height="131"/>
-                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" maxValue="10" doubleValue="2" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="299"/>
+                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" maxValue="10" doubleValue="2" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="299" customClass="VLCHUDSliderCell"/>
                                                     <connections>
                                                         <action selector="spatializerSliderUpdated:" target="-2" id="smf-XD-GHV"/>
                                                     </connections>
                                                 </slider>
                                                 <textField verticalHuggingPriority="750" horizontalCompressionResistancePriority="755" translatesAutoresizingMaskIntoConstraints="NO" id="269">
                                                     <rect key="frame" x="120" y="33" width="50" height="11"/>
-                                                    <textFieldCell key="cell" controlSize="mini" lineBreakMode="truncatingTail" sendsActionOnEndEditing="YES" alignment="center" title="0.0" usesSingleLineMode="YES" id="298">
+                                                    <textFieldCell key="cell" controlSize="mini" lineBreakMode="truncatingTail" sendsActionOnEndEditing="YES" alignment="center" title="0.0" usesSingleLineMode="YES" id="298" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -844,14 +845,14 @@
                                                 </textField>
                                                 <slider translatesAutoresizingMaskIntoConstraints="NO" id="270">
                                                     <rect key="frame" x="122" y="47" width="46" height="131"/>
-                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" maxValue="10" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="297"/>
+                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" maxValue="10" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="297" customClass="VLCHUDSliderCell"/>
                                                     <connections>
                                                         <action selector="spatializerSliderUpdated:" target="-2" id="bnX-CW-h45"/>
                                                     </connections>
                                                 </slider>
                                                 <textField verticalHuggingPriority="750" horizontalCompressionResistancePriority="755" translatesAutoresizingMaskIntoConstraints="NO" id="271">
                                                     <rect key="frame" x="176" y="33" width="50" height="11"/>
-                                                    <textFieldCell key="cell" controlSize="mini" lineBreakMode="truncatingTail" sendsActionOnEndEditing="YES" alignment="center" title="0.0" usesSingleLineMode="YES" id="296">
+                                                    <textFieldCell key="cell" controlSize="mini" lineBreakMode="truncatingTail" sendsActionOnEndEditing="YES" alignment="center" title="0.0" usesSingleLineMode="YES" id="296" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -859,14 +860,14 @@
                                                 </textField>
                                                 <slider translatesAutoresizingMaskIntoConstraints="NO" id="272">
                                                     <rect key="frame" x="178" y="47" width="46" height="131"/>
-                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" maxValue="10" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="295"/>
+                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" maxValue="10" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="295" customClass="VLCHUDSliderCell"/>
                                                     <connections>
                                                         <action selector="spatializerSliderUpdated:" target="-2" id="wM1-xe-t5e"/>
                                                     </connections>
                                                 </slider>
                                                 <textField verticalHuggingPriority="750" horizontalCompressionResistancePriority="755" translatesAutoresizingMaskIntoConstraints="NO" id="273">
                                                     <rect key="frame" x="232" y="33" width="50" height="11"/>
-                                                    <textFieldCell key="cell" controlSize="mini" lineBreakMode="truncatingTail" sendsActionOnEndEditing="YES" alignment="center" title="0.0" usesSingleLineMode="YES" id="294">
+                                                    <textFieldCell key="cell" controlSize="mini" lineBreakMode="truncatingTail" sendsActionOnEndEditing="YES" alignment="center" title="0.0" usesSingleLineMode="YES" id="294" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -874,14 +875,14 @@
                                                 </textField>
                                                 <slider translatesAutoresizingMaskIntoConstraints="NO" id="274">
                                                     <rect key="frame" x="234" y="47" width="46" height="131"/>
-                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" maxValue="10" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="293"/>
+                                                    <sliderCell key="cell" controlSize="small" continuous="YES" alignment="left" maxValue="10" tickMarkPosition="right" numberOfTickMarks="9" sliderType="linear" id="293" customClass="VLCHUDSliderCell"/>
                                                     <connections>
                                                         <action selector="spatializerSliderUpdated:" target="-2" id="CoP-xd-gur"/>
                                                     </connections>
                                                 </slider>
                                                 <textField verticalHuggingPriority="750" horizontalCompressionResistancePriority="250" preferredMaxLayoutWidth="0.0" translatesAutoresizingMaskIntoConstraints="NO" id="277" customClass="VLCWrappableTextField">
                                                     <rect key="frame" x="8" y="13" width="50" height="11"/>
-                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="Size" id="290">
+                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="Size" id="290" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -889,7 +890,7 @@
                                                 </textField>
                                                 <textField verticalHuggingPriority="750" horizontalCompressionResistancePriority="250" preferredMaxLayoutWidth="0.0" translatesAutoresizingMaskIntoConstraints="NO" id="278" customClass="VLCWrappableTextField">
                                                     <rect key="frame" x="64" y="13" width="50" height="11"/>
-                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="Width" id="289">
+                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="Width" id="289" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -897,7 +898,7 @@
                                                 </textField>
                                                 <textField verticalHuggingPriority="750" horizontalCompressionResistancePriority="250" preferredMaxLayoutWidth="0.0" translatesAutoresizingMaskIntoConstraints="NO" id="279" customClass="VLCWrappableTextField">
                                                     <rect key="frame" x="120" y="13" width="50" height="11"/>
-                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="Wet" id="288">
+                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="Wet" id="288" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -905,7 +906,7 @@
                                                 </textField>
                                                 <textField verticalHuggingPriority="750" horizontalCompressionResistancePriority="250" preferredMaxLayoutWidth="0.0" translatesAutoresizingMaskIntoConstraints="NO" id="280" customClass="VLCWrappableTextField">
                                                     <rect key="frame" x="176" y="13" width="50" height="11"/>
-                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="Dry" id="287">
+                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="Dry" id="287" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -913,7 +914,7 @@
                                                 </textField>
                                                 <textField verticalHuggingPriority="750" horizontalCompressionResistancePriority="250" preferredMaxLayoutWidth="0.0" translatesAutoresizingMaskIntoConstraints="NO" id="281" customClass="VLCWrappableTextField">
                                                     <rect key="frame" x="232" y="13" width="50" height="11"/>
-                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="Dump" id="286">
+                                                    <textFieldCell key="cell" controlSize="mini" sendsActionOnEndEditing="YES" alignment="center" title="Dump" id="286" customClass="VLCHUDTextFieldCell">
                                                         <font key="font" metaFont="miniSystem"/>
                                                         <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                         <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -1009,7 +1010,7 @@
                                     <subviews>
                                         <button mirrorLayoutDirectionWhenInternationalizing="always" translatesAutoresizingMaskIntoConstraints="NO" id="343">
                                             <rect key="frame" x="14" y="179" width="135" height="18"/>
-                                            <buttonCell key="cell" type="check" title="Volume normalization" bezelStyle="regularSquare" imagePosition="left" alignment="left" controlSize="small" inset="2" id="346">
+                                            <buttonCell key="cell" type="check" title="Volume normalization" bezelStyle="regularSquare" imagePosition="left" alignment="left" controlSize="small" inset="2" id="346" customClass="VLCHUDCheckboxCell">
                                                 <behavior key="behavior" changeContents="YES" doesNotDimImage="YES" lightByContents="YES"/>
                                                 <font key="font" metaFont="smallSystem"/>
                                             </buttonCell>
@@ -1025,7 +1026,7 @@
                                                 <subviews>
                                                     <textField verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="341">
                                                         <rect key="frame" x="15" y="10" width="82" height="14"/>
-                                                        <textFieldCell key="cell" controlSize="small" lineBreakMode="truncatingTail" sendsActionOnEndEditing="YES" title="Maximum level" usesSingleLineMode="YES" id="348">
+                                                        <textFieldCell key="cell" controlSize="small" lineBreakMode="truncatingTail" sendsActionOnEndEditing="YES" title="Maximum level" usesSingleLineMode="YES" id="348" customClass="VLCHUDTextFieldCell">
                                                             <font key="font" metaFont="smallSystem"/>
                                                             <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                             <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
@@ -1033,7 +1034,7 @@
                                                     </textField>
                                                     <slider verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="342">
                                                         <rect key="frame" x="110" y="9" width="310" height="15"/>
-                                                        <sliderCell key="cell" controlSize="small" continuous="YES" state="on" alignment="left" minValue="0.10000000000000001" maxValue="10" doubleValue="5" tickMarkPosition="above" sliderType="linear" id="347"/>
+                                                        <sliderCell key="cell" controlSize="small" continuous="YES" state="on" alignment="left" minValue="0.10000000000000001" maxValue="10" doubleValue="5" tickMarkPosition="above" sliderType="linear" id="347" customClass="VLCHUDSliderCell"/>
                                                         <connections>
                                                             <action selector="filterVolumeNormSliderUpdated:" target="-2" id="YLf-gK-UkJ"/>
                                                         </connections>
@@ -1051,7 +1052,7 @@
                                         </box>
                                         <button mirrorLayoutDirectionWhenInternationalizing="always" translatesAutoresizingMaskIntoConstraints="NO" id="709">
                                             <rect key="frame" x="14" y="126" width="65" height="18"/>
-                                            <buttonCell key="cell" type="check" title="Karaoke" bezelStyle="regularSquare" imagePosition="left" alignment="left" controlSize="small" inset="2" id="710">
+                                            <buttonCell key="cell" type="check" title="Karaoke" bezelStyle="regularSquare" imagePosition="left" alignment="left" controlSize="small" inset="2" id="710" customClass="VLCHUDCheckboxCell">
                                                 <behavior key="behavior" changeContents="YES" doesNotDimImage="YES" lightByContents="YES"/>
                                                 <font key="font" metaFont="smallSystem"/>
                                             </buttonCell>
@@ -1061,7 +1062,7 @@
                                         </button>
                                         <button mirrorLayoutDirectionWhenInternationalizing="always" translatesAutoresizingMaskIntoConstraints="NO" id="344">
                                             <rect key="frame" x="14" y="106" width="154" height="18"/>
-                                            <buttonCell key="cell" type="check" title="Headphone virtualization" bezelStyle="regularSquare" imagePosition="left" alignment="left" controlSize="small" inset="2" id="345">
+                                            <buttonCell key="cell" type="check" title="Headphone virtualization" bezelStyle="regularSquare" imagePosition="left" alignment="left" controlSize="small" inset="2" id="345" customClass="VLCHUDCheckboxCell">
                                                 <behavior key="behavior" changeContents="YES" doesNotDimImage="YES" lightByContents="YES"/>
                                                 <font key="font" metaFont="smallSystem"/>
                                             </buttonCell>
@@ -1071,7 +1072,7 @@
                                         </button>
                                         <button mirrorLayoutDirectionWhenInternationalizing="always" translatesAutoresizingMaskIntoConstraints="NO" id="wYr-HG-zA2">
                                             <rect key="frame" x="14" y="86" width="84" height="18"/>
-                                            <buttonCell key="cell" type="check" title="Scaletempo" bezelStyle="regularSquare" imagePosition="left" alignment="left" controlSize="small" inset="2" id="9yB-r8-GZB">
+                                            <buttonCell key="cell" type="check" title="Scaletempo" bezelStyle="regularSquare" imagePosition="left" alignment="left" controlSize="small" inset="2" id="9yB-r8-GZB" customClass="VLCHUDCheckboxCell">
                                                 <behavior key="behavior" changeContents="YES" doesNotDimImage="YES" lightByContents="YES"/>
                                                 <font key="font" metaFont="smallSystem"/>
                                             </buttonCell>
@@ -1081,7 +1082,7 @@
                                         </button>
                                         <button mirrorLayoutDirectionWhenInternationalizing="always" translatesAutoresizingMaskIntoConstraints="NO" id="NUi-0U-gqN">
                                             <rect key="frame" x="14" y="66" width="109" height="18"/>
-                                            <buttonCell key="cell" type="check" title="Stereo Enhancer" bezelStyle="regularSquare" imagePosition="left" alignment="left" controlSize="small" inset="2" id="kvM-H1-VS8">
+                                            <buttonCell key="cell" type="check" title="Stereo Enhancer" bezelStyle="regularSquare" imagePosition="left" alignment="left" controlSize="small" inset="2" id="kvM-H1-VS8" customClass="VLCHUDCheckboxCell">
                                                 <behavior key="behavior" changeContents="YES" doesNotDimImage="YES" lightByContents="YES"/>
                                                 <font key="font" metaFont="smallSystem"/>
                                             </buttonCell>
@@ -1118,7 +1119,7 @@
                     </tabView>
                     <popUpButton verticalHuggingPriority="750" horizontalCompressionResistancePriority="400" translatesAutoresizingMaskIntoConstraints="NO" id="701">
                         <rect key="frame" x="17" y="6" width="175" height="22"/>
-                        <popUpButtonCell key="cell" type="push" bezelStyle="rounded" alignment="left" controlSize="small" lineBreakMode="truncatingTail" borderStyle="borderAndBezel" inset="2" id="702">
+                        <popUpButtonCell key="cell" type="push" bezelStyle="rounded" alignment="left" controlSize="small" lineBreakMode="truncatingTail" borderStyle="borderAndBezel" inset="2" id="702" customClass="VLCHUDPopUpButtonCell">
                             <behavior key="behavior" lightByBackground="YES" lightByGray="YES"/>
                             <font key="font" metaFont="smallSystem"/>
                             <menu key="menu" title="OtherViews" id="703">
@@ -1135,7 +1136,7 @@
                     </popUpButton>
                     <button horizontalHuggingPriority="200" mirrorLayoutDirectionWhenInternationalizing="always" translatesAutoresizingMaskIntoConstraints="NO" id="Dqv-cc-ZvK">
                         <rect key="frame" x="197" y="8" width="258" height="18"/>
-                        <buttonCell key="cell" type="check" title="Apply profile at launch" bezelStyle="regularSquare" imagePosition="left" state="on" inset="2" id="fiO-IL-qum">
+                        <buttonCell key="cell" type="check" title="Apply profile at launch" bezelStyle="regularSquare" imagePosition="left" state="on" inset="2" id="fiO-IL-qum" customClass="VLCHUDCheckboxCell">
                             <behavior key="behavior" changeContents="YES" doesNotDimImage="YES" lightByContents="YES"/>
                             <font key="font" metaFont="smallSystem"/>
                         </buttonCell>
@@ -1168,7 +1169,7 @@
         <userDefaultsController representsSharedInstance="YES" id="350"/>
     </objects>
     <resources>
-        <image name="D57F690C-D42D-46B8-B0D9-BA04207B8D4D" width="1" height="1">
+        <image name="23B9454D-7C77-4D2E-AA65-0EE9DC365A2A" width="1" height="1">
             <mutableData key="keyedArchiveRepresentation">
 YnBsaXN0MDDUAQIDBAUGPT5YJHZlcnNpb25YJG9iamVjdHNZJGFyY2hpdmVyVCR0b3ASAAGGoK4HCBMU
 GR4fIyQrLjE3OlUkbnVsbNUJCgsMDQ4PEBESVk5TU2l6ZVYkY2xhc3NcTlNJbWFnZUZsYWdzVk5TUmVw
@@ -1209,7 +1210,7 @@ ALkAuwDAANcA2QDbBysHMAc7B0QHVwdbB2YHbwd0B3wHfweEB5MHlweeB6YHswe4B7oHvAfBB8kHzAfR
 B9kH3AfuB/EH9gAAAAAAAAIBAAAAAAAAAEEAAAAAAAAAAAAAAAAAAAf4A
 </mutableData>
         </image>
-        <image name="DBA9FF77-3F58-444F-902A-249EA5A23E3A" width="1" height="1">
+        <image name="27329F2C-5C68-4C17-B1D7-CC4B709BEF59" width="1" height="1">
             <mutableData key="keyedArchiveRepresentation">
 YnBsaXN0MDDUAQIDBAUGPT5YJHZlcnNpb25YJG9iamVjdHNZJGFyY2hpdmVyVCR0b3ASAAGGoK4HCBMU
 GR4fIyQrLjE3OlUkbnVsbNUJCgsMDQ4PEBESVk5TU2l6ZVYkY2xhc3NcTlNJbWFnZUZsYWdzVk5TUmVw

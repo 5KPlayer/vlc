@@ -2,6 +2,7 @@
  * araw.c: Pseudo audio decoder; for raw pcm data
  *****************************************************************************
  * Copyright (C) 2001, 2003 VLC authors and VideoLAN
+ * $Id: 0d8145527a02fbc18f478a1b76736e4e769595db $
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *
@@ -68,12 +69,22 @@ vlc_module_end ()
 static int DecodeBlock( decoder_t *, block_t * );
 static void Flush( decoder_t * );
 
-typedef struct
+struct decoder_sys_t
 {
     void (*decode) (void *, const uint8_t *, unsigned);
     size_t framebits;
     date_t end_date;
-} decoder_sys_t;
+};
+
+static const uint16_t pi_channels_maps[] =
+{
+    0,
+    AOUT_CHAN_CENTER, AOUT_CHANS_2_0, AOUT_CHANS_3_0,
+    AOUT_CHANS_4_0,   AOUT_CHANS_5_0, AOUT_CHANS_5_1,
+    AOUT_CHANS_7_0,   AOUT_CHANS_7_1, AOUT_CHANS_8_1,
+};
+static_assert( ARRAY_SIZE( pi_channels_maps ) - 1 <= AOUT_CHAN_MAX,
+               "channel count mismatch" );
 
 static void S8Decode( void *, const uint8_t *, unsigned );
 static void U16BDecode( void *, const uint8_t *, unsigned );
@@ -266,14 +277,14 @@ static int DecoderOpen( vlc_object_t *p_this )
     p_dec->fmt_out.audio.channel_type = p_dec->fmt_in.audio.channel_type;
     p_dec->fmt_out.audio.i_format = format;
     p_dec->fmt_out.audio.i_rate = p_dec->fmt_in.audio.i_rate;
-    if( p_dec->fmt_in.audio.i_channels < ARRAY_SIZE(vlc_chan_maps) )
+    if( p_dec->fmt_in.audio.i_channels <= ARRAY_SIZE( pi_channels_maps ) - 1 )
     {
         if( p_dec->fmt_in.audio.i_physical_channels )
             p_dec->fmt_out.audio.i_physical_channels =
                                            p_dec->fmt_in.audio.i_physical_channels;
         else
             p_dec->fmt_out.audio.i_physical_channels =
-                vlc_chan_maps[p_dec->fmt_in.audio.i_channels];
+                                  pi_channels_maps[p_dec->fmt_in.audio.i_channels];
     }
     else
     {
@@ -288,6 +299,7 @@ static int DecoderOpen( vlc_object_t *p_this )
     assert( p_sys->framebits );
 
     date_Init( &p_sys->end_date, p_dec->fmt_out.audio.i_rate, 1 );
+    date_Set( &p_sys->end_date, 0 );
 
     p_dec->pf_decode = DecodeBlock;
     p_dec->pf_flush  = Flush;
@@ -303,7 +315,7 @@ static void Flush( decoder_t *p_dec )
 {
     decoder_sys_t *p_sys = p_dec->p_sys;
 
-    date_Set( &p_sys->end_date, VLC_TICK_INVALID );
+    date_Set( &p_sys->end_date, 0 );
 }
 
 /****************************************************************************
@@ -324,12 +336,12 @@ static int DecodeBlock( decoder_t *p_dec, block_t *p_block )
             goto skip;
     }
 
-    if( p_block->i_pts != VLC_TICK_INVALID &&
+    if( p_block->i_pts > VLC_TS_INVALID &&
         p_block->i_pts != date_Get( &p_sys->end_date ) )
     {
         date_Set( &p_sys->end_date, p_block->i_pts );
     }
-    else if( date_Get( &p_sys->end_date ) == VLC_TICK_INVALID )
+    else if( !date_Get( &p_sys->end_date ) )
         /* We've just started the stream, wait for the first PTS. */
         goto skip;
 
@@ -650,7 +662,7 @@ static void U16IEncode( void *outp, const uint8_t *inp, unsigned samples )
     uint16_t *out = outp;
 
     for( size_t i = 0; i < samples; i++ )
-        *(out++) =  vlc_bswap16( *(in++) + 0x8000 );
+        *(out++) =  bswap16( *(in++) + 0x8000 );
 }
 
 static void U16NEncode( void *outp, const uint8_t *inp, unsigned samples )
@@ -724,7 +736,7 @@ static void U32IEncode( void *outp, const uint8_t *inp, unsigned samples )
     uint32_t *out = outp;
 
     for( size_t i = 0; i < samples; i++ )
-        *(out++) =  vlc_bswap32( *(in++) + 0x80000000 );
+        *(out++) =  bswap32( *(in++) + 0x80000000 );
 }
 
 static void U32NEncode( void *outp, const uint8_t *inp, unsigned samples )
@@ -742,7 +754,7 @@ static void S32IEncode( void *outp, const uint8_t *inp, unsigned samples )
     int32_t *out = outp;
 
     for( size_t i = 0; i < samples; i++ )
-        *(out++) = vlc_bswap32( *(in++) );
+        *(out++) = bswap32( *(in++) );
 }
 
 static void F32IEncode( void *outp, const uint8_t *inp, unsigned samples )
@@ -755,7 +767,7 @@ static void F32IEncode( void *outp, const uint8_t *inp, unsigned samples )
         union { float f; uint32_t u; char b[4]; } s;
 
         s.f = *(in++);
-        s.u = vlc_bswap32( s.u );
+        s.u = bswap32( s.u );
         memcpy( out, s.b, 4 );
         out += 4;
     }
@@ -771,7 +783,7 @@ static void F64IEncode( void *outp, const uint8_t *inp, unsigned samples )
         union { double d; uint64_t u; char b[8]; } s;
 
         s.d = *(in++);
-        s.u = vlc_bswap64( s.u );
+        s.u = bswap64( s.u );
         memcpy( out, s.b, 8 );
         out += 8;
     }

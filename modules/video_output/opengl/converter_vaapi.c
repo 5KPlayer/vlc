@@ -25,7 +25,6 @@
 #include "converter.h"
 #include "../../hw/vaapi/vlc_vaapi.h"
 #include <vlc_vout_window.h>
-#include <vlc_codec.h>
 
 #include <assert.h>
 
@@ -33,8 +32,24 @@
 #include <EGL/eglext.h>
 #include <va/va_drmcommon.h>
 
+#ifdef HAVE_VA_WL
+# include <va/va_wayland.h>
+#endif
+
+#ifdef HAVE_VA_X11
+# include <va/va_x11.h>
+# include <vlc_xlib.h>
+#endif
+
+#ifdef HAVE_VA_DRM
+# include <va/va_drm.h>
+# include <vlc_fs.h>
+# include <fcntl.h>
+#endif
+
 struct priv
 {
+    struct vlc_vaapi_instance *vainst;
     VADisplay vadpy;
     VASurfaceID *va_surface_ids;
     PFNGLEGLIMAGETARGETTEXTURE2DOESPROC glEGLImageTargetTexture2DOES;
@@ -223,7 +238,7 @@ tc_vaegl_get_pool(const opengl_tex_converter_t *tc, unsigned requested_count)
     struct priv *priv = tc->priv;
 
     picture_pool_t *pool =
-        vlc_vaapi_PoolNew(VLC_OBJECT(tc->gl), tc->dec_device, priv->vadpy,
+        vlc_vaapi_PoolNew(VLC_OBJECT(tc->gl), priv->vainst, priv->vadpy,
                           requested_count, &priv->va_surface_ids, &tc->fmt,
                           true);
     if (!pool)
@@ -286,12 +301,9 @@ Close(vlc_object_t *obj)
     if (priv->last.pic != NULL)
         vaegl_release_last_pic(tc, priv);
 
-    free(tc->priv);
-}
+    vlc_vaapi_ReleaseInstance(priv->vainst);
 
-static int strcasecmp_void(const void *a, const void *b)
-{
-    return strcasecmp(a, b);
+    free(tc->priv);
 }
 
 static int
@@ -313,7 +325,7 @@ tc_va_check_interop_blacklist(opengl_tex_converter_t *tc, VADisplay *vadpy)
 
     const char *found = bsearch(vendor_prefix, blacklist_prefix,
                                 ARRAY_SIZE(blacklist_prefix),
-                                BL_SIZE_MAX, strcasecmp_void);
+                                BL_SIZE_MAX, (void *) strcasecmp);
     if (found != NULL)
     {
         msg_Warn(tc->gl, "The '%s' driver is blacklisted: no interop", found);
@@ -323,30 +335,85 @@ tc_va_check_interop_blacklist(opengl_tex_converter_t *tc, VADisplay *vadpy)
     return VLC_SUCCESS;
 }
 
+#ifdef HAVE_VA_X11
+static void
+x11_native_destroy_cb(VANativeDisplay native)
+{
+    XCloseDisplay(native);
+}
+
+static int
+x11_init_vaapi_instance(opengl_tex_converter_t *tc, struct priv *priv)
+{
+    if (!vlc_xlib_init(VLC_OBJECT(tc->gl)))
+        return VLC_EGENERIC;
+
+    Display *x11dpy = XOpenDisplay(tc->gl->surface->display.x11);
+    if (x11dpy == NULL)
+        return VLC_EGENERIC;
+
+    priv->vadpy = vaGetDisplay(x11dpy);
+    if (priv->vadpy == NULL)
+    {
+        x11_native_destroy_cb(x11dpy);
+        return VLC_EGENERIC;
+    }
+
+    priv->vainst = vlc_vaapi_InitializeInstance(VLC_OBJECT(tc->gl), priv->vadpy,
+                                                x11dpy, x11_native_destroy_cb);
+    return priv->vainst != NULL ? VLC_SUCCESS : VLC_EGENERIC;
+}
+#endif
+
+#ifdef HAVE_VA_DRM
+static int
+drm_init_vaapi_instance(opengl_tex_converter_t *tc, struct priv *priv)
+{
+    priv->vainst =
+        vlc_vaapi_InitializeInstanceDRM(VLC_OBJECT(tc->gl), vaGetDisplayDRM,
+                                        &priv->vadpy, NULL);
+    return priv->vainst != NULL ? VLC_SUCCESS : VLC_EGENERIC;
+}
+#endif
+
+#ifdef HAVE_VA_WL
+static int
+wl_init_vaapi_instance(opengl_tex_converter_t *tc, struct priv *priv)
+{
+    priv->vadpy = vaGetDisplayWl(tc->gl->surface->display.wl);
+    if (priv->vadpy == NULL)
+        return VLC_EGENERIC;
+
+    priv->vainst = vlc_vaapi_InitializeInstance(VLC_OBJECT(tc->gl), priv->vadpy,
+                                                NULL, NULL);
+    return priv->vainst != NULL ? VLC_SUCCESS : VLC_EGENERIC;
+}
+#endif
+
+
 static int
 Open(vlc_object_t *obj)
 {
     opengl_tex_converter_t *tc = (void *) obj;
 
-    if (tc->dec_device == NULL
-     || tc->dec_device->type != VLC_DECODER_DEVICE_VAAPI
-     || !vlc_vaapi_IsChromaOpaque(tc->fmt.i_chroma)
+    if (!vlc_vaapi_IsChromaOpaque(tc->fmt.i_chroma)
      || tc->gl->ext != VLC_GL_EXT_EGL
      || tc->gl->egl.createImageKHR == NULL
      || tc->gl->egl.destroyImageKHR == NULL)
         return VLC_EGENERIC;
 
-    if (!vlc_gl_StrHasToken(tc->glexts, "GL_OES_EGL_image"))
+    if (!HasExtension(tc->glexts, "GL_OES_EGL_image"))
         return VLC_EGENERIC;
 
     const char *eglexts = tc->gl->egl.queryString(tc->gl, EGL_EXTENSIONS);
-    if (eglexts == NULL || !vlc_gl_StrHasToken(eglexts, "EGL_EXT_image_dma_buf_import"))
+    if (eglexts == NULL || !HasExtension(eglexts, "EGL_EXT_image_dma_buf_import"))
         return VLC_EGENERIC;
 
     struct priv *priv = tc->priv = calloc(1, sizeof(struct priv));
     if (unlikely(tc->priv == NULL))
         goto error;
     priv->fourcc = 0;
+    priv->vainst = NULL;
 
     int va_fourcc;
     int vlc_sw_chroma;
@@ -372,8 +439,23 @@ Open(vlc_object_t *obj)
     if (priv->glEGLImageTargetTexture2DOES == NULL)
         goto error;
 
-    priv->vadpy = tc->dec_device->opaque;
-    assert(priv->vadpy != NULL);
+    int ret = VLC_EGENERIC;
+#if defined (HAVE_VA_X11)
+    if (tc->gl->surface->type == VOUT_WINDOW_TYPE_XID)
+        ret = x11_init_vaapi_instance(tc, priv);
+#elif defined(HAVE_VA_WL)
+    if (tc->gl->surface->type == VOUT_WINDOW_TYPE_WAYLAND)
+        ret = wl_init_vaapi_instance(tc, priv);
+#elif defined (HAVE_VA_DRM)
+    ret = drm_init_vaapi_instance(tc, priv);
+#else
+# error need X11/WL/DRM support
+#endif
+
+    if (ret != VLC_SUCCESS)
+        goto error;
+
+    assert(priv->vadpy != NULL && priv->vainst != NULL);
 
     if (tc_va_check_interop_blacklist(tc, priv->vadpy))
         goto error;
@@ -388,15 +470,31 @@ Open(vlc_object_t *obj)
 
     return VLC_SUCCESS;
 error:
+    if (priv && priv->vainst)
+        vlc_vaapi_ReleaseInstance(priv->vainst);
     free(priv);
     return VLC_EGENERIC;
 }
 
+#if defined (HAVE_VA_X11)
+# define PRIORITY 2
+# define SHORTCUT "vaapi_x11"
+# define DESCRIPTION_SUFFIX "X11"
+#elif defined(HAVE_VA_WL)
+# define PRIORITY 2
+# define SHORTCUT "vaapi_wl"
+# define DESCRIPTION_SUFFIX "Wayland"
+#elif defined (HAVE_VA_DRM)
+# define PRIORITY 1
+# define SHORTCUT "vaapi_drm"
+# define DESCRIPTION_SUFFIX "DRM"
+#endif
+
 vlc_module_begin ()
-    set_description("VA-API OpenGL surface converter")
-    set_capability("glconv", 1)
+    set_description("VA-API OpenGL surface converter for " DESCRIPTION_SUFFIX)
+    set_capability("glconv", PRIORITY)
     set_callbacks(Open, Close)
     set_category(CAT_VIDEO)
     set_subcategory(SUBCAT_VIDEO_VOUT)
-    add_shortcut("vaapi")
+    add_shortcut("vaapi", SHORTCUT)
 vlc_module_end ()

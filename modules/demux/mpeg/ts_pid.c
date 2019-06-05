@@ -25,7 +25,6 @@
 
 #include "ts_pid.h"
 #include "ts_streams.h"
-#include "timestamps.h"
 
 #include "ts.h"
 
@@ -65,16 +64,14 @@ void ts_pid_list_Release( demux_t *p_demux, ts_pid_list_t *p_list )
 struct searchkey
 {
     int16_t i_pid;
-    ts_pid_t *const *pp_last;
+    ts_pid_t **pp_last;
 };
 
-static int ts_bsearch_searchkey_Compare( const void *key, const void *other )
+static int ts_bsearch_searchkey_Compare( void *key, void *other )
 {
-    struct searchkey *p_key = (void *)key;
-    ts_pid_t *const *pp_pid = other;
-
-    ts_pid_t *p_pid = *pp_pid;
-    p_key->pp_last = other;
+    struct searchkey *p_key = (struct searchkey *) key;
+    ts_pid_t *p_pid = *((ts_pid_t **) other);
+    p_key->pp_last = (ts_pid_t **) other;
     return ( p_key->i_pid >= p_pid->i_pid ) ? p_key->i_pid - p_pid->i_pid : -1;
 }
 
@@ -172,10 +169,8 @@ static void PIDReset( ts_pid_t *pid )
 {
     assert(pid->i_refcount == 0);
     pid->i_cc       = 0xff;
-    pid->i_dup      = 0;
     pid->i_flags    &= ~FLAG_SCRAMBLED;
     pid->type = TYPE_FREE;
-    memset(pid->prevpktbytes, 0, PREVPKTKEEPBYTES);
 }
 
 bool PIDSetup( demux_t *p_demux, ts_pid_type_t i_type, ts_pid_t *pid, ts_pid_t *p_parent )

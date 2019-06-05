@@ -1,8 +1,10 @@
 --[[
-    Translate Dailymotion video webpages URLs to corresponding
-    video stream URLs.
+    Translate Daily Motion video webpages URLs to the corresponding
+    FLV URL.
 
- Copyright © 2007-2019 the VideoLAN team
+ $Id$
+
+ Copyright © 2007-2016 the VideoLAN team
 
  This program is free software; you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
@@ -34,7 +36,6 @@ function parse()
 		if string.match( line, "<meta property=\"og:title\"" ) then
 			_,_,name = string.find( line, "content=\"(.-)\"" )
 			name = vlc.strings.resolve_xml_special_chars( name )
-			name = string.gsub( name, " %- Vidéo dailymotion$", "" )
 		end
 		if string.match( line, "<meta name=\"description\"" ) then
 			_,_,description = string.find( line, "content=\"(.-)\"" )
@@ -42,25 +43,12 @@ function parse()
                 description = vlc.strings.resolve_xml_special_chars( description )
             end
 		end
-		if string.match( line, "<meta property=\"og:image\"" ) then
-			arturl = string.match( line, "content=\"(.-)\"" )
+		if string.match( line, "<link rel=\"thumbnail\" type=\"image/jpeg\"" ) then
+			_,_,arturl = string.find( line, "href=\"(.-)\"" )
 		end
-    end
 
-    local video_id = string.match( vlc.path, "^www%.dailymotion%.com/video/([^/?#]+)" )
-    if video_id then
-        local metadata = vlc.stream( vlc.access.."://www.dailymotion.com/player/metadata/video/"..video_id )
-        if metadata then
-            local line = metadata:readline() -- data is on one line only
-
-            -- TODO: fetch "title" and resolve \u escape sequences
-            -- FIXME: use "screenname" instead and resolve \u escape sequences
+        if string.match( line, "var __PLAYER_CONFIG__ = {" ) then
             artist = string.match( line, '"username":"([^"]+)"' )
-
-            local poster = string.match( line, '"poster_url":"([^"]+)"' )
-            if poster then
-                arturl = string.gsub( poster, "\\/", "/")
-            end
 
             local streams = string.match( line, "\"qualities\":{(.-%])}" )
             if streams then
@@ -92,7 +80,7 @@ function parse()
     end
 
     if not path then
-        vlc.msg.err("Couldn't extract dailymotion video URL, please check for updates to this script")
+        vlc.msg.err("Couldn't extract the video URL from dailymotion")
         return { }
     end
 

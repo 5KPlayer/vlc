@@ -2,6 +2,7 @@
  * pls.c : PLS playlist format import
  *****************************************************************************
  * Copyright (C) 2004 VLC authors and VideoLAN
+ * $Id: c4474c13e7a051aaffa47f57f2fb9922e2027e49 $
  *
  * Authors: Clément Stenac <zorglub@videolan.org>
  * Authors: Sigmund Augdal Helberg <dnumgis@videolan.org>
@@ -30,7 +31,6 @@
 
 #include <vlc_common.h>
 #include <vlc_access.h>
-#include <vlc_charset.h>
 
 #include "playlist.h"
 
@@ -49,12 +49,13 @@ int Import_PLS( vlc_object_t *p_this )
 
     CHECK_FILE(p_demux);
 
-    if( vlc_stream_Peek( p_demux->s, &p_peek, 10 ) < 10 ) {
+    if( vlc_stream_Peek( p_demux->p_source , &p_peek, 10 ) < 10 ) {
         msg_Dbg( p_demux, "not enough data" );
         return VLC_EGENERIC;
     }
 
     if( strncasecmp( (const char *)p_peek, "[playlist]", 10 )
+     && strncasecmp( (const char *)p_peek, "[Reference]", 10 )
      && !stream_HasExtension( p_demux, ".pls" ) )
         return VLC_EGENERIC;
 
@@ -75,25 +76,13 @@ static int ReadDir( stream_t *p_demux, input_item_node_t *p_subitems )
     char          *psz_value;
     int            i_item = -1;
     input_item_t *p_input;
-    bool ascii = true;
-    bool unicode = true;
 
-    while( ( psz_line = vlc_stream_ReadLine( p_demux->s ) ) )
+    input_item_t *p_current_input = GetCurrentItem(p_demux);
+
+    while( ( psz_line = vlc_stream_ReadLine( p_demux->p_source ) ) )
     {
-        if (ascii && !IsASCII(psz_line))
-        {
-            unicode = IsUTF8(psz_line);
-            ascii = false;
-        }
-
-        if (!unicode)
-        {
-            char *latin = FromLatin1(psz_line);
-            free(psz_line);
-            psz_line = latin;
-        }
-
-        if( !strncasecmp( psz_line, "[playlist]", sizeof("[playlist]")-1 ) )
+        if( !strncasecmp( psz_line, "[playlist]", sizeof("[playlist]")-1 ) ||
+            !strncasecmp( psz_line, "[Reference]", sizeof("[Reference]")-1 ) )
         {
             free( psz_line );
             continue;
@@ -140,6 +129,7 @@ static int ReadDir( stream_t *p_demux, input_item_node_t *p_subitems )
             if( psz_mrl )
             {
                 p_input = input_item_New( psz_mrl, psz_name );
+                input_item_CopyOptions( p_input, p_current_input );
                 input_item_node_AppendItem( p_subitems, p_input );
                 input_item_Release( p_input );
                 free( psz_mrl_orig );
@@ -154,11 +144,18 @@ static int ReadDir( stream_t *p_demux, input_item_node_t *p_subitems )
             i_item = i_new_item;
         }
 
-        if( !strncasecmp( psz_key, "file", sizeof("file") -1 ) )
+        if( !strncasecmp( psz_key, "file", sizeof("file") -1 ) ||
+            !strncasecmp( psz_key, "Ref", sizeof("Ref") -1 ) )
         {
             free( psz_mrl_orig );
             psz_mrl_orig =
             psz_mrl = ProcessMRL( psz_value, p_demux->psz_url );
+
+            if( !strncasecmp( psz_key, "Ref", sizeof("Ref") -1 ) )
+            {
+                if( !strncasecmp( psz_mrl, "http://", sizeof("http://") -1 ) )
+                    memcpy( psz_mrl, "mmsh", 4 );
+            }
         }
         else if( !strncasecmp( psz_key, "title", sizeof("title") -1 ) )
         {
@@ -177,6 +174,7 @@ static int ReadDir( stream_t *p_demux, input_item_node_t *p_subitems )
     if( psz_mrl )
     {
         p_input = input_item_New( psz_mrl, psz_name );
+        input_item_CopyOptions( p_input, p_current_input );
         input_item_node_AppendItem( p_subitems, p_input );
         input_item_Release( p_input );
         free( psz_mrl_orig );

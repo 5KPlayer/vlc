@@ -550,7 +550,7 @@ void BuildPMT( dvbpsi_t *p_dvbpsi, vlc_object_t *p_object,
             {
                 i_ver = 'H';
             }
-            else if(vlc_popcount(p_stream->fmt->audio.i_frame_length) == 1)
+            else if(popcount(p_stream->fmt->audio.i_frame_length) == 1)
             {
                 i_ver = ctz( p_stream->fmt->audio.i_frame_length >> 8 );
                 if(i_ver == 0 || i_ver > 3)

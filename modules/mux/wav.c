@@ -2,6 +2,7 @@
  * wav.c: wav muxer module for vlc
  *****************************************************************************
  * Copyright (C) 2004, 2006 VLC authors and VideoLAN
+ * $Id: 2791777b21aeb8cdb6d00afeef6568ab79414f76 $
  *
  * Authors: Gildas Bazin <gbazin@videolan.org>
  *
@@ -60,7 +61,7 @@ static int Mux      ( sout_mux_t * );
 
 #define MAX_CHANNELS 6
 
-typedef struct
+struct sout_mux_sys_t
 {
     bool b_used;
     bool b_header;
@@ -76,7 +77,7 @@ typedef struct
     uint32_t i_channel_mask;
     uint8_t i_chans_to_reorder;            /* do we need channel reordering */
     uint8_t pi_chan_table[AOUT_CHAN_MAX];
-} sout_mux_sys_t;
+};
 
 static const uint32_t pi_channels_in[] =
     { WAVE_SPEAKER_FRONT_LEFT, WAVE_SPEAKER_FRONT_RIGHT,

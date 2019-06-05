@@ -2,6 +2,7 @@
  * dialogs_provider.cpp : Dialog Provider
  *****************************************************************************
  * Copyright (C) 2006-2009 the VideoLAN team
+ * $Id: b816d29ae6f8886f12b41b7e4a1c7dff39826fe6 $
  *
  * Authors: Clément Stenac <zorglub@videolan.org>
  *          Jean-Baptiste Kempf <jb@videolan.org>
@@ -29,8 +30,7 @@
 
 #include "qt.hpp"
 #include "dialogs_provider.hpp"
-#include "components/player_controller.hpp" /* Load Subtitles */
-#include "components/playlist/playlist_controller.hpp"
+#include "input_manager.hpp" /* Load Subtitles */
 #include "menus.hpp"
 #include "recents.hpp"
 #include "util/qt_dirs.hpp"
@@ -38,6 +38,7 @@
 #include "main_interface.hpp"
 
 /* The dialogs */
+#include "dialogs/playlist.hpp"
 #include "dialogs/bookmarks.hpp"
 #include "dialogs/preferences.hpp"
 #include "dialogs/mediainfo.hpp"
@@ -53,6 +54,7 @@
 #include "dialogs/podcast_configuration.hpp"
 #include "dialogs/toolbar.hpp"
 #include "dialogs/plugins.hpp"
+#include "dialogs/external.hpp"
 #include "dialogs/epg.hpp"
 #include "dialogs/errors.hpp"
 
@@ -75,10 +77,21 @@ DialogsProvider::DialogsProvider( intf_thread_t *_p_intf ) :
                                   miscPopupMenu( NULL )
 {
     b_isDying = false;
+
+    /* Various signal mappers for the menus */
+    menusMapper = new QSignalMapper();
+    CONNECT( menusMapper, mapped(QObject *), this, menuAction( QObject *) );
+
+    menusUpdateMapper = new QSignalMapper();
+    CONNECT( menusUpdateMapper, mapped(QObject *),
+             this, menuUpdateAction( QObject *) );
+
+    new DialogHandler (p_intf, this );
 }
 
 DialogsProvider::~DialogsProvider()
 {
+    PlaylistDialog::killInstance();
     MediaInfoDialog::killInstance();
     MessagesDialog::killInstance();
     BookmarksDialog::killInstance();
@@ -92,14 +105,28 @@ DialogsProvider::~DialogsProvider()
     PluginDialog::killInstance();
     EpgDialog::killInstance();
 
+    delete menusMapper;
+    delete menusUpdateMapper;
+
     delete popupMenu;
     delete videoPopupMenu;
     delete audioPopupMenu;
     delete miscPopupMenu;
+}
 
-    /* free parentless menus  */
-    VLCMenuBar::freeRecentsMenu();
-    VLCMenuBar::freeRendererMenu();
+QStringList DialogsProvider::getOpenURL( QWidget *parent,
+                                         const QString &caption,
+                                         const QUrl &dir,
+                                         const QString &filter,
+                                         QString *selectedFilter )
+{
+    QStringList res;
+    QList<QUrl> urls = QFileDialog::getOpenFileUrls( parent, caption, dir, filter, selectedFilter );
+
+    foreach( const QUrl& url, urls )
+        res.append( url.toEncoded() );
+
+    return res;
 }
 
 QString DialogsProvider::getSaveFileName( QWidget *parent,
@@ -115,7 +142,7 @@ QString DialogsProvider::getSaveFileName( QWidget *parent,
 void DialogsProvider::quit()
 {
     b_isDying = true;
-    libvlc_Quit( vlc_object_instance(p_intf) );
+    libvlc_Quit( p_intf->obj.libvlc );
 }
 
 void DialogsProvider::customEvent( QEvent *event )
@@ -140,9 +167,7 @@ void DialogsProvider::customEvent( QEvent *event )
         case INTF_DIALOG_DIRECTORY:
             PLAppendDir(); break;
         case INTF_DIALOG_PLAYLIST:
-            //FIXME
-            //playlistDialog(); break;
-            break;
+            playlistDialog(); break;
         case INTF_DIALOG_MESSAGES:
             messagesDialog(); break;
         case INTF_DIALOG_FILEINFO:
@@ -165,15 +190,10 @@ void DialogsProvider::customEvent( QEvent *event )
            bool show = (de->i_arg != 0);
            if( show )
            {
-               if( p_intf->p_sys->p_mi )
-                   p_intf->p_sys->p_mi->popupMenu( show );
-               else
-               {
-                   //popping a QMenu prevents mouse release events to be received,
-                   //this ensures the coherency of the vout mouse state.
-                   emit releaseMouseEvents();
-                   popupMenu = VLCMenuBar::PopupMenu( p_intf, show );
-               }
+               //popping a QMenu prevents mouse release events to be received,
+               //this ensures the coherency of the vout mouse state.
+               emit releaseMouseEvents();
+               popupMenu = VLCMenuBar::PopupMenu( p_intf, show );
            }
            break;
         }
@@ -221,6 +241,11 @@ void DialogsProvider::customEvent( QEvent *event )
  ****************************************************************************/
 const QEvent::Type DialogEvent::DialogEvent_Type =
         (QEvent::Type)QEvent::registerEventType();
+
+void DialogsProvider::playlistDialog()
+{
+    PlaylistDialog::getInstance( p_intf )->toggleVisible();
+}
 
 void DialogsProvider::prefsDialog()
 {
@@ -380,15 +405,17 @@ void DialogsProvider::openFileGenericDialog( intf_dialog_args_t *p_arg )
     }
     else /* non-save mode */
     {
-        QList<QUrl> urls = QFileDialog::getOpenFileUrls( NULL, qfu( p_arg->psz_title ),
+        QStringList urls = getOpenURL( NULL, qfu( p_arg->psz_title ),
                                        p_intf->p_sys->filepath, extensions );
         p_arg->i_results = urls.count();
         p_arg->psz_results = (char **)vlc_alloc( p_arg->i_results, sizeof( char * ) );
         i = 0;
-        foreach( const QUrl &uri, urls )
-            p_arg->psz_results[i++] = strdup( uri.toEncoded().constData() );
-        if( !urls.isEmpty() )
-            p_intf->p_sys->filepath =  urls.last();
+        foreach( const QString &uri, urls )
+            p_arg->psz_results[i++] = strdup( qtu( uri ) );
+        if(i == 0)
+            p_intf->p_sys->filepath = "";
+        else
+            p_intf->p_sys->filepath = QUrl::fromEncoded(p_arg->psz_results[i-1]);
     }
 
     /* Callback */
@@ -443,6 +470,13 @@ void DialogsProvider::PLAppendDialog( int tab )
                              OPEN_AND_ENQUEUE )->showTab( tab );
 }
 
+void DialogsProvider::MLAppendDialog( int tab )
+{
+    OpenDialog::getInstance( p_intf->p_sys->p_mi, p_intf, false,
+                            OPEN_AND_ENQUEUE, false, false )
+                                    ->showTab( tab );
+}
+
 /**
  * Simple open
  ***/
@@ -470,32 +504,38 @@ QStringList DialogsProvider::showSimpleOpen( const QString& help,
     fileTypes.replace( ";*", " *");
     fileTypes.chop(2); //remove trailling ";;"
 
-    QList<QUrl> urls = QFileDialog::getOpenFileUrls( NULL,
+    QStringList urls = getOpenURL( NULL,
         help.isEmpty() ? qtr(I_OP_SEL_FILES ) : help,
         path.isEmpty() ? p_intf->p_sys->filepath : path,
         fileTypes );
 
     if( !urls.isEmpty() )
-        p_intf->p_sys->filepath = urls.last();
+        p_intf->p_sys->filepath = QUrl( urls.last() );
 
-    QStringList res;
-    foreach( const QUrl &url, urls )
-        res << url.toEncoded();
+    return urls;
+}
 
-    return res;
+/**
+ * Open a file,
+ * pl helps you to choose from playlist or media library,
+ * go to start or enqueue
+ **/
+void DialogsProvider::addFromSimple( bool pl, bool go)
+{
+    QStringList urls = DialogsProvider::showSimpleOpen();
+
+    bool first = go;
+    urls.sort();
+    foreach( const QString &url, urls )
+    {
+        Open::openMRL( p_intf, url, first, pl);
+        first = false;
+    }
 }
 
 void DialogsProvider::simpleOpenDialog()
 {
-    QStringList urls = DialogsProvider::showSimpleOpen();
-
-    bool first = true;
-    urls.sort();
-    foreach( const QString &url, urls )
-    {
-        Open::openMRL( p_intf, url, first );
-        first = false;
-    }
+    addFromSimple( true, true ); /* Playlist and Go */
 }
 
 /* Url & Clipboard */
@@ -531,11 +571,11 @@ void DialogsProvider::openUrlDialog()
  * pl helps you to choose from playlist or media library,
  * go to start or enqueue
  **/
-static void openDirectory( intf_thread_t *p_intf, bool go )
+static void openDirectory( intf_thread_t *p_intf, bool pl, bool go )
 {
     QString uri = DialogsProvider::getDirectoryDialog( p_intf );
     if( !uri.isEmpty() )
-        Open::openMRL( p_intf, uri, go );
+        Open::openMRL( p_intf, uri, go, pl );
 }
 
 QString DialogsProvider::getDirectoryDialog( intf_thread_t *p_intf )
@@ -566,22 +606,41 @@ QString DialogsProvider::getDirectoryDialog( intf_thread_t *p_intf )
     dir = qfu( uri );
     free( uri );
 
+    RecentsMRL::getInstance( p_intf )->addRecent( dir );
+
     return dir;
 }
 
 void DialogsProvider::PLOpenDir()
 {
-    openDirectory( p_intf, true );
+    openDirectory( p_intf, true, true );
 }
 
 void DialogsProvider::PLAppendDir()
 {
-    openDirectory( p_intf, false );
+    openDirectory( p_intf, true, false );
 }
 
 /****************
  * Playlist     *
  ****************/
+void DialogsProvider::openAPlaylist()
+{
+    QStringList urls = showSimpleOpen( qtr( "Open playlist..." ),
+                                        EXT_FILTER_PLAYLIST );
+    foreach( const QString &url, urls )
+    {
+        char* psz_path = vlc_uri2path(qtu( url ));
+        if ( !psz_path )
+        {
+            msg_Warn( p_intf, "unable to load playlist '%s'", qtu( url ) );
+            continue;
+        }
+        playlist_Import( THEPL, psz_path );
+        free( psz_path );
+    }
+}
+
 void DialogsProvider::savePlayingToPlaylist()
 {
     static const struct
@@ -648,11 +707,8 @@ void DialogsProvider::savePlayingToPlaylist()
 
     if ( psz_selected_module )
     {
-        vlc_playlist_Lock( p_intf->p_sys->p_playlist  );
-        vlc_playlist_Export( p_intf->p_sys->p_playlist,
-                             qtu( toNativeSeparators( file ) ),
-                             psz_selected_module );
-        vlc_playlist_Unlock( p_intf->p_sys->p_playlist  );
+        playlist_Export( THEPL, qtu( toNativeSeparators( file ) ),
+                         true, psz_selected_module );
         getSettings()->setValue( "last-playlist-ext", psz_last_playlist_ext );
     }
 }
@@ -692,7 +748,8 @@ void DialogsProvider::streamingDialog( QWidget *parent,
         {
             /* Clear the playlist.  This is because we're going to be populating
                it */
-            THEMPL->clear();
+            playlist_Clear( THEPL, pl_Unlocked );
+
             outputMRLs = s->getMrls();
             delete s;
         }
@@ -705,12 +762,27 @@ void DialogsProvider::streamingDialog( QWidget *parent,
     /* Get SoutMRL(s) */
     if( !outputMRLs.isEmpty() )
     {
-        QVector<vlc::playlist::Media> outputMedias;
-        std::transform(outputMRLs.cbegin(), outputMRLs.cend(), std::back_inserter(outputMedias), [&](const QString& mrl) {
-            QString title = "Converting " + mrl;
-            return vlc::playlist::Media(mrl, title, &options);
-        });
-        THEMPL->append(outputMedias, true);
+        /* For all of our MRLs */
+        for(int i = 0; i < outputMRLs.length(); i++)
+        {
+
+            /* Duplicate the options list.  This is because we need to have a
+             copy for every file we add to the playlist.*/
+            QStringList optionsCopy;
+            for(int j = 0; j < options.length(); j++)
+            {
+                optionsCopy.append(options[j]);
+            }
+
+            optionsCopy+= outputMRLs[i].split( " :");
+            QString title = "Converting " + mrls[i];
+
+            /* Add each file to convert to our playlist, making sure to not attempt to start playing it.*/
+            Open::openMRLwithOptions( p_intf, mrls[i], &optionsCopy, false, true, qtu( title ) );
+        }
+
+        /* Start the playlist from the beginning */
+        playlist_Control(THEPL,PLAYLIST_PLAY,pl_Unlocked);
     }
 }
 
@@ -728,7 +800,10 @@ void DialogsProvider::openAndTranscodingDialogs()
 
 void DialogsProvider::loadSubtitlesFile()
 {
-    input_item_t *p_item = THEMIM->getInput();
+    input_thread_t *p_input = THEMIM->getInput();
+    if( !p_input ) return;
+
+    input_item_t *p_item = input_GetItem( p_input );
     if( !p_item ) return;
 
     char *path = input_item_GetURI( p_item );
@@ -748,9 +823,9 @@ void DialogsProvider::loadSubtitlesFile()
 
     foreach( const QString &qsUrl, qsl )
     {
-
-        if ( THEMIM->AddAssociatedMedia( SPU_ES, qsUrl, true, true, false ) )
-            msg_Warn( p_intf, "unable to load subtitles from '%s'", qtu( qsUrl ) );
+        if( input_AddSlave( p_input, SLAVE_TYPE_SPU, qtu( qsUrl ), true, true, false ) )
+            msg_Warn( p_intf, "unable to load subtitles from '%s'",
+                      qtu( qsUrl ) );
     }
 }
 
@@ -758,6 +833,18 @@ void DialogsProvider::loadSubtitlesFile()
 /****************************************************************************
  * Menus
  ****************************************************************************/
+
+void DialogsProvider::menuAction( QObject *data )
+{
+    VLCMenuBar::DoAction( data );
+}
+
+void DialogsProvider::menuUpdateAction( QObject *data )
+{
+    MenuFunc *func = qobject_cast<MenuFunc *>(data);
+    assert( func );
+    func->doFunc( p_intf );
+}
 
 void DialogsProvider::sendKey( int key )
 {
@@ -786,5 +873,5 @@ void DialogsProvider::sendKey( int key )
      }
 
      // forward key to vlc core when not a key accelerator
-     var_SetInteger( vlc_object_instance(p_intf), "key-pressed", key );
+     var_SetInteger( p_intf->obj.libvlc, "key-pressed", key );
 }

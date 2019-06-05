@@ -4,6 +4,7 @@
  *   (http://liba52.sf.net/).
  *****************************************************************************
  * Copyright (C) 2001-2009 VLC authors and VideoLAN
+ * $Id: 4e221286d744b3bdf3d68ad373fa7a1c2630ab52 $
  *
  * Authors: Gildas Bazin <gbazin@videolan.org>
  *          Christophe Massiot <massiot@via.ecp.fr>
@@ -54,7 +55,7 @@
 static int  Open ( vlc_object_t * );
 static void Close( vlc_object_t * );
 
-typedef struct
+struct decoder_sys_t
 {
     a52_state_t     *p_liba52; /* liba52 internal structure */
     bool            b_dynrng; /* see below */
@@ -64,7 +65,7 @@ typedef struct
 
     uint8_t         pi_chan_table[AOUT_CHAN_MAX]; /* channel reordering */
     bool            b_synced;
-} decoder_sys_t;
+};
 
 #define DYNRNG_TEXT N_("A/52 dynamic range compression")
 #define DYNRNG_LONGTEXT N_( \

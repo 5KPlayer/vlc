@@ -40,8 +40,8 @@ using namespace adaptive;
  * http://arxiv.org/abs/1601.06748
  */
 
-#define minimumBufferS VLC_TICK_FROM_SEC(6)  /* Qmin */
-#define bufferTargetS  VLC_TICK_FROM_SEC(30) /* Qmax */
+#define minimumBufferS (CLOCK_FREQ * 6)  /* Qmin */
+#define bufferTargetS  (CLOCK_FREQ * 30) /* Qmax */
 
 NearOptimalContext::NearOptimalContext()
     : buffering_min( minimumBufferS )
@@ -50,10 +50,11 @@ NearOptimalContext::NearOptimalContext()
     , last_download_rate( 0 )
 { }
 
-NearOptimalAdaptationLogic::NearOptimalAdaptationLogic(vlc_object_t *obj)
-    : AbstractAdaptationLogic(obj)
+NearOptimalAdaptationLogic::NearOptimalAdaptationLogic( vlc_object_t *p_obj )
+    : AbstractAdaptationLogic()
     , currentBps( 0 )
     , usedBps( 0 )
+    , p_obj( p_obj )
 {
     vlc_mutex_init(&lock);
 }
@@ -65,7 +66,7 @@ NearOptimalAdaptationLogic::~NearOptimalAdaptationLogic()
 
 BaseRepresentation *
 NearOptimalAdaptationLogic::getNextQualityIndex( BaseAdaptationSet *adaptSet, RepresentationSelector &selector,
-                                                 float gammaP, float VD, float Q )
+                                                 float gammaP, mtime_t VD, mtime_t Q )
 {
     BaseRepresentation *ret = NULL;
     BaseRepresentation *prev = NULL;
@@ -106,7 +107,7 @@ BaseRepresentation *NearOptimalAdaptationLogic::getNextRepresentation(BaseAdapta
     vlc_mutex_unlock(&lock);
 
     const float gammaP = 1.0 + (umax - umin) / ((float)ctxcopy.buffering_target / ctxcopy.buffering_min - 1.0);
-    const float Vd = (secf_from_vlc_tick(ctxcopy.buffering_min) - 1.0) / (umin + gammaP);
+    const float Vd = ((float)ctxcopy.buffering_min / CLOCK_FREQ - 1.0) / (umin + gammaP);
 
     BaseRepresentation *m;
     if(prevRep == NULL) /* Starting */
@@ -117,7 +118,7 @@ BaseRepresentation *NearOptimalAdaptationLogic::getNextRepresentation(BaseAdapta
     {
         /* noted m* */
         m = getNextQualityIndex(adaptSet, selector, gammaP - umin /* umin == Sm, utility = std::log(S/Sm) */,
-                                Vd, secf_from_vlc_tick(ctxcopy.buffering_level));
+                                Vd, (float)ctxcopy.buffering_level / CLOCK_FREQ);
         if(m->getBandwidth() < prevRep->getBandwidth()) /* m*[n] < m*[n-1] */
         {
             BaseRepresentation *mp = selector.select(adaptSet, bps); /* m' */
@@ -177,7 +178,7 @@ unsigned NearOptimalAdaptationLogic::getMaxCurrentBw() const
     return i_max_bitrate;
 }
 
-void NearOptimalAdaptationLogic::updateDownloadRate(const ID &id, size_t dlsize, vlc_tick_t time)
+void NearOptimalAdaptationLogic::updateDownloadRate(const ID &id, size_t dlsize, mtime_t time)
 {
     vlc_mutex_lock(&lock);
     std::map<ID, NearOptimalContext>::iterator it = streams.find(id);

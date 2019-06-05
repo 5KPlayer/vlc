@@ -5,12 +5,14 @@
 #USE_FFMPEG ?= 1
 
 ifndef USE_LIBAV
-FFMPEG_HASH=0e833f615b59cd7611374d1d77257eaf00635ad7
+FFMPEG_HASH=eaff5fcb7cde8d1614755269773d471d3a3d1bfc
+FFMPEG_SNAPURL := http://git.videolan.org/?p=ffmpeg.git;a=snapshot;h=$(FFMPEG_HASH);sf=tgz
 FFMPEG_GITURL := http://git.videolan.org/git/ffmpeg.git
 FFMPEG_LAVC_MIN := 57.37.100
 USE_FFMPEG := 1
 else
-FFMPEG_HASH=35ed7f93dbc72d733e454ae464b1324f38af62a0
+FFMPEG_HASH=e171022c24c42b1e88a51bb3b4c27f13c87c85cb
+FFMPEG_SNAPURL := http://git.libav.org/?p=libav.git;a=snapshot;h=$(FFMPEG_HASH);sf=tgz
 FFMPEG_GITURL := git://git.libav.org/libav.git
 FFMPEG_LAVC_MIN := 57.16.0
 endif
@@ -46,15 +48,8 @@ FFMPEGCONF += \
 	--disable-linux-perf
 ifdef HAVE_DARWIN_OS
 FFMPEGCONF += \
+	--disable-videotoolbox \
 	--disable-securetransport
-endif
-endif
-
-# Disable VDA on macOS with libav
-ifdef USE_LIBAV
-ifdef HAVE_DARWIN_OS
-FFMPEGCONF += \
-	--disable-vda
 endif
 endif
 
@@ -63,7 +58,7 @@ DEPS_ffmpeg = zlib gsm
 ifndef USE_LIBAV
 FFMPEGCONF += \
 	--enable-libopenjpeg
-DEPS_ffmpeg += openjpeg $(DEPS_openjpeg)
+DEPS_ffmpeg += openjpeg
 endif
 
 # Optional dependencies
@@ -180,7 +175,7 @@ endif
 # Windows
 ifdef HAVE_WIN32
 ifndef HAVE_VISUALSTUDIO
-DEPS_ffmpeg += wine-headers
+DEPS_ffmpeg += d3d11
 ifndef HAVE_MINGW_W64
 DEPS_ffmpeg += directx
 endif
@@ -217,10 +212,6 @@ endif
 FFMPEGCONF += --target-os=sunos --enable-pic
 endif
 
-ifdef HAVE_NACL
-FFMPEGCONF+=--disable-inline-asm --disable-asm --target-os=linux
-endif
-
 # Build
 PKGS += ffmpeg
 ifeq ($(call need_pkg,"libavcodec >= $(FFMPEG_LAVC_MIN) libavformat >= 53.21.0 libswscale"),)
@@ -239,14 +230,16 @@ $(TARBALLS)/ffmpeg-$(FFMPEG_BASENAME).tar.xz:
 ffmpeg: ffmpeg-$(FFMPEG_BASENAME).tar.xz .sum-ffmpeg
 	rm -Rf $@ $@-$(FFMPEG_BASENAME)
 	mkdir -p $@-$(FFMPEG_BASENAME)
-	tar xvJfo "$<" --strip-components=1 -C $@-$(FFMPEG_BASENAME)
+	tar xvJf "$<" --strip-components=1 -C $@-$(FFMPEG_BASENAME)
+	$(APPLY) $(SRC)/ffmpeg/0001-arm-vc1dsp-Add-commas-between-macro-arguments.patch
+	$(APPLY) $(SRC)/ffmpeg/0002-arm-Produce-.const_data-instead-of-.section-.rodata-.patch
 ifdef USE_FFMPEG
+	$(APPLY) $(SRC)/ffmpeg/0003-arm-swscale-Only-compile-the-rgb2yuv-asm-if-.dn-alia.patch
+	$(APPLY) $(SRC)/ffmpeg/0004-arm-hevcdsp-Avoid-using-macro-expansion-counters.patch
+	$(APPLY) $(SRC)/ffmpeg/0005-arm-hevcdsp-Add-commas-between-macro-arguments.patch
 	$(APPLY) $(SRC)/ffmpeg/armv7_fixup.patch
 	$(APPLY) $(SRC)/ffmpeg/dxva_vc1_crash.patch
 	$(APPLY) $(SRC)/ffmpeg/h264_early_SAR.patch
-	$(APPLY) $(SRC)/ffmpeg/ffmpeg-mkv-overshoot.patch
-	$(APPLY) $(SRC)/ffmpeg/0001-avcodec-hevcdec-set-the-SEI-parameters-early-on-the-.patch
-	$(APPLY) $(SRC)/ffmpeg/0001-avcodec-h264_slice-set-the-SEI-parameters-early-on-t.patch
 endif
 ifdef USE_LIBAV
 	$(APPLY) $(SRC)/ffmpeg/libav_gsm.patch

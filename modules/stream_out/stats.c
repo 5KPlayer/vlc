@@ -67,25 +67,25 @@ static const char *ppsz_sout_options[] = {
     "output", "prefix", NULL
 };
 
-static void *Add( sout_stream_t *, const es_format_t * );
-static void  Del( sout_stream_t *, void * );
-static int   Send( sout_stream_t *, void *, block_t * );
+static sout_stream_id_sys_t *Add( sout_stream_t *, const es_format_t * );
+static void               Del   ( sout_stream_t *, sout_stream_id_sys_t * );
+static int               Send  ( sout_stream_t *, sout_stream_id_sys_t *, block_t * );
 
-typedef struct
+struct sout_stream_sys_t
 {
     FILE *output;
     char *prefix;
-} sout_stream_sys_t;
+};
 
-typedef struct
+struct sout_stream_id_sys_t
 {
     int id;
     uint64_t segment_number;
     void *next_id;
     const char *type;
-    vlc_tick_t previous_dts,track_duration;
+    mtime_t previous_dts,track_duration;
     struct md5_s hash;
-} sout_stream_id_sys_t;
+};
 
 /*****************************************************************************
  * Open:
@@ -148,7 +148,7 @@ static void Close( vlc_object_t * p_this )
     free( p_sys );
 }
 
-static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
+static sout_stream_id_sys_t * Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
 {
     sout_stream_sys_t *p_sys = (sout_stream_sys_t *)p_stream->p_sys;
     sout_stream_id_sys_t *id;
@@ -175,7 +175,7 @@ static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
     }
     id->next_id = NULL;
     id->segment_number = 0;
-    id->previous_dts = VLC_TICK_INVALID;
+    id->previous_dts = VLC_TS_INVALID;
     id->track_duration = 0;
     InitMD5( &id->hash );
 
@@ -187,10 +187,9 @@ static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
     return id;
 }
 
-static void Del( sout_stream_t *p_stream, void *_id )
+static void Del( sout_stream_t *p_stream, sout_stream_id_sys_t *id )
 {
     sout_stream_sys_t *p_sys = (sout_stream_sys_t *)p_stream->p_sys;
-    sout_stream_id_sys_t *id = (sout_stream_id_sys_t *)_id;
 
     EndMD5( &id->hash );
     char *outputhash = psz_md5_hash( &id->hash );
@@ -210,10 +209,10 @@ static void Del( sout_stream_t *p_stream, void *_id )
     free( id );
 }
 
-static int Send( sout_stream_t *p_stream, void *_id, block_t *p_buffer )
+static int Send( sout_stream_t *p_stream, sout_stream_id_sys_t *id,
+                 block_t *p_buffer )
 {
     sout_stream_sys_t *p_sys = (sout_stream_sys_t *)p_stream->p_sys;
-    sout_stream_id_sys_t *id = (sout_stream_id_sys_t *)_id;
     struct md5_s hash;
 
     block_t *p_block = p_buffer;
@@ -228,8 +227,8 @@ static int Send( sout_stream_t *p_stream, void *_id, block_t *p_buffer )
         /* We could just set p_sys->output to stdout and remove user of msg_Dbg
          * if we don't need ability to output info to gui modules (like qt messages window
          */
-        vlc_tick_t dts_difference = VLC_TICK_INVALID;
-        if( likely( id->previous_dts != VLC_TICK_INVALID ) )
+        mtime_t dts_difference = VLC_TS_INVALID;
+        if( likely( id->previous_dts != VLC_TS_INVALID ) )
             dts_difference = p_block->i_dts - id->previous_dts;
         if( p_sys->output )
         {

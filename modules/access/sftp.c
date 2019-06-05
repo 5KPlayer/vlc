@@ -2,6 +2,7 @@
  * sftp.c: SFTP input module
  *****************************************************************************
  * Copyright (C) 2009 VLC authors and VideoLAN
+ * $Id: 5bc054d310b67f514f04b3ef5ddcfc188f6d81c3 $
  *
  * Authors: Rémi Duraffort <ivoire@videolan.org>
  *          Petri Hintukainen <phintuka@gmail.com>
@@ -66,7 +67,7 @@ vlc_module_begin ()
     set_subcategory( SUBCAT_INPUT_ACCESS )
     add_integer( "sftp-port", 22, PORT_TEXT, PORT_LONGTEXT, true )
     add_string( "sftp-user", NULL, USER_TEXT, USER_LONGTEXT, false )
-    add_password("sftp-pwd", NULL, PASS_TEXT, PASS_LONGTEXT)
+    add_password( "sftp-pwd", NULL, PASS_TEXT, PASS_LONGTEXT, false )
     add_shortcut( "sftp" )
     set_callbacks( Open, Close )
 vlc_module_end ()
@@ -81,7 +82,7 @@ static int      Control( stream_t *, int, va_list );
 
 static int DirRead( stream_t *, input_item_node_t * );
 
-typedef struct
+struct access_sys_t
 {
     int i_socket;
     LIBSSH2_SESSION* ssh_session;
@@ -89,7 +90,7 @@ typedef struct
     LIBSSH2_SFTP_HANDLE* file;
     uint64_t filesize;
     char *psz_base_url;
-} access_sys_t;
+};
 
 static int AuthKeyAgent( stream_t *p_access, const char *psz_username )
 {
@@ -194,8 +195,7 @@ static int SSHSessionInit( stream_t *p_access, const char *psz_host, int i_port 
 
     /* Connect to the server using a regular socket */
     assert( p_sys->i_socket == -1 );
-    p_sys->i_socket = net_Connect( p_access, psz_host, i_port, SOCK_STREAM,
-                                   0 );
+    p_sys->i_socket = net_ConnectTCP( p_access, psz_host, i_port );
     if( p_sys->i_socket < 0 )
         goto error;
 
@@ -288,9 +288,8 @@ static int Open( vlc_object_t* p_this )
     char *psz_knownhosts_file;
     if( asprintf( &psz_knownhosts_file, "%s/.ssh/known_hosts", psz_home ) != -1 )
     {
-        if( libssh2_knownhost_readfile( ssh_knownhosts, psz_knownhosts_file,
-                                        LIBSSH2_KNOWNHOST_FILE_OPENSSH ) < 0 )
-            msg_Err( p_access, "Failure reading known_hosts '%s'", psz_knownhosts_file );
+        libssh2_knownhost_readfile( ssh_knownhosts, psz_knownhosts_file,
+                LIBSSH2_KNOWNHOST_FILE_OPENSSH );
         free( psz_knownhosts_file );
     }
 
@@ -307,7 +306,7 @@ static int Open( vlc_object_t* p_this )
         case LIBSSH2_HOSTKEY_TYPE_DSS:
             knownhost_fingerprint_algo = LIBSSH2_KNOWNHOST_KEY_SSHDSS;
             break;
-#if LIBSSH2_VERSION_NUM >= 0x010900
+#if LIBSSH2_VERSION_NUM >= 0x010801
         case LIBSSH2_HOSTKEY_TYPE_ECDSA_256:
             knownhost_fingerprint_algo = LIBSSH2_KNOWNHOST_KEY_ECDSA_256;
             break;
@@ -327,21 +326,12 @@ static int Open( vlc_object_t* p_this )
 
     }
 
-#if LIBSSH2_VERSION_NUM >= 0x010206
-    int check = libssh2_knownhost_checkp( ssh_knownhosts, url.psz_host, i_port,
-                                         fingerprint, i_len,
-                                         LIBSSH2_KNOWNHOST_TYPE_PLAIN |
-                                         LIBSSH2_KNOWNHOST_KEYENC_RAW |
-                                         knownhost_fingerprint_algo,
-                                         &host );
-#else
     int check = libssh2_knownhost_check( ssh_knownhosts, url.psz_host,
                                          fingerprint, i_len,
                                          LIBSSH2_KNOWNHOST_TYPE_PLAIN |
                                          LIBSSH2_KNOWNHOST_KEYENC_RAW |
                                          knownhost_fingerprint_algo,
                                          &host );
-#endif
 
     libssh2_knownhost_free( ssh_knownhosts );
 
@@ -566,6 +556,7 @@ static int Control( stream_t* p_access, int i_query, va_list args )
 {
     access_sys_t *sys = p_access->p_sys;
     bool*       pb_bool;
+    int64_t*    pi_64;
 
     switch( i_query )
     {
@@ -592,8 +583,9 @@ static int Control( stream_t* p_access, int i_query, va_list args )
         break;
 
     case STREAM_GET_PTS_DELAY:
-        *va_arg( args, vlc_tick_t * ) =
-            VLC_TICK_FROM_MS(var_InheritInteger( p_access, "network-caching" ));
+        pi_64 = va_arg( args, int64_t * );
+        *pi_64 = INT64_C(1000)
+               * var_InheritInteger( p_access, "network-caching" );
         break;
 
     case STREAM_SET_PAUSE_STATE:

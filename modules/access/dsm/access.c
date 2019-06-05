@@ -41,10 +41,8 @@
 #ifdef HAVE_SYS_SOCKET_H
 # include <sys/socket.h>
 # include <netinet/in.h>
+# include <arpa/inet.h>
 # include <netdb.h>
-#endif
-#ifdef HAVE_ARPA_INET_H
-#include <arpa/inet.h>
 #endif
 
 #include <bdsm/bdsm.h>
@@ -72,7 +70,7 @@ vlc_module_begin ()
     set_category( CAT_INPUT )
     set_subcategory( SUBCAT_INPUT_ACCESS )
     add_string( "smb-user", NULL, SMB_USER_TEXT, SMB_USER_LONGTEXT, false )
-    add_password("smb-pwd", NULL, SMB_PASS_TEXT, SMB_PASS_LONGTEXT)
+    add_password( "smb-pwd", NULL, SMB_PASS_TEXT, SMB_PASS_LONGTEXT, false )
     add_string( "smb-domain", NULL, SMB_DOMAIN_TEXT, SMB_DOMAIN_LONGTEXT, false )
     add_shortcut( "smb", "cifs" )
     set_callbacks( Open, Close )
@@ -103,7 +101,7 @@ static bool get_path( stream_t *p_access );
 static int add_item( stream_t *p_access,  struct vlc_readdir_helper *p_rdh,
                      const char *psz_name, int i_type );
 
-typedef struct
+struct access_sys_t
 {
     netbios_ns         *p_ns;               /**< Netbios name service */
     smb_session        *p_session;          /**< bdsm SMB Session object */
@@ -118,7 +116,7 @@ typedef struct
 
     smb_fd              i_fd;               /**< SMB fd for the file we're reading */
     smb_tid             i_tid;              /**< SMB Tree ID we're connected to */
-} access_sys_t;
+};
 
 /*****************************************************************************
  * Open: Initialize module's data structures and libdsm
@@ -491,8 +489,8 @@ static int Control( stream_t *p_access, int i_query, va_list args )
         break;
     }
     case STREAM_GET_PTS_DELAY:
-        *va_arg( args, vlc_tick_t * ) = VLC_TICK_FROM_MS(
-            var_InheritInteger( p_access, "network-caching" ) );
+        *va_arg( args, int64_t * ) = INT64_C(1000)
+            * var_InheritInteger( p_access, "network-caching" );
         break;
 
     case STREAM_SET_PAUSE_STATE:
@@ -524,10 +522,8 @@ static int add_item( stream_t *p_access, struct vlc_readdir_helper *p_rdh,
     if( i_ret == -1 )
         return VLC_ENOMEM;
 
-    i_ret = vlc_readdir_helper_additem( p_rdh, psz_uri, NULL, psz_name, i_type,
-                                        ITEM_NET );
-    free( psz_uri );
-    return i_ret;
+    return vlc_readdir_helper_additem( p_rdh, psz_uri, NULL, psz_name, i_type,
+                                       ITEM_NET );
 }
 
 static int BrowseShare( stream_t *p_access, input_item_node_t *p_node )

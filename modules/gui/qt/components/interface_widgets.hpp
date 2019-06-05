@@ -2,6 +2,7 @@
  * interface_widgets.hpp : Custom widgets for the main interface
  ****************************************************************************
  * Copyright (C) 2006-2008 the VideoLAN team
+ * $Id: 772a6b7232fcefb07d15015abb84ab53c183570b $
  *
  * Authors: Clément Stenac <zorglub@videolan.org>
  *          Jean-Baptiste Kempf <jb@videolan.org>
@@ -30,7 +31,7 @@
 #endif
 
 #include "main_interface.hpp" /* Interface integration */
-#include "components/player_controller.hpp"  /* Speed control */
+#include "input_manager.hpp"  /* Speed control */
 
 #include "components/controller.hpp"
 #include "components/controller_widget.hpp"
@@ -46,7 +47,6 @@
 
 class QMenu;
 class QSlider;
-class QTimer;
 class QWidgetAction;
 class SpeedControlWidget;
 struct vout_window_t;
@@ -59,7 +59,7 @@ public:
     VideoWidget( intf_thread_t *, QWidget* p_parent );
     virtual ~VideoWidget();
 
-    void request( struct vout_window_t * );
+    bool request( struct vout_window_t * );
     void release( void );
     void sync( void );
 
@@ -84,20 +84,14 @@ private:
 
     QWidget *stable;
     QLayout *layout;
-    QTimer *cursorTimer;
-    int cursorTimeout;
 
     void reportSize();
-    void showCursor();
 
 signals:
     void sizeChanged( int, int );
 
 public slots:
     void setSize( unsigned int, unsigned int );
-
-private slots:
-    void hideCursor();
 };
 
 /******************** Background Widget ****************/
@@ -205,7 +199,7 @@ private:
     intf_thread_t *p_intf;
     bool b_remainingTime;
     float cachedPos;
-    vlc_tick_t cachedTime;
+    int64_t cachedTime;
     int cachedLength;
     TimeLabel::Display displayType;
 
@@ -215,7 +209,7 @@ private:
     void refresh();
 private slots:
     void setRemainingTime( bool );
-    void setDisplayPosition( float pos, vlc_tick_t time, int length );
+    void setDisplayPosition( float pos, int64_t time, int length );
     void setDisplayPosition( float pos );
 signals:
     void broadcastRemainingTime( bool );
@@ -258,7 +252,7 @@ private:
     int lastValue;
 
 public slots:
-    void activateOnState(PlayerController::PlayingState state);
+    void activateOnState();
 
 private slots:
     void updateRate( int );

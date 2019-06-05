@@ -76,12 +76,12 @@ vlc_module_begin ()
     add_float( "svg-scale", -1.0, TEXT_SCALE, LONG_TEXT_SCALE, false )
 vlc_module_end ()
 
-typedef struct
+struct decoder_sys_t
 {
     int32_t i_width;
     int32_t i_height;
     double  f_scale;
-} decoder_sys_t;
+};
 
 /*****************************************************************************
  * OpenDecoder: probe the decoder and return score
@@ -244,7 +244,7 @@ static int DecodeBlock( decoder_t *p_dec, block_t *p_block )
         goto done;
     }
 
-    p_pic->date = p_block->i_pts != VLC_TICK_INVALID ? p_block->i_pts : p_block->i_dts;
+    p_pic->date = p_block->i_pts > VLC_TS_INVALID ? p_block->i_pts : p_block->i_dts;
 
 done:
     if( rsvg )

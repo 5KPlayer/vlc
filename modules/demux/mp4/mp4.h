@@ -81,7 +81,7 @@ typedef struct
     int b_ok;               /* The track is usable */
     int b_enable;           /* is the trak enable by default */
     bool b_selected;  /* is the trak being played */
-    vlc_fourcc_t as_reftype; /* !=0 when used for chapter only */
+    bool b_chapters_source;   /* True when used for chapter only */
     bool b_forced_spu; /* forced track selection (never done by default/priority) */
     uint32_t i_switch_group;
 
@@ -98,7 +98,6 @@ typedef struct
     int i_width;
     int i_height;
     float f_rotation;
-    int i_flip;
 
     /* more internal data */
     uint32_t        i_timescale;    /* time scale for this track only */
@@ -138,7 +137,7 @@ typedef struct
     bool b_codec_need_restart;
 #endif
 
-    stime_t i_time; // track scaled
+    mtime_t i_time; // track scaled
 
     /* rrtp reception hint track */
     MP4_Box_t *p_sdp;                         /* parsed for codec and other info */
@@ -151,8 +150,6 @@ typedef struct
     struct
     {
         /* for moof parsing */
-        bool b_resync_time_offset;
-
         /* tfhd defaults */
         uint32_t i_default_sample_size;
         uint32_t i_default_sample_duration;
@@ -170,8 +167,8 @@ typedef struct
 
     /* ASF packets handling */
     const MP4_Box_t *p_asf;
-    vlc_tick_t       i_dts_backup;
-    vlc_tick_t       i_pts_backup;
+    mtime_t          i_dts_backup;
+    mtime_t          i_pts_backup;
     asf_track_info_t asfinfo;
 } mp4_track_t;
 

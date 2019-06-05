@@ -2,6 +2,7 @@
  * rawaud.c : raw audio input module for vlc
  *****************************************************************************
  * Copyright (C) 2009 VLC authors and VideoLAN
+ * $Id: 375bdb12444cbf50677c665692e81986182029e2 $
  *
  * Authors: Jarmo Torvinen <jarmo.torvinen@jutel.fi>
  *
@@ -79,7 +80,7 @@ vlc_module_end();
 /*****************************************************************************
  * Definitions of structures used by this plugin
  *****************************************************************************/
-typedef struct
+struct demux_sys_t
 {
     es_out_id_t *p_es;
     es_format_t  fmt;
@@ -87,7 +88,7 @@ typedef struct
     unsigned int i_frame_samples;
     unsigned int i_seek_step;
     date_t       pts;
-} demux_sys_t;
+};
 
 
 /*****************************************************************************
@@ -207,7 +208,7 @@ static int Open( vlc_object_t * p_this )
 
     /* initialize timing */
     date_Init( &p_sys->pts, p_sys->fmt.audio.i_rate, 1 );
-    date_Set( &p_sys->pts, VLC_TICK_0 );
+    date_Set( &p_sys->pts, 0 );
 
     /* calculate 50ms frame size/time */
     p_sys->i_frame_samples = __MAX( p_sys->fmt.audio.i_rate / 20, 1 );
@@ -245,16 +246,19 @@ static int Demux( demux_t *p_demux )
 
     p_block = vlc_stream_Block( p_demux->s, p_sys->i_frame_size );
     if( p_block == NULL )
-        return VLC_DEMUXER_EOF;
+    {
+        /* EOF */
+        return 0;
+    }
 
-    p_block->i_dts = p_block->i_pts = date_Get( &p_sys->pts );
+    p_block->i_dts = p_block->i_pts = VLC_TS_0 + date_Get( &p_sys->pts );
 
     es_out_SetPCR( p_demux->out, p_block->i_pts );
     es_out_Send( p_demux->out, p_sys->p_es, p_block );
 
     date_Increment( &p_sys->pts, p_sys->i_frame_samples );
 
-    return VLC_DEMUXER_SUCCESS;
+    return 1;
 }
 
 /*****************************************************************************

@@ -2,6 +2,7 @@
  * adummy.c : dummy audio output plugin
  *****************************************************************************
  * Copyright (C) 2002 VLC authors and VideoLAN
+ * $Id: 8c40bdddde69634aa2a3156921c284a91636bd29 $
  *
  * Authors: Christophe Massiot <massiot@via.ecp.fr>
  *
@@ -41,20 +42,15 @@ vlc_module_end ()
 
 #define A52_FRAME_NB 1536
 
-static void Play(audio_output_t *aout, block_t *block, vlc_tick_t date)
+static void Play(audio_output_t *aout, block_t *block)
 {
     block_Release( block );
-    (void) aout; (void) date;
-}
-
-static void Pause(audio_output_t *aout, bool paused, vlc_tick_t date)
-{
-    (void) aout; (void) paused; (void) date;
-}
-
-static void Flush(audio_output_t *aout)
-{
     (void) aout;
+}
+
+static void Flush(audio_output_t *aout, bool wait)
+{
+    (void) aout; (void) wait;
 }
 
 static int Start(audio_output_t *aout, audio_sample_format_t *restrict fmt)
@@ -88,21 +84,16 @@ static int Start(audio_output_t *aout, audio_sample_format_t *restrict fmt)
     return VLC_SUCCESS;
 }
 
-static void Stop(audio_output_t *aout)
-{
-    (void) aout;
-}
-
 static int Open(vlc_object_t *obj)
 {
     audio_output_t *aout = (audio_output_t *)obj;
 
     aout->start = Start;
-    aout->time_get = aout_TimeGetDefault;
+    aout->time_get = NULL;
     aout->play = Play;
-    aout->pause = Pause;
+    aout->pause = NULL;
     aout->flush = Flush;
-    aout->stop = Stop;
+    aout->stop = NULL;
     aout->volume_set = NULL;
     aout->mute_set = NULL;
     return VLC_SUCCESS;

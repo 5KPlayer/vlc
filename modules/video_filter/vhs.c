@@ -2,6 +2,7 @@
  * vhs.c : VHS effect video filter
  *****************************************************************************
  * Copyright (C) 2013      Vianney Boyer
+ * $Id: 51bbcaafcbf24734cf01407ab9b2b4e3fa9737ce $
  *
  * Authors: Vianney Boyer <vlcvboyer -at- gmail -dot- com>
  *
@@ -33,7 +34,7 @@
 #include <vlc_filter.h>
 #include <vlc_picture.h>
 #include <vlc_rand.h>
-#include <vlc_tick.h>
+#include <vlc_mtime.h>
 
 #include "filter_picture.h"
 
@@ -46,11 +47,10 @@ typedef struct {
     int32_t  i_offset;
     uint16_t i_intensity;
     bool     b_blue_red;
-    vlc_tick_t  i_stop_trigger;
+    mtime_t  i_stop_trigger;
 } blue_red_line_t;
 
-typedef struct
-{
+struct filter_sys_t {
 
     /* general data */
     bool b_init;
@@ -58,9 +58,9 @@ typedef struct
     int32_t *i_height; /* note: each plane may have different dimensions */
     int32_t *i_width;
     int32_t *i_visible_pitch;
-    vlc_tick_t  i_start_time;
-    vlc_tick_t  i_last_time;
-    vlc_tick_t  i_cur_time;
+    mtime_t  i_start_time;
+    mtime_t  i_last_time;
+    mtime_t  i_cur_time;
 
     /* sliding & offset effect */
     int32_t  i_phase_speed;
@@ -68,16 +68,16 @@ typedef struct
     int32_t  i_offset_ofs;
     int32_t  i_sliding_ofs;
     int32_t  i_sliding_speed;
-    vlc_tick_t  i_offset_trigger;
-    vlc_tick_t  i_sliding_trigger;
-    vlc_tick_t  i_sliding_stop_trig;
+    mtime_t  i_offset_trigger;
+    mtime_t  i_sliding_trigger;
+    mtime_t  i_sliding_stop_trig;
     bool     i_sliding_type_duplicate;
 
     /* blue red lines effect */
-    vlc_tick_t  i_BR_line_trigger;
+    mtime_t  i_BR_line_trigger;
     blue_red_line_t *p_BR_lines[MAX_BLUE_RED_LINES];
 
-} filter_sys_t;
+};
 
 /*****************************************************************************
  * Prototypes
@@ -144,7 +144,7 @@ static int Open( vlc_object_t *p_this )
 
     /* init data */
     p_filter->pf_video_filter = Filter;
-    p_sys->i_start_time = p_sys->i_cur_time = p_sys->i_last_time = vlc_tick_now();
+    p_sys->i_start_time = p_sys->i_cur_time = p_sys->i_last_time = mdate();
 
     return VLC_SUCCESS;
 }
@@ -180,7 +180,7 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic_in ) {
     * manage time
     */
     p_sys->i_last_time = p_sys->i_cur_time;
-    p_sys->i_cur_time = vlc_tick_now();
+    p_sys->i_cur_time = mdate();
 
    /*
     * allocate data
@@ -255,10 +255,6 @@ static void vhs_free_allocated_data( filter_t *p_filter ) {
     FREENULL( p_sys->i_visible_pitch );
 }
 
-static vlc_tick_t RandomEnd(filter_sys_t *p_sys, vlc_tick_t modulo)
-{
-    return p_sys->i_cur_time + (uint64_t)vlc_mrand48() % modulo + modulo / 2;
-}
 
 /**
  * Horizontal blue or red lines random management and effect
@@ -266,8 +262,8 @@ static vlc_tick_t RandomEnd(filter_sys_t *p_sys, vlc_tick_t modulo)
 static int vhs_blue_red_line_effect( filter_t *p_filter, picture_t *p_pic_out ) {
     filter_sys_t *p_sys = p_filter->p_sys;
 
-#define BR_LINES_GENERATOR_PERIOD VLC_TICK_FROM_SEC(50)
-#define BR_LINES_DURATION         VLC_TICK_FROM_MS(20)
+#define BR_LINES_GENERATOR_PERIOD ( CLOCK_FREQ * 50 )
+#define BR_LINES_DURATION         ( CLOCK_FREQ * 1/50 )
 
     /* generate new blue or red lines */
     if ( p_sys->i_BR_line_trigger <= p_sys->i_cur_time ) {
@@ -285,11 +281,15 @@ static int vhs_blue_red_line_effect( filter_t *p_filter, picture_t *p_pic_out ) 
 
                 p_sys->p_BR_lines[i_b]->b_blue_red = (unsigned)vlc_mrand48() & 0x01;
 
-                p_sys->p_BR_lines[i_b]->i_stop_trigger = RandomEnd( p_sys, BR_LINES_DURATION );
+                p_sys->p_BR_lines[i_b]->i_stop_trigger = p_sys->i_cur_time
+                                                       + (uint64_t)vlc_mrand48() % BR_LINES_DURATION
+                                                       + BR_LINES_DURATION / 2;
 
                 break;
             }
-        p_sys->i_BR_line_trigger = RandomEnd( p_sys, BR_LINES_GENERATOR_PERIOD );
+        p_sys->i_BR_line_trigger = p_sys->i_cur_time
+                                 + (uint64_t)vlc_mrand48() % BR_LINES_GENERATOR_PERIOD
+                                 + BR_LINES_GENERATOR_PERIOD / 2;
     }
 
 
@@ -393,14 +393,16 @@ static int vhs_sliding_effect( filter_t *p_filter, picture_t *p_pic_out ) {
     * one shot offset section
     */
 
-#define OFFSET_AVERAGE_PERIOD   VLC_TICK_FROM_SEC(10)
+#define OFFSET_AVERAGE_PERIOD   (10 * CLOCK_FREQ)
 
     /* start trigger to be (re)initialized */
     if ( p_sys->i_offset_trigger == 0
          || p_sys->i_sliding_speed != 0 ) { /* do not mix sliding and offset */
 
         /* random trigger for offset effect */
-        p_sys->i_offset_trigger = RandomEnd( p_sys, OFFSET_AVERAGE_PERIOD );
+        p_sys->i_offset_trigger = p_sys->i_cur_time
+                                + ((uint64_t) vlc_mrand48() ) % OFFSET_AVERAGE_PERIOD
+                                + OFFSET_AVERAGE_PERIOD / 2;
         p_sys->i_offset_ofs = 0;
     } else if (p_sys->i_offset_trigger <= p_sys->i_cur_time) {
         /* trigger for offset effect occurs */
@@ -429,8 +431,8 @@ static int vhs_sliding_effect( filter_t *p_filter, picture_t *p_pic_out ) {
     * sliding section
     */
 
-#define SLIDING_AVERAGE_PERIOD   VLC_TICK_FROM_SEC(20)
-#define SLIDING_AVERAGE_DURATION VLC_TICK_FROM_SEC(3)
+#define SLIDING_AVERAGE_PERIOD   (20 * CLOCK_FREQ)
+#define SLIDING_AVERAGE_DURATION ( 3 * CLOCK_FREQ)
 
     /* start trigger to be (re)initialized */
     if ( ( p_sys->i_sliding_stop_trig  == 0 ) &&
@@ -438,7 +440,9 @@ static int vhs_sliding_effect( filter_t *p_filter, picture_t *p_pic_out ) {
          ( p_sys->i_sliding_speed      == 0 ) ) {
 
         /* random trigger which enable sliding effect */
-        p_sys->i_sliding_trigger = RandomEnd( p_sys, SLIDING_AVERAGE_PERIOD );
+        p_sys->i_sliding_trigger = p_sys->i_cur_time
+                                 + (uint64_t)vlc_mrand48() % SLIDING_AVERAGE_PERIOD
+                                 + SLIDING_AVERAGE_PERIOD / 2;
     }
 
     /* start trigger just occurs */
@@ -448,7 +452,9 @@ static int vhs_sliding_effect( filter_t *p_filter, picture_t *p_pic_out ) {
 
         /* init sliding parameters */
         p_sys->i_sliding_trigger = 0;
-        p_sys->i_sliding_stop_trig = RandomEnd( p_sys, SLIDING_AVERAGE_DURATION );
+        p_sys->i_sliding_stop_trig = p_sys->i_cur_time
+                                   + (uint64_t)vlc_mrand48() % SLIDING_AVERAGE_DURATION
+                                   + SLIDING_AVERAGE_DURATION / 2;
         p_sys->i_sliding_ofs = 0;
         /* note: sliding speed unit = image per 100 s */
         p_sys->i_sliding_speed = MOD( (int32_t)vlc_mrand48(), 1001 ) - 500;
@@ -466,7 +472,7 @@ static int vhs_sliding_effect( filter_t *p_filter, picture_t *p_pic_out ) {
         /* check if offset is close to 0 and then ready to stop */
         if ( abs( p_sys->i_sliding_ofs ) < abs( p_sys->i_sliding_speed
              * p_sys->i_height[Y_PLANE]
-             * SEC_FROM_VLC_TICK( p_sys->i_cur_time - p_sys->i_last_time ) )
+             * ( p_sys->i_cur_time - p_sys->i_last_time ) / CLOCK_FREQ )
              || abs( p_sys->i_sliding_ofs ) < p_sys->i_height[Y_PLANE] * 100 / 20 ) {
 
             /* reset sliding parameters */
@@ -479,7 +485,8 @@ static int vhs_sliding_effect( filter_t *p_filter, picture_t *p_pic_out ) {
     /* update offset */
     p_sys->i_sliding_ofs = MOD( p_sys->i_sliding_ofs
                                 + p_sys->i_sliding_speed * p_sys->i_height[Y_PLANE]
-                                * SEC_FROM_VLC_TICK( p_sys->i_cur_time - p_sys->i_last_time),
+                                * ( p_sys->i_cur_time - p_sys->i_last_time)
+                                / CLOCK_FREQ,
                                 p_sys->i_height[Y_PLANE] * 100 );
 
     return vhs_sliding_effect_apply( p_filter, p_pic_out );

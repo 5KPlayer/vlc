@@ -3,7 +3,6 @@
 X264_GITURL := git://git.videolan.org/x264.git
 X264_SNAPURL := http://download.videolan.org/pub/videolan/x264/snapshots/x264-snapshot-20180324-2245.tar.bz2
 X262_GITURL := git://git.videolan.org/x262.git
-X264_BASENAME := $(notdir $(X264_SNAPURL))
 
 ifdef BUILD_ENCODERS
 ifdef GPL
@@ -35,19 +34,7 @@ X264CONF = --prefix="$(PREFIX)" --host="$(HOST)" \
 ifndef HAVE_WIN32
 X264CONF += --enable-pic
 else
-ifdef HAVE_WINSTORE
 X264CONF += --enable-win32thread
-else
-X264CONF += --disable-win32thread
-endif
-ifeq ($(ARCH), arm)
-X264_AS = AS="./tools/gas-preprocessor.pl -arch arm -as-type clang -force-thumb -- $(CC) -mimplicit-it=always"
-endif
-ifeq ($(ARCH),aarch64)
-# Configure defaults to gas-preprocessor + armasm64 for this target,
-# unless overridden.
-X264_AS = AS="$(CC)"
-endif
 endif
 ifdef HAVE_CROSS_COMPILE
 X264CONF += --cross-prefix="$(HOST)-"
@@ -71,7 +58,7 @@ $(TARBALLS)/x262-git.tar.gz:
 $(TARBALLS)/x264-git.tar.xz:
 	$(call download_git,$(X264_GITURL))
 
-$(TARBALLS)/$(X264_BASENAME):
+$(TARBALLS)/x264-git.tar.bz2:
 	$(call download,$(X264_SNAPURL))
 
 .sum-x262: x262-git.tar.gz
@@ -81,27 +68,28 @@ $(TARBALLS)/$(X264_BASENAME):
 .sum-x26410b: .sum-x264
 	touch $@
 
-.sum-x264: $(X264_BASENAME)
+.sum-x264: x264-git.tar.bz2
+	$(warning $@ not implemented)
+	touch $@
 
-x264 x26410b: %: $(X264_BASENAME) .sum-%
-	rm -Rf $(UNPACK_DIR)
-	mkdir -p $(UNPACK_DIR)
-	tar xvjfo "$<" --strip-components=1 -C $(UNPACK_DIR)
+x264 x26410b: %: x264-git.tar.bz2 .sum-%
+	rm -Rf $*-git
+	mkdir -p $*-git
+	tar xvjf "$<" --strip-components=1 -C $*-git
 	$(UPDATE_AUTOCONFIG)
-	$(APPLY) $(SRC)/x264/x264-winstore.patch
-	$(MOVE)
+	mv $*-git $*
 
 x262: x262-git.tar.gz .sum-x262
 	rm -Rf $@-git
 	mkdir -p $@-git
-	tar xvzfo "$<" --strip-components=1 -C $@-git
+	tar xvzf "$<" --strip-components=1 -C $@-git
 	$(UPDATE_AUTOCONFIG)
 	$(MOVE)
 
 
 .x264: x264
 	$(REQUIRE_GPL)
-	cd $< && $(HOSTVARS) $(X264_AS) ./configure $(X264CONF)
+	cd $< && $(HOSTVARS) ./configure $(X264CONF)
 	cd $< && $(MAKE) install
 	touch $@
 

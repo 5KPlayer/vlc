@@ -2,6 +2,7 @@
  * copy.c
  *****************************************************************************
  * Copyright (C) 2001, 2002, 2006 VLC authors and VideoLAN
+ * $Id: 073a663ed87af48f616e628fc5474dcfefc55603 $
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *          Eric Petit <titer@videolan.org>
@@ -52,11 +53,11 @@ vlc_module_end ()
 /*****************************************************************************
  * Local prototypes
  *****************************************************************************/
-typedef struct
+struct decoder_sys_t
 {
     block_t *p_block;
     void (*pf_parse)( decoder_t *, block_t * );
-} decoder_sys_t;
+};
 
 static block_t *Packetize   ( decoder_t *, block_t ** );
 static block_t *PacketizeSub( decoder_t *, block_t ** );
@@ -82,6 +83,12 @@ static int Open( vlc_object_t *p_this )
         msg_Err( p_dec, "invalid ES type" );
         return VLC_EGENERIC;
     }
+
+    if( p_dec->fmt_in.i_cat == SPU_ES )
+        p_dec->pf_packetize = PacketizeSub;
+    else
+        p_dec->pf_packetize = Packetize;
+    p_dec->pf_flush = Flush;
 
     p_dec->p_sys = p_sys = malloc( sizeof(*p_sys) );
     if (unlikely(p_sys == NULL))
@@ -115,12 +122,6 @@ static int Open( vlc_object_t *p_this )
     /* Create the output format */
     es_format_Copy( &p_dec->fmt_out, &p_dec->fmt_in );
     p_dec->fmt_out.i_codec = fcc;
-    if( p_dec->fmt_in.i_cat == SPU_ES )
-        p_dec->pf_packetize = PacketizeSub;
-    else
-        p_dec->pf_packetize = Packetize;
-    p_dec->pf_flush = Flush;
-    p_dec->pf_get_cc = NULL;
 
     return VLC_SUCCESS;
 }
@@ -131,11 +132,10 @@ static int Open( vlc_object_t *p_this )
 static void Close( vlc_object_t *p_this )
 {
     decoder_t     *p_dec = (decoder_t*)p_this;
-    decoder_sys_t *p_sys = p_dec->p_sys;
 
-    if( p_sys->p_block )
+    if( p_dec->p_sys->p_block )
     {
-        block_ChainRelease( p_sys->p_block );
+        block_ChainRelease( p_dec->p_sys->p_block );
     }
 
     free( p_dec->p_sys );
@@ -143,12 +143,11 @@ static void Close( vlc_object_t *p_this )
 
 static void Flush( decoder_t *p_dec )
 {
-    decoder_sys_t *p_sys = p_dec->p_sys;
-    block_t *p_ret = p_sys->p_block;
+    block_t *p_ret = p_dec->p_sys->p_block;
     if ( p_ret )
     {
         block_Release( p_ret );
-        p_sys->p_block = NULL;
+        p_dec->p_sys->p_block = NULL;
     }
 }
 
@@ -158,8 +157,7 @@ static void Flush( decoder_t *p_dec )
 static block_t *Packetize ( decoder_t *p_dec, block_t **pp_block )
 {
     block_t *p_block;
-    decoder_sys_t *p_sys = p_dec->p_sys;
-    block_t *p_ret = p_sys->p_block;
+    block_t *p_ret = p_dec->p_sys->p_block;
 
     if( pp_block == NULL || *pp_block == NULL )
         return NULL;
@@ -172,12 +170,12 @@ static block_t *Packetize ( decoder_t *p_dec, block_t **pp_block )
     p_block = *pp_block;
     *pp_block = NULL;
 
-    if( p_block->i_dts == VLC_TICK_INVALID )
+    if( p_block->i_dts <= VLC_TS_INVALID )
     {
         p_block->i_dts = p_block->i_pts;
     }
 
-    if( p_block->i_dts == VLC_TICK_INVALID )
+    if( p_block->i_dts <= VLC_TS_INVALID )
     {
         msg_Dbg( p_dec, "need valid dts" );
         block_Release( p_block );
@@ -189,10 +187,10 @@ static block_t *Packetize ( decoder_t *p_dec, block_t **pp_block )
         if (p_dec->fmt_in.i_codec != VLC_CODEC_OPUS)
             p_ret->i_length = p_block->i_pts - p_ret->i_pts;
     }
-    p_sys->p_block = p_block;
+    p_dec->p_sys->p_block = p_block;
 
-    if( p_ret && p_sys->pf_parse )
-        p_sys->pf_parse( p_dec, p_ret );
+    if( p_ret && p_dec->p_sys->pf_parse )
+        p_dec->p_sys->pf_parse( p_dec, p_ret );
     return p_ret;
 }
 
@@ -214,12 +212,12 @@ static block_t *PacketizeSub( decoder_t *p_dec, block_t **pp_block )
     p_block = *pp_block;
     *pp_block = NULL;
 
-    if( p_block->i_dts == VLC_TICK_INVALID )
+    if( p_block->i_dts <= VLC_TS_INVALID )
     {
         p_block->i_dts = p_block->i_pts;
     }
 
-    if( p_block->i_dts == VLC_TICK_INVALID )
+    if( p_block->i_dts <= VLC_TS_INVALID )
     {
         msg_Dbg( p_dec, "need valid dts" );
         block_Release( p_block );

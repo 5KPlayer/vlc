@@ -2,6 +2,7 @@
  * alphamask.c : Alpha layer mask video filter for vlc
  *****************************************************************************
  * Copyright (C) 2007 VLC authors and VideoLAN
+ * $Id: 716f8b3a51532ec664b5e8403ef1ebc38ff26a4b $
  *
  * Authors: Antoine Cellerier <dionoea at videolan tod org>
  *
@@ -69,18 +70,19 @@ vlc_module_begin ()
     add_shortcut( "alphamask", "mask" )
     set_callbacks( Create, Destroy )
 
-    add_loadfile(CFG_PREFIX "mask", NULL, MASK_TEXT, MASK_LONGTEXT)
+    add_loadfile( CFG_PREFIX "mask", NULL, MASK_TEXT,
+                MASK_LONGTEXT, false )
 vlc_module_end ()
 
 static const char *const ppsz_filter_options[] = {
     "mask", NULL
 };
 
-typedef struct
+struct filter_sys_t
 {
     picture_t *p_mask;
     vlc_mutex_t mask_lock;
-} filter_sys_t;
+};
 
 static int Create( vlc_object_t *p_this )
 {
@@ -173,17 +175,18 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
 /* copied from video_filters/erase.c . Gruik ? */
 static void LoadMask( filter_t *p_filter, const char *psz_filename )
 {
-    filter_sys_t *p_sys = p_filter->p_sys;
     image_handler_t *p_image;
-    video_format_t fmt_out;
+    video_format_t fmt_in, fmt_out;
+    video_format_Init( &fmt_in, 0 );
     video_format_Init( &fmt_out, VLC_CODEC_YUVA );
-    if( p_sys->p_mask )
-        picture_Release( p_sys->p_mask );
+    if( p_filter->p_sys->p_mask )
+        picture_Release( p_filter->p_sys->p_mask );
     p_image = image_HandlerCreate( p_filter );
     char *psz_url = vlc_path2uri( psz_filename, NULL );
-    p_sys->p_mask =
-        image_ReadUrl( p_image, psz_url, &fmt_out );
+    p_filter->p_sys->p_mask =
+        image_ReadUrl( p_image, psz_url, &fmt_in, &fmt_out );
     free( psz_url );
+    video_format_Clean( &fmt_in );
     video_format_Clean( &fmt_out );
     image_HandlerDelete( p_image );
 }

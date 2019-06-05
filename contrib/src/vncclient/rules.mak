@@ -11,7 +11,7 @@ PKGS_FOUND += vncclient
 endif
 
 $(TARBALLS)/LibVNCServer-$(VNCCLIENT_VERSION).tar.gz:
-	$(call download_pkg,$(VNCCLIENT_URL),vncclient)
+	$(call download,$(VNCCLIENT_URL))
 
 .sum-vncclient: LibVNCServer-$(VNCCLIENT_VERSION).tar.gz
 
@@ -24,21 +24,15 @@ vncclient: LibVNCServer-$(VNCCLIENT_VERSION).tar.gz .sum-vncclient
 	$(APPLY) $(SRC)/vncclient/vnc-gnutls-pkg.patch
 	$(APPLY) $(SRC)/vncclient/gnutls-recent.patch
 	$(APPLY) $(SRC)/vncclient/vnc-gnutls-anon.patch
-	$(APPLY) $(SRC)/vncclient/cross-ar.patch
 	$(call pkg_static,"libvncclient.pc.in")
 	$(UPDATE_AUTOCONFIG)
 	$(MOVE)
 
 DEPS_vncclient = gcrypt $(DEPS_gcrypt) jpeg $(DEPS_jpeg) png $(DEPS_png) gnutls $(DEPS_gnutls)
 
-VNCCLIENT_CONF := $(HOSTCONF) --without-libva
-ifdef HAVE_WIN32
-VNCCLIENT_CONF += --without-pthread
-endif
-
 .vncclient: vncclient
 	$(RECONF)
-	cd $< && $(HOSTVARS) ./configure $(VNCCLIENT_CONF)
+	cd $< && $(HOSTVARS) ./configure $(HOSTCONF) --without-libva
 	cd $< && $(MAKE) -C libvncclient install
 	cd $< && $(MAKE) install-data
 	rm $(PREFIX)/lib/pkgconfig/libvncserver.pc

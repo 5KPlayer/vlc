@@ -75,7 +75,7 @@ endif
 .lua: lua
 	cd $< && $(HOSTVARS_PIC) $(MAKE) $(LUA_TARGET)
 ifdef HAVE_WIN32
-	cd $< && $(HOSTVARS) $(MAKE) -C src liblua.a
+	cd $</src && $(HOSTVARS) $(MAKE) liblua.a
 endif
 	cd $< && $(HOSTVARS) $(MAKE) install INSTALL_TOP="$(PREFIX)"
 ifdef HAVE_WIN32
@@ -98,7 +98,7 @@ luac: lua-$(LUA_VERSION).tar.gz .sum-luac
 	# DO NOT use the same intermediate directory as the lua target
 	rm -Rf -- $@-$(LUA_VERSION) $@
 	mkdir -- $@-$(LUA_VERSION)
-	tar -x -v -z -o -C $@-$(LUA_VERSION) --strip-components=1 -f $<
+	tar -x -v -z -C $@-$(LUA_VERSION) --strip-components=1 -f $<
 	(cd luac-$(LUA_VERSION) && patch -p1) < $(SRC)/lua/luac-32bits.patch
 	mv luac-$(LUA_VERSION) luac
 

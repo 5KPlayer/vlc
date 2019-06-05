@@ -2,6 +2,7 @@
  * cmd_playtree.cpp
  *****************************************************************************
  * Copyright (C) 2005 the VideoLAN team
+ * $Id: 626ba09b03156290eba9bc3bb654ec031a8f75de $
  *
  * Authors: Antoine Cellerier <dionoea@videolan.org>
  *          Clément Stenac <zorglub@videolan.org>
@@ -22,7 +23,7 @@
  *****************************************************************************/
 
 #include "cmd_playtree.hpp"
-#include <vlc_playlist_legacy.h>
+#include <vlc_playlist.h>
 #include "../src/vlcproc.hpp"
 #include "../utils/var_bool.hpp"
 

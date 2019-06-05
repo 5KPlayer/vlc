@@ -3,6 +3,7 @@
  *****************************************************************************
  * Copyright (C) 2001-2006 VLC authors and VideoLAN
  * Copyright © 2006-2007 Rémi Denis-Courmont
+ * $Id: 4a6213b73a5e3425f424083c6dad69965eb613fe $
  *
  * Authors: Christophe Massiot <massiot@via.ecp.fr>
  *          Rémi Denis-Courmont <rem # videolan # org>
@@ -54,6 +55,7 @@
 
 #include <vlc_common.h>
 #include "fs.h"
+#include <vlc_input.h>
 #include <vlc_access.h>
 #ifdef _WIN32
 # include <vlc_charset.h>
@@ -62,12 +64,12 @@
 #include <vlc_url.h>
 #include <vlc_interrupt.h>
 
-typedef struct
+struct access_sys_t
 {
     int fd;
 
     bool b_pace_control;
-} access_sys_t;
+};
 
 #if !defined (_WIN32) && !defined (__OS2__)
 static bool IsRemote (int fd)
@@ -311,7 +313,7 @@ static int FileControl( stream_t *p_access, int i_query, va_list args )
 {
     access_sys_t *p_sys = p_access->p_sys;
     bool    *pb_bool;
-    vlc_tick_t *pi_64;
+    int64_t *pi_64;
 
     switch( i_query )
     {
@@ -338,13 +340,12 @@ static int FileControl( stream_t *p_access, int i_query, va_list args )
         }
 
         case STREAM_GET_PTS_DELAY:
-            pi_64 = va_arg( args, vlc_tick_t * );
+            pi_64 = va_arg( args, int64_t * );
             if (IsRemote (p_sys->fd, p_access->psz_filepath))
-                *pi_64 = VLC_TICK_FROM_MS(
-                        var_InheritInteger (p_access, "network-caching") );
+                *pi_64 = var_InheritInteger (p_access, "network-caching");
             else
-                *pi_64 = VLC_TICK_FROM_MS(
-                        var_InheritInteger (p_access, "file-caching") );
+                *pi_64 = var_InheritInteger (p_access, "file-caching");
+            *pi_64 *= 1000;
             break;
 
         case STREAM_SET_PAUSE_STATE:

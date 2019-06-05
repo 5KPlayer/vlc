@@ -2,6 +2,7 @@
  * os_factory.hpp
  *****************************************************************************
  * Copyright (C) 2003 the VideoLAN team
+ * $Id: 3aff7ba2c362c65dbb2e04a938b43c26755ff6f2 $
  *
  * Authors: Cyril Deguet     <asmax@via.ecp.fr>
  *          Olivier Teulière <ipkiss@via.ecp.fr>
@@ -121,7 +122,7 @@ public:
     virtual int getScreenHeight() const = 0;
 
     /// Get Monitor Information for a given Window
-    virtual void getMonitorInfo( OSWindow *pWindow,
+    virtual void getMonitorInfo( const GenericWindow &rWindow,
                                  int* x, int* y,
                                  int* width, int* height ) const = 0;
 

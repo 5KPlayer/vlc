@@ -2,6 +2,7 @@
  * main_interface.hpp : Main Interface
  ****************************************************************************
  * Copyright (C) 2006-2010 VideoLAN and AUTHORS
+ * $Id: 5f60d2f3078fb7db81f4a5ccfb5cb849ecd4dbeb $
  *
  * Authors: Clément Stenac <zorglub@videolan.org>
  *          Jean-Baptiste Kempf <jb@videolan.org>
@@ -27,20 +28,13 @@
 #include "qt.hpp"
 
 #include "util/qvlcframe.hpp"
-#include "components/player_controller.hpp"
-#include "components/voutwindow/qvoutwindow.hpp"
 
 #include <QSystemTrayIcon>
 #include <QStackedWidget>
-#include <QtQuick/QQuickView>
-#include <QtQuickWidgets/QQuickWidget>
-#include <QtQuick/QQuickWindow>
 
 #ifdef _WIN32
 # include <shobjidl.h>
 #endif
-
-#include <atomic>
 
 class QSettings;
 class QCloseEvent;
@@ -48,25 +42,25 @@ class QKeyEvent;
 class QLabel;
 class QEvent;
 class VideoWidget;
+class BackgroundWidget;
+class PlaylistWidget;
 class VisualSelector;
+class ControlsWidget;
+class InputControlsWidget;
+class FullscreenControllerWidget;
 class QVBoxLayout;
-class QStackedLayout;
 class QMenu;
 class QSize;
 class QScreen;
 class QTimer;
 class StandardPLPanel;
 struct vout_window_t;
-struct vout_window_cfg_t;
 
 class MainInterface : public QVLCMW
 {
     Q_OBJECT
 
-    Q_PROPERTY(bool interfaceAlwaysOnTop READ isInterfaceAlwaysOnTop WRITE setInterfaceAlwaysOnTop NOTIFY interfaceAlwaysOnTopChanged)
-    Q_PROPERTY(bool interfaceFullScreen READ isInterfaceFullScreen WRITE setInterfaceFullScreen NOTIFY interfaceFullScreenChanged)
-    Q_PROPERTY(bool hasEmbededVideo READ hasEmbededVideo NOTIFY hasEmbededVideoChanged)
-    Q_PROPERTY(VLCVarChoiceModel* extraInterfaces READ getExtraInterfaces CONSTANT)
+    friend class PlaylistWidget;
 
 public:
     /* tors */
@@ -76,27 +70,15 @@ public:
     static const QEvent::Type ToolbarsNeedRebuild;
 
     /* Video requests from core */
-    bool getVideo( struct vout_window_t * );
-private:
-    bool m_hasEmbededVideo = false;
-    VLCVarChoiceModel* m_extraInterfaces;
-    std::atomic_flag videoActive;
-    static int enableVideo( struct vout_window_t *,
-                            const struct vout_window_cfg_t * );
-    static void disableVideo( struct vout_window_t * );
-    static void releaseVideo( struct vout_window_t * );
-    static void resizeVideo( struct vout_window_t *, unsigned, unsigned );
-    static void requestVideoState( struct vout_window_t *, unsigned );
-    static void requestVideoWindowed( struct vout_window_t * );
-    static void requestVideoFullScreen( struct vout_window_t *, const char * );
-
-public:
-    QQuickWindow* getRootQuickWindow();
-    VideoSurfaceProvider* getVideoSurfaceProvider() const;
+    bool getVideo( struct vout_window_t *,
+                   unsigned int i_width, unsigned int i_height, bool );
+    void releaseVideo( void );
+    int  controlVideo( int i_query, va_list args );
 
     /* Getters */
     QSystemTrayIcon *getSysTray() { return sysTray; }
     QMenu *getSysTrayMenu() { return systrayMenu; }
+    FullscreenControllerWidget* getFullscreenControllerWidget() { return fullscreenControls; }
     enum
     {
         CONTROLS_VISIBLE  = 0x1,
@@ -110,32 +92,47 @@ public:
         RAISE_AUDIO,
         RAISE_AUDIOVIDEO,
     };
+    int getControlsVisibilityStatus();
+    bool isPlDocked() { return ( b_plDocked != false ); }
     bool isInterfaceFullScreen() { return b_interfaceFullScreen; }
     bool isInterfaceAlwaysOnTop() { return b_interfaceOnTop; }
-    bool hasEmbededVideo() { return m_hasEmbededVideo; }
-    QList<QQmlError> qmlErrors() const;
+    StandardPLPanel* getPlaylistView();
 
 protected:
-    void dropEventPlay( QDropEvent* event, bool b_play );
+    void dropEventPlay( QDropEvent* event, bool b_play ) { dropEventPlay(event, b_play, true); }
+    void dropEventPlay( QDropEvent *, bool, bool );
     void changeEvent( QEvent * ) Q_DECL_OVERRIDE;
     void dropEvent( QDropEvent *) Q_DECL_OVERRIDE;
     void dragEnterEvent( QDragEnterEvent * ) Q_DECL_OVERRIDE;
     void dragMoveEvent( QDragMoveEvent * ) Q_DECL_OVERRIDE;
     void dragLeaveEvent( QDragLeaveEvent * ) Q_DECL_OVERRIDE;
     void closeEvent( QCloseEvent *) Q_DECL_OVERRIDE;
+    void keyPressEvent( QKeyEvent *) Q_DECL_OVERRIDE;
+    void wheelEvent( QWheelEvent * ) Q_DECL_OVERRIDE;
+    bool eventFilter(QObject *, QEvent *) Q_DECL_OVERRIDE;
     virtual void toggleUpdateSystrayMenuWhenVisible();
     void resizeWindow(int width, int height);
 
 protected:
     /* Main Widgets Creation */
     void createMainWidget( QSettings* );
+    void createStatusBar();
+    void createPlaylist();
+    void createResumePanel( QWidget *w );
 
     /* Systray */
     void createSystray();
     void initSystray();
     void handleSystray();
 
+    /* Central StackWidget Management */
+    void showTab( QWidget *, bool video_closing = false );
+    void showVideo();
+    void restoreStackOldWidget( bool video_closing = false );
+
     /* */
+    void displayNormalView();
+    void setMinimalView( bool );
     void setInterfaceFullScreen( bool );
     void computeMinimumSize();
 
@@ -146,22 +143,32 @@ protected:
 
     QString              input_name;
     QVBoxLayout         *mainLayout;
+    ControlsWidget      *controls;
+    InputControlsWidget *inputC;
+    FullscreenControllerWidget *fullscreenControls;
 
-    std::unique_ptr<QVoutWindow> m_videoRenderer;
+    /* Widgets */
+    QStackedWidget      *stackCentralW;
 
-    QQuickWidget        *mediacenterView;
-    QWidget             *mediacenterWrapper;
+    VideoWidget         *videoWidget;
+    BackgroundWidget    *bgWidget;
+    PlaylistWidget      *playlistWidget;
+    //VisualSelector      *visualSelector;
+
+    /* resume panel */
+    QWidget             *resumePanel;
+    QTimer              *resumeTimer;
+    int64_t             i_resumeTime;
 
     /* Status Bar */
     QLabel              *nameLabel;
     QLabel              *cryptedLabel;
 
     /* Status and flags */
+    QWidget             *stackCentralOldWidget;
     QPoint              lastWinPosition;
     QSize               lastWinSize;  /// To restore the same window size when leaving fullscreen
     QScreen             *lastWinScreen;
-
-    QSize               pendingResize; // to be applied when fullscreen is disabled
 
     QMap<QWidget *, QSize> stackWidgetsSizes;
 
@@ -179,7 +186,6 @@ protected:
 #ifdef QT5_HAS_WAYLAND
     bool                 b_hasWayland;
 #endif
-    bool                 b_hasMedialibrary = false;
     /* States */
     bool                 playlistVisible;       ///< Is the playlist visible ?
 //    bool                 videoIsActive;       ///< Having a video now / THEMIM->hasV
@@ -187,64 +193,93 @@ protected:
     bool                 b_plDocked;            ///< Is the playlist docked ?
 
     bool                 b_hasPausedWhenMinimized;
+    bool                 b_statusbarVisible;
 
     static const Qt::Key kc[10]; /* easter eggs */
     int i_kc_offset;
 
 public slots:
+    void dockPlaylist( bool b_docked = true );
+    void toggleMinimalView( bool );
+    void togglePlaylist();
     void toggleUpdateSystrayMenu();
     void showUpdateSystrayMenu();
     void hideUpdateSystrayMenu();
+    void toggleAdvancedButtons();
     void toggleInterfaceFullScreen();
+    void toggleFSC();
     void setInterfaceAlwaysOnTop( bool );
+
+    void setStatusBarVisibility(bool b_visible);
+    void setPlaylistVisibility(bool b_visible);
+
+    /* Manage the Video Functions from the vout threads */
+    void getVideoSlot( struct vout_window_t *,
+                       unsigned i_width, unsigned i_height, bool, bool * );
+    void releaseVideoSlot( void );
 
     void emitBoss();
     void emitRaise();
-    void emitShow();
-    void popupMenu( bool show );
 
     virtual void reloadPrefs();
     void toolBarConfUpdated();
-    VLCVarChoiceModel* getExtraInterfaces();
 
 protected slots:
+    void debug();
+    void recreateToolbars();
+    void setName( const QString& );
     void setVLCWindowsTitle( const QString& title = "" );
     void handleSystrayClick( QSystemTrayIcon::ActivationReason );
     void updateSystrayTooltipName( const QString& );
-    void updateSystrayTooltipStatus( PlayerController::PlayingState );
+    void updateSystrayTooltipStatus( int );
+    void showCryptedLabel( bool );
+
+    void handleKeyPress( QKeyEvent * );
 
     void showBuffering( float );
 
-    /* Manage the Video Functions from the vout threads */
-    void getVideoSlot( bool );
-    void releaseVideoSlot( void );
+    void resizeStack( int w, int h )
+    {
+        if( !isFullScreen() && !isMaximized() && !b_isWindowTiled )
+        {
+            if( b_minimalView )
+                resizeWindow( w, h ); /* Oh yes, it shouldn't
+                                   be possible that size() - stackCentralW->size() < 0
+                                   since stackCentralW is contained in the QMW... */
+            else
+                resizeWindow( width() - stackCentralW->width() + w, height() - stackCentralW->height() + h );
+        }
+        debug();
+    }
 
-    void setVideoSize(unsigned int w, unsigned int h);
+    void setVideoSize( unsigned int, unsigned int );
+    void videoSizeChanged( int, int );
     virtual void setVideoFullScreen( bool );
+    void setHideMouse( bool );
     void setVideoOnTop( bool );
     void setBoss();
     void setRaise();
-    void setFullScreen( bool );
+    void voutReleaseMouseEvents();
+
+    void showResumePanel( int64_t);
+    void hideResumePanel();
+    void resumePlayback();
     void onInputChanged( bool );
 
 signals:
-    void askGetVideo( bool );
+    void askGetVideo( struct vout_window_t *, unsigned, unsigned, bool,
+                      bool * );
     void askReleaseVideo( );
     void askVideoToResize( unsigned int, unsigned int );
     void askVideoSetFullScreen( bool );
+    void askHideMouse( bool );
     void askVideoOnTop( bool );
     void minimalViewToggled( bool );
     void fullscreenInterfaceToggled( bool );
     void askToQuit();
-    void askShow();
     void askBoss();
     void askRaise();
-    void askPopupMenu( bool show );
     void kc_pressed(); /* easter eggs */
-
-    void interfaceAlwaysOnTopChanged(bool);
-    void interfaceFullScreenChanged(bool);
-    void hasEmbededVideoChanged(bool);
 };
 
 #endif

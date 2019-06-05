@@ -2,6 +2,7 @@
  * cpu.c: CPU detection code
  *****************************************************************************
  * Copyright (C) 1998-2004 VLC authors and VideoLAN
+ * $Id: 1b271edd799ac60ea5542699feb7b36273a96cc3 $
  *
  * Authors: Samuel Hocevar <sam@zoy.org>
  *          Christophe Massiot <massiot@via.ecp.fr>
@@ -36,6 +37,7 @@
 
 #include <assert.h>
 
+#ifndef __linux__
 #include <sys/types.h>
 #ifndef _WIN32
 #include <unistd.h>
@@ -47,6 +49,9 @@
 
 #ifdef __APPLE__
 #include <sys/sysctl.h>
+#endif
+#ifdef __ANDROID__
+#include <cpu-features.h>
 #endif
 
 #if defined(__OpenBSD__) && defined(__powerpc__)
@@ -116,7 +121,7 @@ static void Altivec_test (void)
  * Determines the CPU capabilities and stores them in cpu_flags.
  * The result can be retrieved with vlc_CPU().
  */
-static void vlc_CPU_init(void)
+void vlc_CPU_init (void)
 {
     uint32_t i_capabilities = 0;
 
@@ -247,6 +252,12 @@ out:
 
 #   endif
 
+#elif defined ( __arm__)
+# ifdef __ANDROID__
+    if (android_getCpuFeatures() & ANDROID_CPU_ARM_FEATURE_NEON)
+        i_capabilities |= VLC_CPU_ARM_NEON;
+# endif
+
 #endif
 
     cpu_flags = i_capabilities;
@@ -255,12 +266,17 @@ out:
 /**
  * Retrieves pre-computed CPU capability flags
  */
-VLC_WEAK unsigned vlc_CPU(void)
+unsigned vlc_CPU (void)
 {
-    static vlc_once_t once = VLC_STATIC_ONCE;
-    vlc_once(&once, vlc_CPU_init);
+/* On Windows and OS/2,
+ * initialized from DllMain() and _DLL_InitTerm() respectively, instead */
+#if !defined(_WIN32) && !defined(__OS2__)
+    static pthread_once_t once = PTHREAD_ONCE_INIT;
+    pthread_once (&once, vlc_CPU_init);
+#endif
     return cpu_flags;
 }
+#endif
 
 void vlc_CPU_dump (vlc_object_t *obj)
 {

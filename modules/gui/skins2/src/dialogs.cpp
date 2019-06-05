@@ -2,6 +2,7 @@
  * dialogs.cpp
  *****************************************************************************
  * Copyright (C) 2003 the VideoLAN team
+ * $Id: 465e3102dc7af989d82ac296cb78c19c51c0502f $
  *
  * Authors: Cyril Deguet     <asmax@via.ecp.fr>
  *          Olivier Teulière <ipkiss@via.ecp.fr>
@@ -28,7 +29,7 @@
 #include "../commands/cmd_quit.hpp"
 #include "../commands/cmd_playlist.hpp"
 #include "../commands/cmd_playtree.hpp"
-#include <vlc_playlist_legacy.h>
+#include <vlc_playlist.h>
 #include <vlc_modules.h>
 #include <vlc_url.h>
 
@@ -52,7 +53,7 @@ void Dialogs::showChangeSkinCB( intf_dialog_args_t *pArg )
                 // Push the command in the asynchronous command queue
                 AsyncQueue *pQueue = AsyncQueue::instance( pIntf );
                 pQueue->push( CmdGenericPtr( pCmd ) );
-            }
+	    }
         }
     }
     else if( !pIntf->p_sys->p_theme )
@@ -123,10 +124,10 @@ Dialogs::~Dialogs()
     {
         // Detach the dialogs provider from its parent interface
         module_unneed( m_pProvider, m_pModule );
-        vlc_object_delete(m_pProvider);
+        vlc_object_release( m_pProvider );
 
         /* Unregister callbacks */
-        var_DelCallback( pl_Get(getIntf()), "intf-popupmenu",
+        var_DelCallback( getIntf()->obj.libvlc, "intf-popupmenu",
                          PopupMenuCB, this );
     }
 }
@@ -170,13 +171,13 @@ bool Dialogs::init()
     m_pModule = module_need( m_pProvider, "dialogs provider", NULL, false );
     if( m_pModule == NULL )
     {
-        vlc_object_delete(m_pProvider);
+        vlc_object_release( m_pProvider );
         m_pProvider = NULL;
         return false;
     }
 
     /* Register callback for the intf-popupmenu variable */
-    var_AddCallback( pl_Get(getIntf()), "intf-popupmenu",
+    var_AddCallback( getIntf()->obj.libvlc, "intf-popupmenu",
                      PopupMenuCB, this );
 
     return true;

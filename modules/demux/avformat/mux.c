@@ -2,6 +2,7 @@
  * mux.c: muxer using libavformat
  *****************************************************************************
  * Copyright (C) 2006 VLC authors and VideoLAN
+ * $Id: 9500c915b4e4a457826fc0477153ced5d3d72ec0 $
  *
  * Authors: Gildas Bazin <gbazin@videolan.org>
  *
@@ -31,7 +32,6 @@
 #include <vlc_common.h>
 #include <vlc_block.h>
 #include <vlc_sout.h>
-#include <vlc_es.h>
 
 #include <libavformat/avformat.h>
 
@@ -44,13 +44,13 @@
 //#define AVFORMAT_DEBUG 1
 
 static const char *const ppsz_mux_options[] = {
-    "mux", "options", "reset-ts", NULL
+    "mux", "options", NULL
 };
 
 /*****************************************************************************
  * mux_sys_t: mux descriptor
  *****************************************************************************/
-typedef struct
+struct sout_mux_sys_t
 {
     AVIOContext     *io;
     int             io_buffer_size;
@@ -64,7 +64,7 @@ typedef struct
 #if LIBAVFORMAT_VERSION_CHECK( 57, 7, 0, 40, 100 )
     bool     b_header_done;
 #endif
-} sout_mux_sys_t;
+};
 
 /*****************************************************************************
  * Local prototypes
@@ -150,8 +150,6 @@ int avformat_OpenMux( vlc_object_t *p_this )
     p_sys->io->write_data_type = IOWriteTyped;
     p_sys->b_header_done = false;
 #endif
-    if( var_GetBool( p_mux, "sout-avformat-reset-ts" ) )
-        p_sys->oc->avoid_negative_ts = AVFMT_AVOID_NEG_TS_MAKE_ZERO;
 
     /* Fill p_mux fields */
     p_mux->pf_control   = Control;
@@ -287,16 +285,6 @@ static int AddStream( sout_mux_t *p_mux, sout_input_t *p_input )
         stream->sample_aspect_ratio.num = codecpar->sample_aspect_ratio.num;
         stream->time_base.den = i_frame_rate;
         stream->time_base.num = i_frame_rate_base;
-        if(i_codec_id == AV_CODEC_ID_RAWVIDEO)
-        {
-            video_format_t vfmt;
-            video_format_Copy(&vfmt, &fmt->video);
-            video_format_FixRgb(&vfmt);
-            if(GetFfmpegChroma(&codecpar->format, &vfmt))
-                msg_Warn(p_mux, "can't match format RAW video %4.4s",
-                         (const char *)&vfmt.i_chroma);
-            video_format_Clean(&vfmt);
-        }
         if (fmt->i_bitrate == 0) {
             msg_Warn( p_mux, "Missing video bitrate, assuming 512k" );
             i_bitrate = 512000;
@@ -373,11 +361,11 @@ static int MuxBlock( sout_mux_t *p_mux, sout_input_t *p_input )
     }
 
     if( p_data->i_pts > 0 )
-        pkt.pts = TO_AV_TS(p_data->i_pts * p_stream->time_base.den /
-            CLOCK_FREQ / p_stream->time_base.num);
+        pkt.pts = p_data->i_pts * p_stream->time_base.den /
+            CLOCK_FREQ / p_stream->time_base.num;
     if( p_data->i_dts > 0 )
-        pkt.dts = TO_AV_TS(p_data->i_dts * p_stream->time_base.den /
-            CLOCK_FREQ / p_stream->time_base.num);
+        pkt.dts = p_data->i_dts * p_stream->time_base.den /
+            CLOCK_FREQ / p_stream->time_base.num;
 
     /* this is another hack to prevent libavformat from triggering the "non monotone timestamps" check in avformat/utils.c */
     p_stream->cur_dts = ( p_data->i_dts * p_stream->time_base.den /
@@ -452,7 +440,7 @@ static int Mux( sout_mux_t *p_mux )
 
     for( ;; )
     {
-        vlc_tick_t i_dts;
+        mtime_t i_dts;
 
         int i_stream = sout_MuxGetStream( p_mux, 1, &i_dts );
         if( i_stream < 0 )
@@ -486,8 +474,7 @@ static int Control( sout_mux_t *p_mux, int i_query, va_list args )
     case MUX_GET_MIME:
     {
         char **ppsz = va_arg( args, char ** );
-        sout_mux_sys_t *p_sys = p_mux->p_sys;
-        *ppsz = strdup( p_sys->oc->oformat->mime_type );
+        *ppsz = strdup( p_mux->p_sys->oc->oformat->mime_type );
         return VLC_SUCCESS;
     }
 

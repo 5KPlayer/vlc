@@ -66,29 +66,26 @@ static inline subpicture_region_t *
 spuregion_CreateFromPicture( vlc_object_t *p_this, video_format_t *p_fmt,
                              const char *psz_uri )
 {
+    video_format_t fmt_in;
+    video_format_Init( &fmt_in, 0 );
+
     picture_t *p_pic = NULL;
-    struct vlc_logger *logger = p_this->logger;
-    bool no_interact = p_this->no_interact;
-    p_this->logger = NULL;
-    p_this->no_interact = true;
+    int i_flags = p_this->obj.flags;
+    p_this->obj.flags |= OBJECT_FLAGS_NOINTERACT|OBJECT_FLAGS_QUIET;
     image_handler_t *p_image = image_HandlerCreate( p_this );
     if( p_image )
     {
-        p_pic = image_ReadUrl( p_image, psz_uri, p_fmt );
+        p_pic = image_ReadUrl( p_image, psz_uri, &fmt_in, p_fmt );
         image_HandlerDelete( p_image );
     }
-    p_this->no_interact = no_interact;
-    p_this->logger = logger;
+    p_this->obj.flags = i_flags;
 
     if(!p_pic)
         return NULL;
 
     subpicture_region_t *region = subpicture_region_New(p_fmt);
     if (!region)
-    {
-        picture_Release( p_pic );
         return NULL;
-    }
 
     picture_Release( region->p_picture );
     region->p_picture = p_pic;

@@ -45,7 +45,7 @@
 JNIEnv *android_getEnv(vlc_object_t *p_obj, const char *psz_thread_name);
 
 #define OPENSLES_BUFFERS 255 /* maximum number of buffers */
-#define OPENSLES_BUFLEN  VLC_TICK_FROM_MS(10)
+#define OPENSLES_BUFLEN  10   /* ms */
 /*
  * 10ms of precision when mesasuring latency should be enough,
  * with 255 buffers we can buffer 2.55s of audio.
@@ -80,7 +80,7 @@ typedef SLresult (*slCreateEngine_t)(
 /*****************************************************************************
  *
  *****************************************************************************/
-typedef struct
+struct aout_sys_t
 {
     /* OpenSL objects */
     SLObjectItf                     engineObject;
@@ -118,7 +118,7 @@ typedef struct
     block_t                        *p_buffer_chain;
     block_t                       **pp_buffer_last;
     size_t                          samples;
-} aout_sys_t;
+};
 
 /*****************************************************************************
  * Local prototypes.
@@ -150,7 +150,7 @@ static inline int bytesPerSample(void)
     return 2 /* S16 */ * 2 /* stereo */;
 }
 
-static int TimeGet(audio_output_t* aout, vlc_tick_t* restrict drift)
+static int TimeGet(audio_output_t* aout, mtime_t* restrict drift)
 {
     aout_sys_t *sys = aout->sys;
 
@@ -168,8 +168,8 @@ static int TimeGet(audio_output_t* aout, vlc_tick_t* restrict drift)
     if (!started)
         return -1;
 
-    *drift = OPENSLES_BUFLEN * st.count
-        + vlc_tick_from_samples(sys->samples, sys->rate);
+    *drift = (CLOCK_FREQ * OPENSLES_BUFLEN * st.count / 1000)
+        + sys->samples * CLOCK_FREQ / sys->rate;
 
     /* msg_Dbg(aout, "latency %"PRId64" ms, %d/%d buffers", *drift / 1000,
         (int)st.count, OPENSLES_BUFFERS); */
@@ -177,30 +177,35 @@ static int TimeGet(audio_output_t* aout, vlc_tick_t* restrict drift)
     return 0;
 }
 
-static void Flush(audio_output_t *aout)
+static void Flush(audio_output_t *aout, bool drain)
 {
     aout_sys_t *sys = aout->sys;
 
-    vlc_mutex_lock(&sys->lock);
-    SetPlayState(sys->playerPlay, SL_PLAYSTATE_STOPPED);
-    Clear(sys->playerBufferQueue);
-    SetPlayState(sys->playerPlay, SL_PLAYSTATE_PLAYING);
+    if (drain) {
+        mtime_t delay;
+        if (!TimeGet(aout, &delay))
+            msleep(delay);
+    } else {
+        vlc_mutex_lock(&sys->lock);
+        SetPlayState(sys->playerPlay, SL_PLAYSTATE_STOPPED);
+        Clear(sys->playerBufferQueue);
+        SetPlayState(sys->playerPlay, SL_PLAYSTATE_PLAYING);
 
-    /* release audio data not yet written to opensles */
-    block_ChainRelease(sys->p_buffer_chain);
-    sys->p_buffer_chain = NULL;
-    sys->pp_buffer_last = &sys->p_buffer_chain;
+        /* release audio data not yet written to opensles */
+        block_ChainRelease(sys->p_buffer_chain);
+        sys->p_buffer_chain = NULL;
+        sys->pp_buffer_last = &sys->p_buffer_chain;
 
-    sys->samples = 0;
-    sys->started = false;
+        sys->samples = 0;
+        sys->started = false;
 
-    vlc_mutex_unlock(&sys->lock);
+        vlc_mutex_unlock(&sys->lock);
+    }
 }
 
 static int VolumeSet(audio_output_t *aout, float vol)
 {
-    aout_sys_t *sys = aout->sys;
-    if (!sys->volumeItf)
+    if (!aout->sys->volumeItf)
         return -1;
 
     /* Convert UI volume to linear factor (cube) */
@@ -213,21 +218,20 @@ static int VolumeSet(audio_output_t *aout, float vol)
     else if (mb > 0)
         mb = 0; /* maximum supported level could be higher: GetMaxVolumeLevel */
 
-    SLresult r = SetVolumeLevel(sys->volumeItf, mb);
+    SLresult r = SetVolumeLevel(aout->sys->volumeItf, mb);
     return (r == SL_RESULT_SUCCESS) ? 0 : -1;
 }
 
 static int MuteSet(audio_output_t *aout, bool mute)
 {
-    aout_sys_t *sys = aout->sys;
-    if (!sys->volumeItf)
+    if (!aout->sys->volumeItf)
         return -1;
 
-    SLresult r = SetMute(sys->volumeItf, mute);
+    SLresult r = SetMute(aout->sys->volumeItf, mute);
     return (r == SL_RESULT_SUCCESS) ? 0 : -1;
 }
 
-static void Pause(audio_output_t *aout, bool pause, vlc_tick_t date)
+static void Pause(audio_output_t *aout, bool pause, mtime_t date)
 {
     (void)date;
     aout_sys_t *sys = aout->sys;
@@ -317,7 +321,7 @@ static int WriteBuffer(audio_output_t *aout)
 /*****************************************************************************
  * Play: play a sound
  *****************************************************************************/
-static void Play(audio_output_t *aout, block_t *p_buffer, vlc_tick_t date)
+static void Play(audio_output_t *aout, block_t *p_buffer)
 {
     aout_sys_t *sys = aout->sys;
 
@@ -334,7 +338,6 @@ static void Play(audio_output_t *aout, block_t *p_buffer, vlc_tick_t date)
         ;
 
     vlc_mutex_unlock(&sys->lock);
-    (void) date;
 }
 
 static void PlayedCallback (SLAndroidSimpleBufferQueueItf caller, void *pContext)
@@ -367,7 +370,7 @@ static int aout_get_native_sample_rate(audio_output_t *aout)
     /* 3 for AudioManager.STREAM_MUSIC */
     int sample_rate = (*p_env)->CallStaticIntMethod(p_env, cls, method, 3);
     (*p_env)->DeleteLocalRef(p_env, cls);
-    msg_Dbg(aout, "%s: %d", __func__, sample_rate);
+    fprintf(stderr, "aout_get_native_sample_rate: %d\n", sample_rate);
     return sample_rate;
 }
 
@@ -411,7 +414,7 @@ static int Start(audio_output_t *aout, audio_sample_format_t *restrict fmt)
     const SLInterfaceID ids2[] = { sys->SL_IID_ANDROIDSIMPLEBUFFERQUEUE, sys->SL_IID_VOLUME };
     static const SLboolean req2[] = { SL_BOOLEAN_TRUE, SL_BOOLEAN_TRUE };
 
-    if (aout_get_native_sample_rate(aout) >= (int)fmt->i_rate) {
+    if (aout_get_native_sample_rate(aout) >= fmt->i_rate) {
         result = CreateAudioPlayer(sys->engineEngine, &sys->playerObject, &audioSrc,
                                     &audioSnk, sizeof(ids2) / sizeof(*ids2),
                                     ids2, req2);
@@ -457,7 +460,7 @@ static int Start(audio_output_t *aout, audio_sample_format_t *restrict fmt)
 
     /* XXX: rounding shouldn't affect us at normal sampling rate */
     sys->rate = fmt->i_rate;
-    sys->samples_per_buf = samples_from_vlc_tick(OPENSLES_BUFLEN, fmt->i_rate);
+    sys->samples_per_buf = OPENSLES_BUFLEN * fmt->i_rate / 1000;
     sys->buf = vlc_alloc(sys->samples_per_buf * bytesPerSample(), OPENSLES_BUFFERS);
     if (!sys->buf)
         goto error;
@@ -474,7 +477,7 @@ static int Start(audio_output_t *aout, audio_sample_format_t *restrict fmt)
     fmt->i_physical_channels   = AOUT_CHAN_LEFT | AOUT_CHAN_RIGHT;
     fmt->channel_type = AUDIO_CHANNEL_TYPE_BITMAP;
 
-    SetPositionUpdatePeriod(sys->playerPlay, MS_FROM_VLC_TICK(AOUT_MIN_PREPARE_TIME));
+    SetPositionUpdatePeriod(sys->playerPlay, AOUT_MIN_PREPARE_TIME * 1000 / CLOCK_FREQ);
 
     aout_FormatPrepare(fmt);
 

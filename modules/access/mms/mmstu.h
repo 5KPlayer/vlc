@@ -2,6 +2,7 @@
  * mmstu.h: MMS access plug-in
  *****************************************************************************
  * Copyright (C) 2001, 2002 VLC authors and VideoLAN
+ * $Id: 186f8f1a4baad9f15aac493c3285ea417c1caf0b $
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *
@@ -33,7 +34,7 @@
 
 #define MMS_BUFFER_SIZE 100000
 
-typedef struct
+struct access_sys_t
 {
     int         i_proto;        /* MMS_PROTO_TCP, MMS_PROTO_UDP */
     int         i_handle_tcp;   /* TCP socket for communication with server */
@@ -57,7 +58,7 @@ typedef struct
     size_t      i_buffer_udp;
 
     /* data necessary to send data to server */
-    vlc_guid_t  guid;
+    guid_t      guid;
     int         i_command_level;
     int         i_seq_num;
     uint32_t    i_header_packet_id_type;
@@ -78,6 +79,12 @@ typedef struct
     /* extracted information */
     int         i_command;
 
+    /* from 0x01 answer (not yet set) */
+    char        *psz_server_version;
+    char        *psz_tool_version;
+    char        *psz_update_player_url;
+    char        *psz_encryption_type;
+
     /* from 0x06 answer */
     uint32_t    i_flags_broadcast;
     uint32_t    i_media_length;
@@ -93,6 +100,6 @@ typedef struct
     vlc_mutex_t  lock_netwrite;
     bool         b_keep_alive;
     vlc_thread_t keep_alive;
-} access_sys_t;
+};
 
 #endif

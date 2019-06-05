@@ -3,6 +3,7 @@
  *****************************************************************************
  * Copyright (C) 2007 Vincent Penne
  * Some code converted from ProjectX java dvb decoder (c) 2001-2005 by dvb.matt
+ * $Id: b0a4e773f2742f71ac735ddc74f510fa7531279a $
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published by
@@ -87,19 +88,19 @@ vlc_module_end ()
  * Local structures
  ****************************************************************************/
 
-typedef struct
+struct decoder_sys_t
 {
   int         i_align;
   bool        b_is_subtitle[9];
   char        ppsz_lines[32][128];
   char        psz_prev_text[512];
-  vlc_tick_t  prev_pts;
+  mtime_t     prev_pts;
   int         i_page[9];
   bool        b_erase[9];
   const uint16_t *  pi_active_national_set[9];
   int         i_wanted_page, i_wanted_magazine;
   bool        b_ignore_sub_flag;
-} decoder_sys_t;
+};
 
 /****************************************************************************
  * Local data

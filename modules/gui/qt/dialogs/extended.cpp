@@ -2,6 +2,7 @@
  * extended.cpp : Extended controls - Undocked
  ****************************************************************************
  * Copyright (C) 2006-2008 the VideoLAN team
+ * $Id: f8f42e0f2b727ff081f8a0a9632cba1a0a59a85f $
  *
  * Authors: Clément Stenac <zorglub@videolan.org>
  *          Jean-Baptiste Kempf <jb@videolan.org>
@@ -29,7 +30,7 @@
 #include "dialogs/extended.hpp"
 
 #include "main_interface.hpp" /* Needed for external MI size */
-#include "components/player_controller.hpp"
+#include "input_manager.hpp"
 
 #include <QTabWidget>
 #include <QGridLayout>
@@ -144,7 +145,7 @@ ExtendedDialog::ExtendedDialog( intf_thread_t *_p_intf )
             move ( 450 , 0 );
     }
 
-    connect( THEMIM, &PlayerController::playingStateChanged, this, &ExtendedDialog::changedItem );
+    CONNECT( THEMIM->getIM(), playingStatusChanged( int ), this, changedItem( int ) );
 }
 
 ExtendedDialog::~ExtendedDialog()
@@ -163,9 +164,9 @@ int ExtendedDialog::currentTab()
     return mainTabW->currentIndex();
 }
 
-void ExtendedDialog::changedItem( PlayerController::PlayingState i_status )
+void ExtendedDialog::changedItem( int i_status )
 {
-    if( i_status != PlayerController::PLAYING_STATE_STOPPED ) return;
+    if( i_status != END_S ) return;
     syncW->clean();
     videoEffect->clean();
 }
@@ -205,15 +206,15 @@ void ExtendedDialog::saveConfig()
         switch( static_cast<QMetaType::Type>(value.type()) )
         {
             case QMetaType::QString:
-                config_PutPsz( qtu(i.key()), qtu(value.toString()) );
+                config_PutPsz( p_intf, qtu(i.key()), qtu(value.toString()) );
                 break;
             case QMetaType::Int:
             case QMetaType::Bool:
-                config_PutInt( qtu(i.key()), value.toInt() ) ;
+                config_PutInt( p_intf, qtu(i.key()), value.toInt() ) ;
                 break;
             case QMetaType::Double:
             case QMetaType::Float:
-                config_PutFloat( qtu(i.key()), value.toFloat() ) ;
+                config_PutFloat( p_intf, qtu(i.key()), value.toFloat() ) ;
                 break;
             default:
                 vlc_assert_unreachable();

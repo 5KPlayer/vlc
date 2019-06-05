@@ -31,71 +31,28 @@
 
 using namespace adaptive;
 
-static const struct es_out_callbacks esOutCallbacks =
-{
-    FakeESOut::esOutAdd_Callback,
-    FakeESOut::esOutSend_Callback,
-    FakeESOut::esOutDel_Callback,
-    FakeESOut::esOutControl_Callback,
-    FakeESOut::esOutDestroy_Callback,
-};
-
-struct adaptive::es_out_fake
-{
-    FakeESOut *fake;
-    es_out_t es_out;
-};
-
-FakeESOut::LockedFakeEsOut::LockedFakeEsOut(FakeESOut &q)
-{
-    p = &q;
-    vlc_mutex_lock(&p->lock);
-}
-
-FakeESOut::LockedFakeEsOut::~LockedFakeEsOut()
-{
-    vlc_mutex_unlock(&p->lock);
-}
-
-FakeESOut & FakeESOut::LockedFakeEsOut::operator *()
-{
-    return *p;
-}
-
-FakeESOut * FakeESOut::LockedFakeEsOut::operator ->()
-{
-    return p;
-}
-
 FakeESOut::FakeESOut( es_out_t *es, CommandsQueue *queue )
     : real_es_out( es )
     , extrainfo( NULL )
     , commandsqueue( queue )
-    , fakeesout( new struct es_out_fake )
+    , fakeesout( new es_out_t )
     , timestamps_offset( 0 )
     , timestamps_expected( 0 )
     , timestamps_check_done( false )
 {
-    fakeesout->fake = this;
-    fakeesout->es_out.cbs = &esOutCallbacks;
-    priority = ES_PRIORITY_SELECTABLE_MIN;
+    fakeesout->pf_add = esOutAdd_Callback;
+    fakeesout->pf_control = esOutControl_Callback;
+    fakeesout->pf_del = esOutDel_Callback;
+    fakeesout->pf_destroy = esOutDestroy_Callback;
+    fakeesout->pf_send = esOutSend_Callback;
+    fakeesout->p_sys = (es_out_sys_t*) this;
 
     vlc_mutex_init(&lock);
 }
 
-FakeESOut::LockedFakeEsOut FakeESOut::WithLock()
-{
-    return LockedFakeEsOut(*this);
-}
-
-CommandsQueue * FakeESOut::commandsQueue()
-{
-    return commandsqueue;
-}
-
 es_out_t * FakeESOut::getEsOut()
 {
-    return &fakeesout->es_out;
+    return fakeesout;
 }
 
 FakeESOut::~FakeESOut()
@@ -104,26 +61,31 @@ FakeESOut::~FakeESOut()
     gc();
 
     delete fakeesout;
-    delete commandsqueue;
     vlc_mutex_destroy(&lock);
 }
 
-void FakeESOut::setExpectedTimestampOffset(vlc_tick_t offset)
+void FakeESOut::setExpectedTimestampOffset(mtime_t offset)
 {
+    vlc_mutex_lock(&lock);
     timestamps_offset = 0;
     timestamps_expected = offset;
     timestamps_check_done = false;
+    vlc_mutex_unlock(&lock);
 }
 
-void FakeESOut::setTimestampOffset(vlc_tick_t offset)
+void FakeESOut::setTimestampOffset(mtime_t offset)
 {
+    vlc_mutex_lock(&lock);
     timestamps_offset = offset;
     timestamps_check_done = true;
+    vlc_mutex_unlock(&lock);
 }
 
 void FakeESOut::setExtraInfoProvider( ExtraFMTInfoInterface *extra )
 {
+    vlc_mutex_lock(&lock);
     extrainfo = extra;
+    vlc_mutex_unlock(&lock);
 }
 
 FakeESOutID * FakeESOut::createNewID( const es_format_t *p_fmt )
@@ -134,12 +96,16 @@ FakeESOutID * FakeESOut::createNewID( const es_format_t *p_fmt )
     fmtcopy.i_group = 0; /* Always ignore group for adaptive */
     fmtcopy.i_id = -1;
 
-    fmtcopy.i_priority = priority;
+    vlc_mutex_lock(&lock);
 
     if( extrainfo )
         extrainfo->fillExtraFMTInfo( &fmtcopy );
 
     FakeESOutID *es_id = new (std::nothrow) FakeESOutID( this, &fmtcopy );
+    if(likely(es_id))
+        fakeesidlist.push_back( es_id );
+
+    vlc_mutex_unlock(&lock);
 
     es_format_Clean( &fmtcopy );
 
@@ -151,11 +117,8 @@ void FakeESOut::createOrRecycleRealEsID( FakeESOutID *es_id )
     std::list<FakeESOutID *>::iterator it;
     es_out_id_t *realid = NULL;
 
-    /* declared ES must are temporary until real ES decl */
-    recycle_candidates.insert(recycle_candidates.begin(), declared.begin(), declared.end());
-    declared.clear();
+    vlc_mutex_lock(&lock);
 
-    bool b_preexisting = false;
     bool b_select = false;
     for( it=recycle_candidates.begin(); it!=recycle_candidates.end(); ++it )
     {
@@ -170,53 +133,43 @@ void FakeESOut::createOrRecycleRealEsID( FakeESOutID *es_id )
         }
         else if( cand->getFmt()->i_cat == es_id->getFmt()->i_cat && cand->realESID() )
         {
-            b_preexisting = true;
             /* We need to enforce same selection when not reused
                Otherwise the es will select any other compatible track
                and will end this in a activate/select loop when reactivating a track */
-            if( !b_select )
-                es_out_Control( real_es_out, ES_OUT_GET_ES_STATE, cand->realESID(), &b_select );
+            es_out_Control( real_es_out, ES_OUT_GET_ES_STATE, cand->realESID(), &b_select );
+            break;
         }
     }
 
     if( !realid )
     {
-        es_format_t fmt;
-        es_format_Copy( &fmt, es_id->getFmt() );
-        if( b_preexisting && !b_select ) /* was not previously selected on other format */
-            fmt.i_priority = ES_PRIORITY_NOT_DEFAULTABLE;
-        else
-            fmt.i_priority = priority;//ES_PRIORITY_SELECTABLE_MIN;
-        realid = es_out_Add( real_es_out, &fmt );
-        if( b_preexisting && b_select ) /* was previously selected on other format */
+        realid = es_out_Add( real_es_out, es_id->getFmt() );
+        if( b_select )
             es_out_Control( real_es_out, ES_OUT_SET_ES, realid );
-        es_format_Clean( &fmt );
     }
 
     es_id->setRealESID( realid );
+
+    vlc_mutex_unlock(&lock);
 }
 
-void FakeESOut::setPriority(int p)
+mtime_t FakeESOut::getTimestampOffset() const
 {
-    priority = p;
-}
-
-vlc_tick_t FakeESOut::getTimestampOffset() const
-{
-    vlc_tick_t time = timestamps_offset;
+    vlc_mutex_lock(const_cast<vlc_mutex_t *>(&lock));
+    mtime_t time = timestamps_offset;
+    vlc_mutex_unlock(const_cast<vlc_mutex_t *>(&lock));
     return time;
 }
 
 size_t FakeESOut::esCount() const
 {
-    if(!declared.empty())
-        return declared.size();
-
     size_t i_count = 0;
     std::list<FakeESOutID *>::const_iterator it;
+    vlc_mutex_lock(const_cast<vlc_mutex_t *>(&lock));
     for( it=fakeesidlist.begin(); it!=fakeesidlist.end(); ++it )
         if( (*it)->realESID() )
             i_count++;
+    vlc_mutex_unlock(const_cast<vlc_mutex_t *>(&lock));
     return i_count;
 }
 
@@ -230,6 +183,7 @@ void FakeESOut::schedulePCRReset()
 void FakeESOut::scheduleAllForDeletion()
 {
     std::list<FakeESOutID *>::const_iterator it;
+    vlc_mutex_lock(&lock);
     for( it=fakeesidlist.begin(); it!=fakeesidlist.end(); ++it )
     {
         FakeESOutID *es_id = *it;
@@ -243,6 +197,7 @@ void FakeESOut::scheduleAllForDeletion()
             }
         }
     }
+    vlc_mutex_unlock(&lock);
 }
 
 void FakeESOut::recycleAll()
@@ -250,16 +205,17 @@ void FakeESOut::recycleAll()
     /* Only used when demux is killed and commands queue is cancelled */
     commandsqueue->Abort( true );
     assert(commandsqueue->isEmpty());
+    vlc_mutex_lock(&lock);
     recycle_candidates.splice( recycle_candidates.end(), fakeesidlist );
+    vlc_mutex_unlock(&lock);
 }
 
 void FakeESOut::gc()
 {
-    recycle_candidates.insert(recycle_candidates.begin(), declared.begin(), declared.end());
-    declared.clear();
-
+    vlc_mutex_lock(&lock);
     if( recycle_candidates.empty() )
     {
+        vlc_mutex_unlock(&lock);
         return;
     }
 
@@ -274,22 +230,21 @@ void FakeESOut::gc()
         delete *it;
     }
     recycle_candidates.clear();
+    vlc_mutex_unlock(&lock);
 }
 
 bool FakeESOut::hasSelectedEs() const
 {
     bool b_selected = false;
-    std::list<FakeESOutID *> const * lists[2] = {&declared, &fakeesidlist};
     std::list<FakeESOutID *>::const_iterator it;
-    for(int i=0; i<2; i++)
+    vlc_mutex_lock(const_cast<vlc_mutex_t *>(&lock));
+    for( it=fakeesidlist.begin(); it!=fakeesidlist.end() && !b_selected; ++it )
     {
-        for( it=lists[i]->begin(); it!=lists[i]->end() && !b_selected; ++it )
-        {
-            FakeESOutID *esID = *it;
-            if( esID->realESID() )
-                es_out_Control( real_es_out, ES_OUT_GET_ES_STATE, esID->realESID(), &b_selected );
-        }
+        FakeESOutID *esID = *it;
+        if( esID->realESID() )
+            es_out_Control( real_es_out, ES_OUT_GET_ES_STATE, esID->realESID(), &b_selected );
     }
+    vlc_mutex_unlock(const_cast<vlc_mutex_t *>(&lock));
     return b_selected;
 }
 
@@ -302,59 +257,25 @@ bool FakeESOut::decodersDrained()
 
 bool FakeESOut::restarting() const
 {
+    vlc_mutex_lock(const_cast<vlc_mutex_t *>(&lock));
     bool b = !recycle_candidates.empty();
+    vlc_mutex_unlock(const_cast<vlc_mutex_t *>(&lock));
     return b;
 }
 
 void FakeESOut::recycle( FakeESOutID *id )
 {
+    vlc_mutex_lock(&lock);
     fakeesidlist.remove( id );
     recycle_candidates.push_back( id );
-}
-
-void FakeESOut::checkTimestampsStart(vlc_tick_t i_start)
-{
-    if( i_start == VLC_TICK_INVALID )
-        return;
-
-    if( !timestamps_check_done )
-    {
-        if( i_start < VLC_TICK_FROM_SEC(1) ) /* Starts 0 */
-            timestamps_offset = timestamps_expected;
-        timestamps_check_done = true;
-    }
-}
-
-void FakeESOut::declareEs(const es_format_t *fmt)
-{
-    /* Declared ES are only visible until stream data flows.
-       They are then recycled to create the real ES. */
-    if(!recycle_candidates.empty() || !fakeesidlist.empty())
-    {
-        assert(recycle_candidates.empty());
-        assert(fakeesidlist.empty());
-        return;
-    }
-
-    FakeESOutID *fakeid = createNewID(fmt);
-    if( likely(fakeid) )
-    {
-        es_out_id_t *realid = es_out_Add( real_es_out, fakeid->getFmt() );
-        if( likely(realid) )
-        {
-            fakeid->setRealESID(realid);
-            declared.push_front(fakeid);
-        }
-        else delete fakeid;
-    }
+    vlc_mutex_unlock(&lock);
 }
 
 /* Static callbacks */
 /* Always pass Fake ES ID to slave demuxes, it is just an opaque struct to them */
 es_out_id_t * FakeESOut::esOutAdd_Callback(es_out_t *fakees, const es_format_t *p_fmt)
 {
-    FakeESOut *me = container_of(fakees, es_out_fake, es_out)->fake;
-    vlc_mutex_locker locker(&me->lock);
+    FakeESOut *me = (FakeESOut *) fakees->p_sys;
 
     if( p_fmt->i_cat != VIDEO_ES && p_fmt->i_cat != AUDIO_ES && p_fmt->i_cat != SPU_ES )
         return NULL;
@@ -368,7 +289,6 @@ es_out_id_t * FakeESOut::esOutAdd_Callback(es_out_t *fakees, const es_format_t *
         AbstractCommand *command = me->commandsqueue->factory()->createEsOutAddCommand( es_id );
         if( likely(command) )
         {
-            me->fakeesidlist.push_back(es_id);
             me->commandsqueue->Schedule( command );
             return reinterpret_cast<es_out_id_t *>(es_id);
         }
@@ -380,21 +300,34 @@ es_out_id_t * FakeESOut::esOutAdd_Callback(es_out_t *fakees, const es_format_t *
     return NULL;
 }
 
+void FakeESOut::checkTimestampsStart(mtime_t i_start)
+{
+    if( i_start == VLC_TS_INVALID )
+        return;
+
+    vlc_mutex_lock(&lock);
+    if( !timestamps_check_done )
+    {
+        if( i_start < CLOCK_FREQ ) /* Starts 0 */
+            timestamps_offset = timestamps_expected;
+        timestamps_check_done = true;
+    }
+    vlc_mutex_unlock(&lock);
+}
+
 int FakeESOut::esOutSend_Callback(es_out_t *fakees, es_out_id_t *p_es, block_t *p_block)
 {
-    FakeESOut *me = container_of(fakees, es_out_fake, es_out)->fake;
-    vlc_mutex_locker locker(&me->lock);
-
+    FakeESOut *me = (FakeESOut *) fakees->p_sys;
     FakeESOutID *es_id = reinterpret_cast<FakeESOutID *>( p_es );
     assert(!es_id->scheduledForDeletion());
 
     me->checkTimestampsStart( p_block->i_dts );
 
-    vlc_tick_t offset = me->getTimestampOffset();
-    if( p_block->i_dts != VLC_TICK_INVALID )
+    mtime_t offset = me->getTimestampOffset();
+    if( p_block->i_dts > VLC_TS_INVALID )
     {
         p_block->i_dts += offset;
-        if( p_block->i_pts != VLC_TICK_INVALID )
+        if( p_block->i_pts > VLC_TS_INVALID )
                 p_block->i_pts += offset;
     }
     AbstractCommand *command = me->commandsqueue->factory()->createEsOutSendCommand( es_id, p_block );
@@ -408,9 +341,7 @@ int FakeESOut::esOutSend_Callback(es_out_t *fakees, es_out_id_t *p_es, block_t *
 
 void FakeESOut::esOutDel_Callback(es_out_t *fakees, es_out_id_t *p_es)
 {
-    FakeESOut *me = container_of(fakees, es_out_fake, es_out)->fake;
-    vlc_mutex_locker locker(&me->lock);
-
+    FakeESOut *me = (FakeESOut *) fakees->p_sys;
     FakeESOutID *es_id = reinterpret_cast<FakeESOutID *>( p_es );
     AbstractCommand *command = me->commandsqueue->factory()->createEsOutDelCommand( es_id );
     if( likely(command) )
@@ -422,8 +353,7 @@ void FakeESOut::esOutDel_Callback(es_out_t *fakees, es_out_id_t *p_es)
 
 int FakeESOut::esOutControl_Callback(es_out_t *fakees, int i_query, va_list args)
 {
-    FakeESOut *me = container_of(fakees, es_out_fake, es_out)->fake;
-    vlc_mutex_locker locker(&me->lock);
+    FakeESOut *me = (FakeESOut *) fakees->p_sys;
 
     switch( i_query )
     {
@@ -435,7 +365,7 @@ int FakeESOut::esOutControl_Callback(es_out_t *fakees, int i_query, va_list args
                 i_group = va_arg( args, int );
             else
                 i_group = 0;
-            vlc_tick_t  pcr = va_arg( args, vlc_tick_t );
+            int64_t  pcr = va_arg( args, int64_t );
             me->checkTimestampsStart( pcr );
             pcr += me->getTimestampOffset();
             AbstractCommand *command = me->commandsqueue->factory()->createEsOutControlPCRCommand( i_group, pcr );
@@ -480,9 +410,7 @@ int FakeESOut::esOutControl_Callback(es_out_t *fakees, int i_query, va_list args
 
 void FakeESOut::esOutDestroy_Callback(es_out_t *fakees)
 {
-    FakeESOut *me = container_of(fakees, es_out_fake, es_out)->fake;
-    vlc_mutex_locker locker(&me->lock);
-
+    FakeESOut *me = (FakeESOut *) fakees->p_sys;
     AbstractCommand *command = me->commandsqueue->factory()->createEsOutDestroyCommand();
     if( likely(command) )
         me->commandsqueue->Schedule( command );

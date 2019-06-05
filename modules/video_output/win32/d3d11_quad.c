@@ -1,5 +1,5 @@
 /*****************************************************************************
- * d3d11_quad.c: Direct3D11 Quad handling
+ * d3d11_quad.c: Direct3D11 Qaud handling
  *****************************************************************************
  * Copyright (C) 2017-2018 VLC authors and VideoLAN
  *
@@ -36,64 +36,48 @@
 #include <d3d11.h>
 
 #include "d3d11_quad.h"
-#include "common.h"
 
 #define SPHERE_SLICES 128
 #define nbLatBands SPHERE_SLICES
 #define nbLonBands SPHERE_SLICES
 
-void D3D11_RenderQuad(d3d11_device_t *d3d_dev, d3d_quad_t *quad, d3d_vshader_t *vsshader,
+void D3D11_RenderQuad(d3d11_device_t *d3d_dev, d3d_quad_t *quad,
                       ID3D11ShaderResourceView *resourceView[D3D11_MAX_SHADER_VIEW],
-                      d3d11_select_plane_t selectPlane, void *selectOpaque)
+                      ID3D11RenderTargetView *d3drenderTargetView)
 {
     UINT offset = 0;
+
+    ID3D11DeviceContext_OMSetRenderTargets(d3d_dev->d3dcontext, 1, &d3drenderTargetView, NULL);
 
     /* Render the quad */
     ID3D11DeviceContext_IASetPrimitiveTopology(d3d_dev->d3dcontext, D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
     /* vertex shader */
-    ID3D11DeviceContext_IASetInputLayout(d3d_dev->d3dcontext, vsshader->layout);
+    ID3D11DeviceContext_IASetInputLayout(d3d_dev->d3dcontext, quad->pVertexLayout);
     ID3D11DeviceContext_IASetVertexBuffers(d3d_dev->d3dcontext, 0, 1, &quad->pVertexBuffer, &quad->vertexStride, &offset);
     ID3D11DeviceContext_IASetIndexBuffer(d3d_dev->d3dcontext, quad->pIndexBuffer, DXGI_FORMAT_R16_UINT, 0);
     if ( quad->pVertexShaderConstants )
         ID3D11DeviceContext_VSSetConstantBuffers(d3d_dev->d3dcontext, 0, 1, &quad->pVertexShaderConstants);
 
-    ID3D11DeviceContext_VSSetShader(d3d_dev->d3dcontext, vsshader->shader, NULL, 0);
-
-    if (quad->d3dsampState[0])
-        ID3D11DeviceContext_PSSetSamplers(d3d_dev->d3dcontext, 0, 2, quad->d3dsampState);
+    ID3D11DeviceContext_VSSetShader(d3d_dev->d3dcontext, quad->d3dvertexShader, NULL, 0);
 
     /* pixel shader */
-    ID3D11DeviceContext_PSSetConstantBuffers(d3d_dev->d3dcontext, 0, ARRAY_SIZE(quad->pPixelShaderConstants), quad->pPixelShaderConstants);
+    ID3D11DeviceContext_PSSetShader(d3d_dev->d3dcontext, quad->d3dpixelShader, NULL, 0);
+
+    ID3D11DeviceContext_PSSetConstantBuffers(d3d_dev->d3dcontext, 0, quad->PSConstantsCount, quad->pPixelShaderConstants);
     assert(quad->resourceCount <= D3D11_MAX_SHADER_VIEW);
     ID3D11DeviceContext_PSSetShaderResources(d3d_dev->d3dcontext, 0, quad->resourceCount, resourceView);
 
-    for (size_t i=0; i<D3D11_MAX_SHADER_VIEW; i++)
-    {
-        if (!quad->d3dpixelShader[i])
-            break;
+    ID3D11DeviceContext_RSSetViewports(d3d_dev->d3dcontext, 1, &quad->cropViewport);
 
-        if (unlikely(!selectPlane(selectOpaque, i)))
-            continue;
-
-        ID3D11DeviceContext_PSSetShader(d3d_dev->d3dcontext, quad->d3dpixelShader[i], NULL, 0);
-
-        ID3D11DeviceContext_RSSetViewports(d3d_dev->d3dcontext, 1, &quad->cropViewport[i]);
-
-        ID3D11DeviceContext_DrawIndexed(d3d_dev->d3dcontext, quad->indexCount, 0, 0);
-    }
-
-    /* force unbinding the input texture, otherwise we get:
-     * OMSetRenderTargets: Resource being set to OM RenderTarget slot 0 is still bound on input! */
-    ID3D11ShaderResourceView *reset[D3D11_MAX_SHADER_VIEW] = { 0 };
-    ID3D11DeviceContext_PSSetShaderResources(d3d_dev->d3dcontext, 0, quad->resourceCount, reset);
+    ID3D11DeviceContext_DrawIndexed(d3d_dev->d3dcontext, quad->indexCount, 0, 0);
 }
 
-static bool AllocQuadVertices(vlc_object_t *o, d3d11_device_t *d3d_dev, d3d_quad_t *quad, video_projection_mode_t projection)
+static bool AllocQuadVertices(vlc_object_t *o, d3d11_device_t *d3d_dev, d3d_quad_t *quad)
 {
     HRESULT hr;
 
-    switch (projection)
+    switch (quad->projection)
     {
     case PROJECTION_MODE_RECTANGULAR:
         quad->vertexCount = 4;
@@ -108,7 +92,7 @@ static bool AllocQuadVertices(vlc_object_t *o, d3d11_device_t *d3d_dev, d3d_quad
         quad->indexCount = 6 * 2 * 3;
         break;
     default:
-        msg_Warn(o, "Projection mode %d not handled", projection);
+        msg_Warn(o, "Projection mode %d not handled", quad->projection);
         return false;
     }
 
@@ -123,8 +107,8 @@ static bool AllocQuadVertices(vlc_object_t *o, d3d11_device_t *d3d_dev, d3d_quad
 
     hr = ID3D11Device_CreateBuffer(d3d_dev->d3ddevice, &bd, NULL, &quad->pVertexBuffer);
     if(FAILED(hr)) {
-        msg_Err(o, "Failed to create vertex buffer. (hr=%lX)", hr);
-        goto fail;
+      msg_Err(o, "Failed to create vertex buffer. (hr=%lX)", hr);
+      return false;
     }
 
     /* create the index of the vertices */
@@ -138,41 +122,32 @@ static bool AllocQuadVertices(vlc_object_t *o, d3d11_device_t *d3d_dev, d3d_quad
     hr = ID3D11Device_CreateBuffer(d3d_dev->d3ddevice, &quadDesc, NULL, &quad->pIndexBuffer);
     if(FAILED(hr)) {
         msg_Err(o, "Could not create the quad indices. (hr=0x%lX)", hr);
-        goto fail;
+        ID3D11Buffer_Release(quad->pVertexBuffer);
+        quad->pVertexBuffer = NULL;
+        return false;
     }
 
     return true;
-fail:
-    if (quad->pVertexBuffer)
-    {
-        ID3D11Buffer_Release(quad->pVertexBuffer);
-        quad->pVertexBuffer = NULL;
-    }
-    if (quad->pVertexBuffer)
-    {
-        ID3D11Buffer_Release(quad->pIndexBuffer);
-        quad->pIndexBuffer = NULL;
-    }
-    return false;
 }
 
 void D3D11_ReleaseQuad(d3d_quad_t *quad)
 {
-    if (quad->pPixelShaderConstants[PS_CONST_LUMI_BOUNDS])
+    if (quad->pPixelShaderConstants[0])
     {
-        ID3D11Buffer_Release(quad->pPixelShaderConstants[PS_CONST_LUMI_BOUNDS]);
-        quad->pPixelShaderConstants[PS_CONST_LUMI_BOUNDS] = NULL;
+        ID3D11Buffer_Release(quad->pPixelShaderConstants[0]);
+        quad->pPixelShaderConstants[0] = NULL;
     }
-    if (quad->pPixelShaderConstants[PS_CONST_COLORSPACE])
+    if (quad->pPixelShaderConstants[1])
     {
-        ID3D11Buffer_Release(quad->pPixelShaderConstants[PS_CONST_COLORSPACE]);
-        quad->pPixelShaderConstants[PS_CONST_COLORSPACE] = NULL;
+        ID3D11Buffer_Release(quad->pPixelShaderConstants[1]);
+        quad->pPixelShaderConstants[1] = NULL;
     }
     if (quad->pVertexBuffer)
     {
         ID3D11Buffer_Release(quad->pVertexBuffer);
         quad->pVertexBuffer = NULL;
     }
+    quad->d3dvertexShader = NULL;
     if (quad->pIndexBuffer)
     {
         ID3D11Buffer_Release(quad->pIndexBuffer);
@@ -182,15 +157,6 @@ void D3D11_ReleaseQuad(d3d_quad_t *quad)
     {
         ID3D11Buffer_Release(quad->pVertexShaderConstants);
         quad->pVertexShaderConstants = NULL;
-    }
-    D3D11_ReleasePixelShader(quad);
-    for (size_t i=0; i<2; i++)
-    {
-        if (quad->d3dsampState[i])
-        {
-            ID3D11SamplerState_Release(quad->d3dsampState[i]);
-            quad->d3dsampState[i] = NULL;
-        }
     }
     ReleasePictureSys(&quad->picSys);
 }
@@ -412,8 +378,8 @@ static void SetupQuadFlat(d3d_vertex_t *dst_data, const RECT *output,
 static void SetupQuadSphere(d3d_vertex_t *dst_data, const RECT *output,
                             const d3d_quad_t *quad, WORD *triangle_pos)
 {
-    const float scaleX = (float)(RECTWidth(*output))  / quad->i_width;
-    const float scaleY = (float)(RECTHeight(*output)) / quad->i_height;
+    const float scaleX = (float)(output->right  - output->left) / quad->i_width;
+    const float scaleY = (float)(output->bottom - output->top)   / quad->i_height;
     for (unsigned lat = 0; lat <= nbLatBands; lat++) {
         float theta = lat * (float) M_PI / nbLatBands;
         float sinTheta, cosTheta;
@@ -563,7 +529,6 @@ bool D3D11_UpdateQuadPosition( vlc_object_t *o, d3d11_device_t *d3d_dev, d3d_qua
     bool result = true;
     HRESULT hr;
     D3D11_MAPPED_SUBRESOURCE mappedResource;
-    d3d_vertex_t *dst_data;
 
     if (unlikely(quad->pVertexBuffer == NULL))
         return false;
@@ -574,7 +539,7 @@ bool D3D11_UpdateQuadPosition( vlc_object_t *o, d3d11_device_t *d3d_dev, d3d_qua
         msg_Err(o, "Failed to lock the vertex buffer (hr=0x%lX)", hr);
         return false;
     }
-    dst_data = mappedResource.pData;
+    d3d_vertex_t *dst_data = mappedResource.pData;
 
     /* create the vertex indices */
     hr = ID3D11DeviceContext_Map(d3d_dev->d3dcontext, (ID3D11Resource *)quad->pIndexBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource);
@@ -583,17 +548,18 @@ bool D3D11_UpdateQuadPosition( vlc_object_t *o, d3d11_device_t *d3d_dev, d3d_qua
         ID3D11DeviceContext_Unmap(d3d_dev->d3dcontext, (ID3D11Resource *)quad->pVertexBuffer, 0);
         return false;
     }
+    WORD *triangle_pos = mappedResource.pData;
 
     switch (quad->projection)
     {
     case PROJECTION_MODE_RECTANGULAR:
-        SetupQuadFlat(dst_data, output, quad, mappedResource.pData, orientation);
+        SetupQuadFlat(dst_data, output, quad, triangle_pos, orientation);
         break;
     case PROJECTION_MODE_EQUIRECTANGULAR:
-        SetupQuadSphere(dst_data, output, quad, mappedResource.pData);
+        SetupQuadSphere(dst_data, output, quad, triangle_pos);
         break;
     case PROJECTION_MODE_CUBEMAP_LAYOUT_STANDARD:
-        SetupQuadCube(dst_data, output, quad, mappedResource.pData);
+        SetupQuadCube(dst_data, output, quad, triangle_pos);
         break;
     default:
         msg_Warn(o, "Projection mode %d not handled", quad->projection);
@@ -606,21 +572,19 @@ bool D3D11_UpdateQuadPosition( vlc_object_t *o, d3d11_device_t *d3d_dev, d3d_qua
     return result;
 }
 
-static bool ShaderUpdateConstants(vlc_object_t *o, d3d11_device_t *d3d_dev, d3d_quad_t *quad, size_t index, void *new_buf)
+static bool D3D11_ShaderUpdateConstants(vlc_object_t *o, d3d11_device_t *d3d_dev, d3d_quad_t *quad)
 {
     D3D11_MAPPED_SUBRESOURCE mappedResource;
-    HRESULT hr = ID3D11DeviceContext_Map(d3d_dev->d3dcontext, (ID3D11Resource *)quad->pPixelShaderConstants[index], 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource);
+    HRESULT hr = ID3D11DeviceContext_Map(d3d_dev->d3dcontext, (ID3D11Resource *)quad->pPixelShaderConstants[0], 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedResource);
     if (FAILED(hr))
     {
         msg_Err(o, "Failed to lock the picture shader constants (hr=0x%lX)", hr);
         return false;
     }
 
-    if (index == PS_CONST_LUMI_BOUNDS)
-        memcpy(mappedResource.pData, new_buf,sizeof(PS_CONSTANT_BUFFER));
-    else
-        memcpy(mappedResource.pData, new_buf,sizeof(PS_COLOR_TRANSFORM));
-    ID3D11DeviceContext_Unmap(d3d_dev->d3dcontext, (ID3D11Resource *)quad->pPixelShaderConstants[index], 0);
+    PS_CONSTANT_BUFFER *dst_data = mappedResource.pData;
+    *dst_data = quad->shaderConstants;
+    ID3D11DeviceContext_Unmap(d3d_dev->d3dcontext, (ID3D11Resource *)quad->pPixelShaderConstants[0], 0);
     return true;
 }
 
@@ -632,7 +596,7 @@ void D3D11_UpdateQuadOpacity(vlc_object_t *o, d3d11_device_t *d3d_dev, d3d_quad_
 
     float old = quad->shaderConstants.Opacity;
     quad->shaderConstants.Opacity = opacity;
-    if (!ShaderUpdateConstants(o, d3d_dev, quad, PS_CONST_LUMI_BOUNDS, &quad->shaderConstants))
+    if (!D3D11_ShaderUpdateConstants(o, d3d_dev, quad))
         quad->shaderConstants.Opacity = old;
 }
 
@@ -644,56 +608,8 @@ void D3D11_UpdateQuadLuminanceScale(vlc_object_t *o, d3d11_device_t *d3d_dev, d3
 
     float old = quad->shaderConstants.LuminanceScale;
     quad->shaderConstants.LuminanceScale = luminanceScale;
-    if (!ShaderUpdateConstants(o, d3d_dev, quad, PS_CONST_LUMI_BOUNDS, &quad->shaderConstants))
+    if (!D3D11_ShaderUpdateConstants(o, d3d_dev, quad))
         quad->shaderConstants.LuminanceScale = old;
-}
-
-#undef D3D11_AllocateQuad
-int D3D11_AllocateQuad(vlc_object_t *o, d3d11_device_t *d3d_dev,
-                       video_projection_mode_t projection, d3d_quad_t *quad)
-{
-    HRESULT hr;
-    static_assert((sizeof(PS_CONSTANT_BUFFER)%16)==0,"Constant buffers require 16-byte alignment");
-    D3D11_BUFFER_DESC constantDesc = {
-        .Usage = D3D11_USAGE_DYNAMIC,
-        .ByteWidth = sizeof(PS_CONSTANT_BUFFER),
-        .BindFlags = D3D11_BIND_CONSTANT_BUFFER,
-        .CPUAccessFlags = D3D11_CPU_ACCESS_WRITE,
-    };
-    hr = ID3D11Device_CreateBuffer(d3d_dev->d3ddevice, &constantDesc, NULL, &quad->pPixelShaderConstants[PS_CONST_LUMI_BOUNDS]);
-    if(FAILED(hr)) {
-        msg_Err(o, "Could not create the pixel shader constant buffer. (hr=0x%lX)", hr);
-        goto error;
-    }
-
-    static_assert((sizeof(PS_COLOR_TRANSFORM)%16)==0,"Constant buffers require 16-byte alignment");
-    constantDesc.ByteWidth = sizeof(PS_COLOR_TRANSFORM);
-    hr = ID3D11Device_CreateBuffer(d3d_dev->d3ddevice, &constantDesc, NULL, &quad->pPixelShaderConstants[PS_CONST_COLORSPACE]);
-    if(FAILED(hr)) {
-        msg_Err(o, "Could not create the pixel shader colorspace buffer. (hr=0x%lX)", hr);
-        goto error;
-    }
-
-    if (projection == PROJECTION_MODE_EQUIRECTANGULAR || projection == PROJECTION_MODE_CUBEMAP_LAYOUT_STANDARD)
-    {
-        static_assert((sizeof(VS_PROJECTION_CONST)%16)==0,"Constant buffers require 16-byte alignment");
-        constantDesc.ByteWidth = sizeof(VS_PROJECTION_CONST);
-        hr = ID3D11Device_CreateBuffer(d3d_dev->d3ddevice, &constantDesc, NULL, &quad->pVertexShaderConstants);
-        if(FAILED(hr)) {
-            msg_Err(o, "Could not create the vertex shader constant buffer. (hr=0x%lX)", hr);
-            goto error;
-        }
-    }
-
-    if (!AllocQuadVertices(o, d3d_dev, quad, projection))
-        goto error;
-    quad->projection = projection;
-
-    return VLC_SUCCESS;
-
-error:
-    D3D11_ReleaseQuad(quad);
-    return VLC_EGENERIC;
 }
 
 struct xy_primary {
@@ -904,11 +820,13 @@ static void GetPrimariesTransform(FLOAT Primaries[4*4], video_color_primaries_t 
 #undef D3D11_SetupQuad
 int D3D11_SetupQuad(vlc_object_t *o, d3d11_device_t *d3d_dev, const video_format_t *fmt, d3d_quad_t *quad,
                     const display_info_t *displayFormat, const RECT *output,
-                    video_orientation_t orientation)
+                    ID3D11VertexShader *d3dvertexShader, ID3D11InputLayout *pVertexLayout,
+                    video_projection_mode_t projection, video_orientation_t orientation)
 {
-    const bool RGB_shader = IsRGBShader(quad->textureFormat);
+    HRESULT hr;
+    const bool RGB_shader = IsRGBShader(quad->formatInfo);
 
-    quad->shaderConstants.LuminanceScale = (float)displayFormat->luminance_peak / GetFormatLuminance(o, fmt);
+    quad->shaderConstants.LuminanceScale = GetFormatLuminance(o, fmt) / (float)displayFormat->luminance_peak;
 
     /* pixel shader constant buffer */
     quad->shaderConstants.Opacity = 1.0;
@@ -921,21 +839,33 @@ int D3D11_SetupQuad(vlc_object_t *o, d3d11_device_t *d3d_dev, const video_format
     else
         quad->shaderConstants.BoundaryY = (FLOAT) (fmt->i_visible_height - 1) / fmt->i_height;
 
-    ShaderUpdateConstants(o, d3d_dev, quad, PS_CONST_LUMI_BOUNDS, &quad->shaderConstants);
+    static_assert((sizeof(PS_CONSTANT_BUFFER)%16)==0,"Constant buffers require 16-byte alignment");
+    D3D11_BUFFER_DESC constantDesc = {
+        .Usage = D3D11_USAGE_DYNAMIC,
+        .ByteWidth = sizeof(PS_CONSTANT_BUFFER),
+        .BindFlags = D3D11_BIND_CONSTANT_BUFFER,
+        .CPUAccessFlags = D3D11_CPU_ACCESS_WRITE,
+    };
+    D3D11_SUBRESOURCE_DATA constantInit = { .pSysMem = &quad->shaderConstants };
+    hr = ID3D11Device_CreateBuffer(d3d_dev->d3ddevice, &constantDesc, &constantInit, &quad->pPixelShaderConstants[0]);
+    if(FAILED(hr)) {
+        msg_Err(o, "Could not create the pixel shader constant buffer. (hr=0x%lX)", hr);
+        goto error;
+    }
 
     FLOAT itu_black_level = 0.f;
     FLOAT itu_achromacy   = 0.f;
     if (!RGB_shader)
     {
-        switch (quad->textureFormat->bitsPerChannel)
+        switch (quad->formatInfo->bitsPerChannel)
         {
         case 8:
-            /* Rec. ITU-R BT.709-6 ¶4.6 */
+            /* Rec. ITU-R BT.709-6 §4.6 */
             itu_black_level  =              16.f / 255.f;
             itu_achromacy    =             128.f / 255.f;
             break;
         case 10:
-            /* Rec. ITU-R BT.709-6 ¶4.6 */
+            /* Rec. ITU-R BT.709-6 §4.6 */
             itu_black_level  =              64.f / 1023.f;
             itu_achromacy    =             512.f / 1023.f;
             break;
@@ -967,14 +897,6 @@ int D3D11_SetupQuad(vlc_object_t *o, d3d11_device_t *d3d_dev, const video_format
         1.164383561643836f,  2.017232142857142f,                 0.f, 0.f,
                        0.f,                 0.f,                 0.f, 1.f,
     };
-
-    static const FLOAT COLORSPACE_FULL_RGBA_TO_BT601_YUV[4*4] = {
-        0.299000f,  0.587000f,  0.114000f, 0.f,
-       -0.168736f, -0.331264f,  0.500000f, 0.f,
-        0.500000f, -0.418688f, -0.081312f, 0.f,
-              0.f,        0.f,        0.f, 1.f,
-    };
-
     /* see https://en.wikipedia.org/wiki/YCbCr#ITU-R_BT.709_conversion, in studio range */
     static const FLOAT COLORSPACE_BT709_YUV_TO_FULL_RGBA[4*4] = {
         1.164383561643836f,                 0.f,  1.792741071428571f, 0.f,
@@ -995,136 +917,82 @@ int D3D11_SetupQuad(vlc_object_t *o, d3d11_device_t *d3d_dev, const video_format
     memcpy(colorspace.WhitePoint, IDENTITY_4X4, sizeof(colorspace.WhitePoint));
 
     const FLOAT *ppColorspace;
-    if (!IsRGBShader(displayFormat->pixelFormat))
-    {
-        if (!RGB_shader)
-            ppColorspace = IDENTITY_4X4;
-        else
-        {
-            ppColorspace = COLORSPACE_FULL_RGBA_TO_BT601_YUV;
-            colorspace.WhitePoint[0*4 + 3] = -itu_black_level;
-            colorspace.WhitePoint[1*4 + 3] = itu_achromacy;
-            colorspace.WhitePoint[2*4 + 3] = itu_achromacy;
-        }
-    }
-    else
-    {
-        if (RGB_shader)
-            ppColorspace = IDENTITY_4X4;
-        else {
-            switch (fmt->space){
-                case COLOR_SPACE_BT709:
+    if (RGB_shader)
+        ppColorspace = IDENTITY_4X4;
+    else {
+        switch (fmt->space){
+            case COLOR_SPACE_BT709:
+                ppColorspace = COLORSPACE_BT709_YUV_TO_FULL_RGBA;
+                break;
+            case COLOR_SPACE_BT2020:
+                ppColorspace = COLORSPACE_BT2020_YUV_TO_FULL_RGBA;
+                break;
+            case COLOR_SPACE_BT601:
+                ppColorspace = COLORSPACE_BT601_YUV_TO_FULL_RGBA;
+                break;
+            default:
+            case COLOR_SPACE_UNDEF:
+                if( fmt->i_height > 576 )
                     ppColorspace = COLORSPACE_BT709_YUV_TO_FULL_RGBA;
-                    break;
-                case COLOR_SPACE_BT2020:
-                    ppColorspace = COLORSPACE_BT2020_YUV_TO_FULL_RGBA;
-                    break;
-                case COLOR_SPACE_BT601:
+                else
                     ppColorspace = COLORSPACE_BT601_YUV_TO_FULL_RGBA;
-                    break;
-                default:
-                case COLOR_SPACE_UNDEF:
-                    if( fmt->i_height > 576 )
-                        ppColorspace = COLORSPACE_BT709_YUV_TO_FULL_RGBA;
-                    else
-                        ppColorspace = COLORSPACE_BT601_YUV_TO_FULL_RGBA;
-                    break;
-            }
-            /* all matrices work in studio range and output in full range */
-            colorspace.WhitePoint[0*4 + 3] = -itu_black_level;
-            colorspace.WhitePoint[1*4 + 3] = -itu_achromacy;
-            colorspace.WhitePoint[2*4 + 3] = -itu_achromacy;
+                break;
         }
+        /* all matrices work in studio range and output in full range */
+        colorspace.WhitePoint[0*4 + 3] = -itu_black_level;
+        colorspace.WhitePoint[1*4 + 3] = -itu_achromacy;
+        colorspace.WhitePoint[2*4 + 3] = -itu_achromacy;
     }
 
     memcpy(colorspace.Colorspace, ppColorspace, sizeof(colorspace.Colorspace));
 
-    if (fmt->primaries != displayFormat->primaries)
+    if (fmt->primaries != displayFormat->colorspace->primaries)
     {
         GetPrimariesTransform(colorspace.Primaries, fmt->primaries,
-                              displayFormat->primaries);
+                              displayFormat->colorspace->primaries);
     }
 
-    ShaderUpdateConstants(o, d3d_dev, quad, PS_CONST_COLORSPACE, &colorspace);
+    constantInit.pSysMem = &colorspace;
 
+    static_assert((sizeof(PS_COLOR_TRANSFORM)%16)==0,"Constant buffers require 16-byte alignment");
+    constantDesc.ByteWidth = sizeof(PS_COLOR_TRANSFORM);
+    hr = ID3D11Device_CreateBuffer(d3d_dev->d3ddevice, &constantDesc, &constantInit, &quad->pPixelShaderConstants[1]);
+    if(FAILED(hr)) {
+        msg_Err(o, "Could not create the pixel shader constant buffer. (hr=0x%lX)", hr);
+        goto error;
+    }
+    quad->PSConstantsCount = 2;
+    quad->projection = projection;
 
-    quad->picSys.formatTexture = quad->textureFormat->formatTexture;
+    /* vertex shader constant buffer */
+    if (projection == PROJECTION_MODE_EQUIRECTANGULAR
+        || projection == PROJECTION_MODE_CUBEMAP_LAYOUT_STANDARD)
+    {
+        constantDesc.ByteWidth = sizeof(VS_PROJECTION_CONST);
+        static_assert((sizeof(VS_PROJECTION_CONST)%16)==0,"Constant buffers require 16-byte alignment");
+        hr = ID3D11Device_CreateBuffer(d3d_dev->d3ddevice, &constantDesc, NULL, &quad->pVertexShaderConstants);
+        if(FAILED(hr)) {
+            msg_Err(o, "Could not create the vertex shader constant buffer. (hr=0x%lX)", hr);
+            goto error;
+        }
+    }
+
+    quad->picSys.formatTexture = quad->formatInfo->formatTexture;
     quad->picSys.context = d3d_dev->d3dcontext;
     ID3D11DeviceContext_AddRef(quad->picSys.context);
 
+    if (!AllocQuadVertices(o, d3d_dev, quad))
+        goto error;
     if (!D3D11_UpdateQuadPosition(o, d3d_dev, quad, output, orientation))
-        return VLC_EGENERIC;
+        goto error;
 
-    for (size_t i=0; i<D3D11_MAX_SHADER_VIEW; i++)
-    {
-        quad->cropViewport[i].MinDepth = 0.0f;
-        quad->cropViewport[i].MaxDepth = 1.0f;
-    }
-    quad->resourceCount = DxgiResourceCount(quad->textureFormat);
+    quad->d3dvertexShader = d3dvertexShader;
+    quad->pVertexLayout   = pVertexLayout;
+    quad->resourceCount = DxgiResourceCount(quad->formatInfo);
 
     return VLC_SUCCESS;
-}
 
-void D3D11_UpdateViewport(d3d_quad_t *quad, const RECT *rect, const d3d_format_t *display)
-{
-    LONG srcAreaWidth, srcAreaHeight;
-
-    srcAreaWidth  = RECTWidth(*rect);
-    srcAreaHeight = RECTHeight(*rect);
-
-    quad->cropViewport[0].TopLeftX = rect->left;
-    quad->cropViewport[0].TopLeftY = rect->top;
-    quad->cropViewport[0].Width    = srcAreaWidth;
-    quad->cropViewport[0].Height   = srcAreaHeight;
-
-    switch ( quad->textureFormat->formatTexture )
-    {
-    case DXGI_FORMAT_NV12:
-    case DXGI_FORMAT_P010:
-        quad->cropViewport[1].TopLeftX = rect->left / 2;
-        quad->cropViewport[1].TopLeftY = rect->top / 2;
-        quad->cropViewport[1].Width    = srcAreaWidth / 2;
-        quad->cropViewport[1].Height   = srcAreaHeight / 2;
-        break;
-    case DXGI_FORMAT_R8G8B8A8_UNORM:
-    case DXGI_FORMAT_B8G8R8A8_UNORM:
-    case DXGI_FORMAT_B8G8R8X8_UNORM:
-    case DXGI_FORMAT_B5G6R5_UNORM:
-    case DXGI_FORMAT_R10G10B10A2_UNORM:
-    case DXGI_FORMAT_R16G16B16A16_UNORM:
-    case DXGI_FORMAT_YUY2:
-    case DXGI_FORMAT_AYUV:
-        if ( display->formatTexture == DXGI_FORMAT_NV12 ||
-             display->formatTexture == DXGI_FORMAT_P010 )
-        {
-            quad->cropViewport[1].TopLeftX = rect->left / 2;
-            quad->cropViewport[1].TopLeftY = rect->top / 2;
-            quad->cropViewport[1].Width    = srcAreaWidth / 2;
-            quad->cropViewport[1].Height   = srcAreaHeight / 2;
-        }
-        break;
-    case DXGI_FORMAT_UNKNOWN:
-        switch ( quad->textureFormat->fourcc )
-        {
-        case VLC_CODEC_YUVA:
-            if ( display->formatTexture != DXGI_FORMAT_NV12 &&
-                 display->formatTexture != DXGI_FORMAT_P010 )
-            {
-                quad->cropViewport[1] = quad->cropViewport[2] =
-                quad->cropViewport[3] = quad->cropViewport[0];
-                break;
-            }
-            /* fallthrough */
-        case VLC_CODEC_I420:
-            quad->cropViewport[1].TopLeftX = quad->cropViewport[0].TopLeftX / 2;
-            quad->cropViewport[1].TopLeftY = quad->cropViewport[0].TopLeftY / 2;
-            quad->cropViewport[1].Width    = quad->cropViewport[0].Width / 2;
-            quad->cropViewport[1].Height   = quad->cropViewport[0].Height / 2;
-            quad->cropViewport[2] = quad->cropViewport[1];
-            break;
-        }
-        break;
-    default:
-        vlc_assert_unreachable();
-    }
+error:
+    D3D11_ReleaseQuad(quad);
+    return VLC_EGENERIC;
 }

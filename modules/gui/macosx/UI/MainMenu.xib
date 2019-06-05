@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<document type="com.apple.InterfaceBuilder3.Cocoa.XIB" version="3.0" toolsVersion="14490.70" targetRuntime="MacOSX.Cocoa" propertyAccessControl="none" useAutolayout="YES">
+<document type="com.apple.InterfaceBuilder3.Cocoa.XIB" version="3.0" toolsVersion="12121" systemVersion="17E139j" targetRuntime="MacOSX.Cocoa" propertyAccessControl="none" useAutolayout="YES">
     <dependencies>
-        <deployment identifier="macosx"/>
-        <plugIn identifier="com.apple.InterfaceBuilder.CocoaPlugin" version="14490.70"/>
-        <capability name="documents saved in the Xcode 8 format" minToolsVersion="8.0"/>
+        <deployment version="1070" identifier="macosx"/>
+        <development version="7000" identifier="xcode"/>
+        <plugIn identifier="com.apple.InterfaceBuilder.CocoaPlugin" version="12121"/>
     </dependencies>
     <objects>
         <customObject id="-2" userLabel="File's Owner" customClass="VLCMainMenu">
@@ -118,7 +118,6 @@
                 <outlet property="services" destination="1996" id="X3H-XI-xFK"/>
                 <outlet property="show_all" destination="150" id="XQ2-CW-0PI"/>
                 <outlet property="snapshot" destination="2249" id="6bO-HY-I3I"/>
-                <outlet property="sortPlaylist" destination="lkj-Wj-TYr" id="T45-2w-c0O"/>
                 <outlet property="stop" destination="5156" id="irh-Cr-vBT"/>
                 <outlet property="subtitle_bgcolor" destination="5581" id="moz-G5-DBl"/>
                 <outlet property="subtitle_bgcolorMenu" destination="5582" id="gPd-5S-3xK"/>
@@ -145,6 +144,10 @@
                 <outlet property="teletext_yellow" destination="5500" id="auC-nl-mJx"/>
                 <outlet property="title" destination="5148" id="HFs-7N-MNr"/>
                 <outlet property="titleMenu" destination="5159" id="Akr-s6-bqw"/>
+                <outlet property="toggleEffectsButton" destination="5537" id="Gg8-nl-gzx"/>
+                <outlet property="toggleJumpButtons" destination="5240" id="53V-UC-536"/>
+                <outlet property="togglePlaymodeButtons" destination="5242" id="9TB-F7-ttT"/>
+                <outlet property="toggleSidebar" destination="5413" id="cz7-Zr-1lC"/>
                 <outlet property="trackSynchronization" destination="4412" id="BHW-NJ-jbd"/>
                 <outlet property="videoMenu" destination="334" id="7Ri-Tc-yej"/>
                 <outlet property="videoeffects" destination="2390" id="fXe-JA-9GI"/>
@@ -366,6 +369,30 @@
                     <modifierMask key="keyEquivalentModifierMask"/>
                     <menu key="submenu" title="View" id="5238">
                         <items>
+                            <menuItem title="Show Previous &amp; Next Buttons" id="5240">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <connections>
+                                    <action selector="toggleJumpButtons:" target="-2" id="rFJ-9Z-m4G"/>
+                                </connections>
+                            </menuItem>
+                            <menuItem title="Show Shuffle &amp; Repeat Buttons" id="5242">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <connections>
+                                    <action selector="togglePlaymodeButtons:" target="-2" id="p7O-r4-WDX"/>
+                                </connections>
+                            </menuItem>
+                            <menuItem title="Show Audio Effects Button" id="5537">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <connections>
+                                    <action selector="toggleEffectsButton:" target="-2" id="QSm-2E-Nlo"/>
+                                </connections>
+                            </menuItem>
+                            <menuItem title="Show Sidebar" id="5413">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <connections>
+                                    <action selector="toggleSidebar:" target="-2" id="e7y-3l-ZUS"/>
+                                </connections>
+                            </menuItem>
                             <menuItem isSeparatorItem="YES" id="5250"/>
                             <menuItem title="Playlist Table Columns" id="5247">
                                 <modifierMask key="keyEquivalentModifierMask"/>
@@ -448,9 +475,6 @@
                                 <connections>
                                     <action selector="toggleAtoBloop:" target="-2" id="Wrv-He-P33"/>
                                 </connections>
-                            </menuItem>
-                            <menuItem title="Sort Playlist" id="lkj-Wj-TYr">
-                                <modifierMask key="keyEquivalentModifierMask"/>
                             </menuItem>
                             <menuItem isSeparatorItem="YES" id="5141"/>
                             <menuItem title="Quit after Playback" id="5140">

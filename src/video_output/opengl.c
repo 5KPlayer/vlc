@@ -28,42 +28,29 @@
 #include <vlc_common.h>
 #include <vlc_atomic.h>
 #include <vlc_opengl.h>
-#include <vlc_vout_display.h>
 #include "libvlc.h"
 #include <vlc_modules.h>
 
 struct vlc_gl_priv_t
 {
     vlc_gl_t gl;
-    vlc_atomic_rc_t rc;
+    atomic_uint ref_count;
 };
-
-static int vlc_gl_start(void *func, bool forced, va_list ap)
+#undef vlc_gl_Create
+/**
+ * Creates an OpenGL context (and its underlying surface).
+ *
+ * @note In most cases, you should vlc_gl_MakeCurrent() afterward.
+ *
+ * @param wnd window to use as OpenGL surface
+ * @param flags OpenGL context type
+ * @param name module name (or NULL for auto)
+ * @return a new context, or NULL on failure
+ */
+vlc_gl_t *vlc_gl_Create(struct vout_window_t *wnd, unsigned flags,
+                        const char *name)
 {
-    int (*activate)(vlc_gl_t *, unsigned, unsigned) = func;
-    vlc_gl_t *gl = va_arg(ap, vlc_gl_t *);
-    unsigned width = va_arg(ap, unsigned);
-    unsigned height = va_arg(ap, unsigned);
-
-    int ret = activate(gl, width, height);
-    if (ret)
-        vlc_objres_clear(VLC_OBJECT(gl));
-    (void) forced;
-    return ret;
-}
-
-static void vlc_gl_stop(void *func, va_list ap)
-{
-    void (*deactivate)(vlc_gl_t *) = func;
-    vlc_gl_t *gl = va_arg(ap, vlc_gl_t *);
-
-    deactivate(gl);
-}
-
-vlc_gl_t *vlc_gl_Create(const struct vout_display_cfg *restrict cfg,
-                        unsigned flags, const char *name)
-{
-    vout_window_t *wnd = cfg->window;
+    vlc_object_t *parent = (vlc_object_t *)wnd;
     struct vlc_gl_priv_t *glpriv;
     const char *type;
 
@@ -79,22 +66,18 @@ vlc_gl_t *vlc_gl_Create(const struct vout_display_cfg *restrict cfg,
             return NULL;
     }
 
-    glpriv = vlc_custom_create(VLC_OBJECT(wnd), sizeof (*glpriv), "gl");
+    glpriv = vlc_custom_create(parent, sizeof (*glpriv), "gl");
     if (unlikely(glpriv == NULL))
         return NULL;
 
-    vlc_gl_t *gl = &glpriv->gl;
-    gl->surface = wnd;
-    gl->module = vlc_module_load(gl, type, name, true, vlc_gl_start, gl,
-                                 cfg->display.width, cfg->display.height);
-    if (gl->module == NULL)
+    glpriv->gl.surface = wnd;
+    glpriv->gl.module = module_need(&glpriv->gl, type, name, true);
+    if (glpriv->gl.module == NULL)
     {
-        vlc_object_delete(gl);
+        vlc_object_release(&glpriv->gl);
         return NULL;
     }
-    assert(gl->makeCurrent && gl->releaseCurrent && gl->swap
-        && gl->getProcAddress);
-    vlc_atomic_rc_init(&glpriv->rc);
+    atomic_init(&glpriv->ref_count, 1);
 
     return &glpriv->gl;
 }
@@ -102,18 +85,16 @@ vlc_gl_t *vlc_gl_Create(const struct vout_display_cfg *restrict cfg,
 void vlc_gl_Hold(vlc_gl_t *gl)
 {
     struct vlc_gl_priv_t *glpriv = (struct vlc_gl_priv_t *)gl;
-    vlc_atomic_rc_inc(&glpriv->rc);
+    atomic_fetch_add(&glpriv->ref_count, 1);
 }
 
 void vlc_gl_Release(vlc_gl_t *gl)
 {
     struct vlc_gl_priv_t *glpriv = (struct vlc_gl_priv_t *)gl;
-    if (!vlc_atomic_rc_dec(&glpriv->rc))
+    if (atomic_fetch_sub(&glpriv->ref_count, 1) != 1)
         return;
-
-    vlc_module_unload(gl->module, vlc_gl_stop, gl);
-    vlc_objres_clear(VLC_OBJECT(gl));
-    vlc_object_delete(gl);
+    module_unneed(gl, gl->module);
+    vlc_object_release(gl);
 }
 
 #include <vlc_vout_window.h>
@@ -150,47 +131,25 @@ vlc_gl_t *vlc_gl_surface_Create(vlc_object_t *obj,
     sys->height = cfg->height;
     vlc_mutex_init(&sys->lock);
 
-    static const struct vout_window_callbacks cbs = {
+    vout_window_owner_t owner = {
+        .sys = sys,
         .resized = vlc_gl_surface_ResizeNotify,
     };
-    vout_window_owner_t owner = {
-        .cbs = &cbs,
-        .sys = sys,
-    };
-    char *modlist = var_InheritString(obj, "window");
 
-    vout_window_t *surface = vout_window_New(obj, modlist, &owner);
-    free(modlist);
+    vout_window_t *surface = vout_window_New(obj, "$window", cfg, &owner);
     if (surface == NULL)
         goto error;
-    if (vout_window_Enable(surface, cfg)) {
-        vout_window_Delete(surface);
-        goto error;
-    }
     if (wp != NULL)
         *wp = surface;
 
     /* TODO: support ES? */
-    struct vout_display_cfg dcfg = {
-        .window = surface,
-        .display = { .width = cfg->width, cfg->height },
-    };
-
-    vlc_mutex_lock(&sys->lock);
-    if (sys->width >= 0 && sys->height >= 0) {
-        dcfg.display.width = sys->width;
-        dcfg.display.height = sys->height;
-        sys->width = -1;
-        sys->height = -1;
-    }
-    vlc_mutex_unlock(&sys->lock);
-
-    vlc_gl_t *gl = vlc_gl_Create(&dcfg, VLC_OPENGL, NULL);
+    vlc_gl_t *gl = vlc_gl_Create(surface, VLC_OPENGL, NULL);
     if (gl == NULL) {
         vout_window_Delete(surface);
-        goto error;
+        return NULL;
     }
 
+    vlc_gl_Resize(gl, cfg->width, cfg->height);
     return gl;
 
 error:
@@ -235,7 +194,6 @@ void vlc_gl_surface_Destroy(vlc_gl_t *gl)
     vlc_gl_surface_t *sys = surface->owner.sys;
 
     vlc_gl_Release(gl);
-    vout_window_Disable(surface);
     vout_window_Delete(surface);
     vlc_mutex_destroy(&sys->lock);
     free(sys);

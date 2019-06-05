@@ -264,7 +264,7 @@
             <string>HDMI/SPDIF audio passthrough</string>
            </property>
            <property name="buddy">
-            <cstring>mmdevicePassthroughBox</cstring>
+            <cstring>mmdevicePassthrough</cstring>
            </property>
           </widget>
          </item>

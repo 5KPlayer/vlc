@@ -32,20 +32,20 @@
 #include "dxgi_fmt.h"
 
 /* owned by the vout for VLC_CODEC_D3D9_OPAQUE */
-typedef struct
+struct picture_sys_t
 {
     IDirect3DSurface9    *surface;
     /* decoder only */
     IDirectXVideoDecoder *decoder; /* keep a reference while the surface exist */
     HINSTANCE            dxva2_dll;
-} picture_sys_t;
+};
 
 typedef struct
 {
     HINSTANCE               hdll;       /* handle of the opened d3d9 dll */
     union {
-        IDirect3D9          *obj;
-        IDirect3D9Ex        *objex;
+        LPDIRECT3D9         obj;
+        LPDIRECT3D9EX       objex;
     };
     bool                    use_ex;
 } d3d9_handle_t;
@@ -55,8 +55,8 @@ typedef struct
     /* d3d9_handle_t           hd3d; TODO */
     union
     {
-        IDirect3DDevice9    *dev;
-        IDirect3DDevice9Ex  *devex;
+        LPDIRECT3DDEVICE9   dev;
+        LPDIRECT3DDEVICE9EX devex;
     };
     bool                    owner;
 
@@ -69,11 +69,7 @@ typedef struct
 
 #include "../codec/avcodec/va_surface.h"
 
-static inline picture_sys_t *ActivePictureSys(picture_t *p_pic)
-{
-    struct va_pic_context *pic_ctx = (struct va_pic_context*)p_pic->context;
-    return pic_ctx ? &pic_ctx->picsys : p_pic->p_sys;
-}
+picture_sys_t *ActivePictureSys(picture_t *p_pic);
 
 static inline void AcquirePictureSys(picture_sys_t *p_sys)
 {
@@ -94,14 +90,10 @@ static inline void ReleasePictureSys(picture_sys_t *p_sys)
 HRESULT D3D9_CreateDevice(vlc_object_t *, d3d9_handle_t *, HWND,
                           const video_format_t *, d3d9_device_t *out);
 #define D3D9_CreateDevice(a,b,c,d,e) D3D9_CreateDevice( VLC_OBJECT(a), b, c, d, e )
-HRESULT D3D9_CreateDeviceExternal(IDirect3DDevice9 *, d3d9_handle_t *, HWND,
-                                  const video_format_t *, d3d9_device_t *out);
 
 void D3D9_ReleaseDevice(d3d9_device_t *);
 int D3D9_Create(vlc_object_t *, d3d9_handle_t *);
 #define D3D9_Create(a,b) D3D9_Create( VLC_OBJECT(a), b )
-int D3D9_CreateExternal(vlc_object_t *, d3d9_handle_t *, IDirect3DDevice9 *);
-#define D3D9_CreateExternal(a,b,c) D3D9_CreateExternal( VLC_OBJECT(a), b, c )
 
 void D3D9_Destroy(d3d9_handle_t *);
 

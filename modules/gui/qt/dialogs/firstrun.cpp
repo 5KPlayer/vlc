@@ -2,6 +2,7 @@
  * firstrun.cpp : First Run dialogs
  ****************************************************************************
  * Copyright © 2009 VideoLAN
+ * $Id: 43f7108bc0cc85cd5b27e92f26553fe550d0187f $
  *
  * Authors: Jean-Baptiste Kempf <jb (at) videolan.org>
  *
@@ -38,11 +39,11 @@ FirstRun::FirstRun( QWidget *_p, intf_thread_t *_p_intf  )
 
 void FirstRun::save()
 {
-    config_PutInt( "metadata-network-access", checkbox->isChecked() );
+    config_PutInt( p_intf,  "metadata-network-access", checkbox->isChecked() );
 #ifdef UPDATE_CHECK
-    config_PutInt( "qt-updates-notif", checkbox2->isChecked() );
+    config_PutInt( p_intf,  "qt-updates-notif", checkbox2->isChecked() );
 #endif
-    config_PutInt( "qt-privacy-ask", 0 );
+    config_PutInt( p_intf,  "qt-privacy-ask", 0 );
 
     /* FIXME Should not save here. This will not work as expected if another
      * plugin overwrote items of its own. */

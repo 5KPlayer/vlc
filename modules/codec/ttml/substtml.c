@@ -30,15 +30,12 @@
 #include <vlc_stream.h>
 #include <vlc_text_style.h>
 #include <vlc_charset.h>
-#include <vlc_image.h>
 
 #include <ctype.h>
 #include <assert.h>
 
 #include "substext.h"
 #include "ttml.h"
-#include "imageupdater.h"
-#include "ttmlpes.h"
 
 //#define TTML_DEBUG
 
@@ -60,7 +57,6 @@ typedef struct
 #define TTML_DEFAULT_CELL_RESOLUTION_H 32
 #define TTML_DEFAULT_CELL_RESOLUTION_V 15
 #define TTML_LINE_TO_HEIGHT_RATIO      1.06
-
 
 typedef struct
 {
@@ -93,20 +89,14 @@ typedef struct
 
 typedef struct
 {
-    substext_updater_region_t updt;
+    subpicture_updater_sys_region_t updt;
     text_segment_t **pp_last_segment;
-    struct
-    {
-        uint8_t *p_bytes;
-        size_t   i_bytes;
-    } bgbitmap; /* SMPTE-TT */
 } ttml_region_t;
 
-typedef struct
+struct decoder_sys_t
 {
     int                     i_align;
-    struct ttml_in_pes_ctx  pes;
-} decoder_sys_t;
+};
 
 enum
 {
@@ -155,7 +145,6 @@ static ttml_style_t * ttml_style_New( )
 static void ttml_region_Delete( ttml_region_t *p_region )
 {
     SubpictureUpdaterSysRegionClean( &p_region->updt );
-    free( p_region->bgbitmap.p_bytes );
     free( p_region );
 }
 
@@ -413,7 +402,7 @@ static void FillCoord( ttml_length_t v, int i_flag, float *p_val, int *pi_flags 
 }
 
 static void FillUpdaterCoords( ttml_context_t *p_ctx, ttml_length_t h, ttml_length_t v,
-                               bool b_origin, substext_updater_region_t *p_updt )
+                               bool b_origin, subpicture_updater_sys_region_t *p_updt )
 {
     ttml_length_t base = { 100.0, TTML_UNIT_PERCENT };
     ttml_length_t x = ttml_rebase_length( p_ctx->i_cell_resolution_h, h, base );
@@ -567,63 +556,33 @@ static void FillTTMLStyle( const char *psz_attr, const char *psz_val,
     else FillTextStyle( psz_attr, psz_val, p_ttml_style->font_style );
 }
 
-static void DictionaryMerge( const vlc_dictionary_t *p_src, vlc_dictionary_t *p_dst,
-                             bool b_override )
+static void DictionaryMerge( const vlc_dictionary_t *p_src, vlc_dictionary_t *p_dst )
 {
     for( int i = 0; i < p_src->i_size; ++i )
     {
         for ( const vlc_dictionary_entry_t* p_entry = p_src->p_entries[i];
                                             p_entry != NULL; p_entry = p_entry->p_next )
         {
-            if( !strncmp( "tts:", p_entry->psz_key, 4 ) ||
-                !strncmp( "ttp:", p_entry->psz_key, 4 ) ||
-                !strcmp( "xml:space", p_entry->psz_key ) )
-            {
-                if( vlc_dictionary_has_key( p_dst, p_entry->psz_key ) )
-                {
-                    if( b_override )
-                    {
-                        vlc_dictionary_remove_value_for_key( p_dst, p_entry->psz_key, NULL, NULL );
-                        vlc_dictionary_insert( p_dst, p_entry->psz_key, p_entry->p_value );
-                    }
-                }
-                else
-                    vlc_dictionary_insert( p_dst, p_entry->psz_key, p_entry->p_value );
-            }
+            if( ( !strncmp( "tts:", p_entry->psz_key, 4 ) ||
+                  !strncmp( "ttp:", p_entry->psz_key, 4 ) ||
+                  !strcmp( "xml:space", p_entry->psz_key ) ) &&
+                !vlc_dictionary_has_key( p_dst, p_entry->psz_key ) )
+                vlc_dictionary_insert( p_dst, p_entry->psz_key, p_entry->p_value );
         }
     }
 }
 
-static void DictMergeWithStyleID( ttml_context_t *p_ctx, const char *psz_styles,
+static void DictMergeWithStyleID( ttml_context_t *p_ctx, const char *psz_id,
                                   vlc_dictionary_t *p_dst )
 {
     assert(p_ctx->p_rootnode);
-    char *psz_dup;
-    if( psz_styles && p_ctx->p_rootnode && (psz_dup = strdup( psz_styles )) )
+    if( psz_id && p_ctx->p_rootnode )
     {
-        /* Use temp dict instead of reverse token processing to
-         * resolve styles in specified order */
-        vlc_dictionary_t tempdict;
-        vlc_dictionary_init( &tempdict, 0 );
-
-        char *saveptr;
-        char *psz_id = strtok_r( psz_dup, " ", &saveptr );
-        while( psz_id )
-        {
-            /* Lookup referenced style ID */
-            const tt_node_t *p_node = FindNode( p_ctx->p_rootnode,
-                                                "style", -1, psz_id );
-            if( p_node )
-                DictionaryMerge( &p_node->attr_dict, &tempdict, true );
-
-            psz_id = strtok_r( NULL, " ", &saveptr );
-        }
-
-        if( !vlc_dictionary_is_empty( &tempdict ) )
-            DictionaryMerge( &tempdict, p_dst, false );
-
-        vlc_dictionary_clear( &tempdict, NULL, NULL );
-        free( psz_dup );
+        /* Lookup referenced style ID */
+        const tt_node_t *p_node = FindNode( p_ctx->p_rootnode,
+                                            "style", -1, psz_id );
+        if( p_node )
+            DictionaryMerge( &p_node->attr_dict, p_dst );
     }
 }
 
@@ -638,7 +597,7 @@ static void DictMergeWithRegionID( ttml_context_t *p_ctx, const char *psz_id,
         if( !p_regionnode )
             return;
 
-        DictionaryMerge( &p_regionnode->attr_dict, p_dst, false );
+        DictionaryMerge( &p_regionnode->attr_dict, p_dst );
 
         const char *psz_styleid = (const char *)
                 vlc_dictionary_value_for_key( &p_regionnode->attr_dict, "style" );
@@ -654,7 +613,7 @@ static void DictMergeWithRegionID( ttml_context_t *p_ctx, const char *psz_id,
             const tt_node_t *p_node = (const tt_node_t *) p_child;
             if( !tt_node_NameCompare( p_node->psz_node_name, "style" ) )
             {
-                DictionaryMerge( &p_node->attr_dict, p_dst, false );
+                DictionaryMerge( &p_node->attr_dict, p_dst );
             }
         }
     }
@@ -684,7 +643,7 @@ static ttml_style_t * InheritTTMLStyles( ttml_context_t *p_ctx, tt_node_t *p_nod
     /* Merge dics backwards without overwriting */
     for( ; p_node; p_node = p_node->p_parent )
     {
-        DictionaryMerge( &p_node->attr_dict, &merged, false );
+        DictionaryMerge( &p_node->attr_dict, &merged );
 
         const char *psz_styleid = (const char *)
                 vlc_dictionary_value_for_key( &p_node->attr_dict, "style" );
@@ -898,42 +857,6 @@ static void AppendTextToRegion( ttml_context_t *p_ctx, const tt_textnode_t *p_tt
     p_region->pp_last_segment = &p_segment->p_next;
 }
 
-static const char * GetSMPTEImage( ttml_context_t *p_ctx, const char *psz_id )
-{
-    if( !p_ctx->p_rootnode )
-        return NULL;
-
-    tt_node_t *p_head = FindNode( p_ctx->p_rootnode, "head", 1, NULL );
-    if( !p_head )
-        return NULL;
-
-    for( tt_basenode_t *p_child = p_head->p_child;
-                        p_child; p_child = p_child->p_next )
-    {
-        if( p_child->i_type == TT_NODE_TYPE_TEXT )
-            continue;
-
-        tt_node_t *p_node = (tt_node_t *) p_child;
-        if( tt_node_NameCompare( p_node->psz_node_name, "metadata" ) )
-            continue;
-
-        tt_node_t *p_imagenode = FindNode( p_node, "smpte:image", 1, psz_id );
-        if( !p_imagenode )
-            continue;
-
-        if( !p_imagenode->p_child || p_imagenode->p_child->i_type != TT_NODE_TYPE_TEXT )
-            return NULL; /* was found but empty or not text node */
-
-        tt_textnode_t *p_textnode = (tt_textnode_t *) p_imagenode->p_child;
-        const char *psz_text = p_textnode->psz_text;
-        while( isspace( *psz_text ) )
-            psz_text++;
-        return psz_text;
-    }
-
-    return NULL;
-}
-
 static void ConvertNodesToRegionContent( ttml_context_t *p_ctx, const tt_node_t *p_node,
                                          ttml_region_t *p_region,
                                          const ttml_style_t *p_upper_set_styles,
@@ -949,25 +872,6 @@ static void ConvertNodesToRegionContent( ttml_context_t *p_ctx, const tt_node_t 
     /* Region isn't set or is changing */
     if( psz_regionid || p_region == NULL )
         p_region = GetTTMLRegion( p_ctx, psz_regionid );
-
-    /* Check for bitmap profile defined by ST2052 / SMPTE-TT */
-    if( !tt_node_NameCompare( p_node->psz_node_name, "div" ) &&
-         vlc_dictionary_has_key( &p_node->attr_dict, "smpte:backgroundImage" ) )
-    {
-        if( !p_region->bgbitmap.p_bytes )
-        {
-            const char *psz_id = vlc_dictionary_value_for_key( &p_node->attr_dict,
-                                                               "smpte:backgroundImage" );
-            /* Seems SMPTE can't make diff between html and xml.. */
-            if( psz_id && *psz_id == '#' )
-            {
-                const char *psz_base64 = GetSMPTEImage( p_ctx, &psz_id[1] );
-                if( psz_base64 )
-                    p_region->bgbitmap.i_bytes =
-                        vlc_b64_decode_binary( &p_region->bgbitmap.p_bytes, psz_base64 );
-            }
-        }
-    }
 
     /* awkward paragraph handling */
     if( !tt_node_NameCompare( p_node->psz_node_name, "p" ) &&
@@ -1117,115 +1021,8 @@ static ttml_region_t *GenerateRegions( tt_node_t *p_rootnode, tt_time_t playback
     return p_regions;
 }
 
-static void TTMLRegionsToSpuTextRegions( decoder_t *p_dec, subpicture_t *p_spu,
-                                         ttml_region_t *p_regions )
-{
-    decoder_sys_t *p_dec_sys = p_dec->p_sys;
-    subtext_updater_sys_t *p_spu_sys = p_spu->updater.p_sys;
-    substext_updater_region_t *p_updtregion = NULL;
-
-    /* Create region update info from each ttml region */
-    for( ttml_region_t *p_region = p_regions;
-         p_region; p_region = (ttml_region_t *) p_region->updt.p_next )
-    {
-        if( p_updtregion == NULL )
-        {
-            p_updtregion = &p_spu_sys->region;
-        }
-        else
-        {
-            p_updtregion = SubpictureUpdaterSysRegionNew();
-            if( p_updtregion == NULL )
-                break;
-            SubpictureUpdaterSysRegionAdd( &p_spu_sys->region, p_updtregion );
-        }
-
-        /* broken legacy align var (can't handle center...). Will change only regions content. */
-        if( p_dec_sys->i_align & SUBPICTURE_ALIGN_MASK )
-            p_spu_sys->region.inner_align = p_dec_sys->i_align;
-
-        p_spu_sys->margin_ratio = 0.0;
-
-        /* copy and take ownership of pointeds */
-        *p_updtregion = p_region->updt;
-        p_updtregion->p_next = NULL;
-        p_region->updt.p_region_style = NULL;
-        p_region->updt.p_segments = NULL;
-    }
-}
-
-static picture_t * picture_CreateFromPNG( decoder_t *p_dec,
-                                          const uint8_t *p_data, size_t i_data )
-{
-    if( i_data < 16 )
-        return NULL;
-    video_format_t fmt_out;
-    video_format_Init( &fmt_out, VLC_CODEC_YUVA );
-    es_format_t es_in;
-    es_format_Init( &es_in, VIDEO_ES, VLC_CODEC_PNG );
-    es_in.video.i_chroma = es_in.i_codec;
-
-    block_t *p_block = block_Alloc( i_data );
-    if( !p_block )
-        return NULL;
-    memcpy( p_block->p_buffer, p_data, i_data );
-
-    picture_t *p_pic = NULL;
-    struct vlc_logger *logger = p_dec->obj.logger;
-    bool no_interact = p_dec->obj.no_interact;
-    p_dec->obj.logger = NULL;
-    p_dec->obj.no_interact = true;
-    image_handler_t *p_image = image_HandlerCreate( p_dec );
-    if( p_image )
-    {
-        p_pic = image_Read( p_image, p_block, &es_in, &fmt_out );
-        image_HandlerDelete( p_image );
-    }
-    else block_Release( p_block );
-    p_dec->obj.no_interact = no_interact;
-    p_dec->obj.logger = logger;
-    es_format_Clean( &es_in );
-    video_format_Clean( &fmt_out );
-
-    return p_pic;
-}
-
-static void TTMLRegionsToSpuBitmapRegions( decoder_t *p_dec, subpicture_t *p_spu,
-                                           ttml_region_t *p_regions )
-{
-    /* Create region update info from each ttml region */
-    for( ttml_region_t *p_region = p_regions;
-                        p_region; p_region = (ttml_region_t *) p_region->updt.p_next )
-    {
-        picture_t *p_pic = picture_CreateFromPNG( p_dec, p_region->bgbitmap.p_bytes,
-                                                         p_region->bgbitmap.i_bytes );
-        if( p_pic )
-        {
-            ttml_image_updater_region_t *r = TTML_ImageUpdaterRegionNew( p_pic );
-            if( !r )
-            {
-                picture_Release( p_pic );
-                continue;
-            }
-            /* use text updt values/flags for ease */
-            static_assert((int)UPDT_REGION_ORIGIN_X_IS_RATIO == (int)ORIGIN_X_IS_RATIO,
-                          "flag enums values differs");
-            static_assert((int)UPDT_REGION_EXTENT_Y_IS_RATIO == (int)EXTENT_Y_IS_RATIO,
-                          "flag enums values differs");
-            r->i_flags = p_region->updt.flags;
-            r->origin.x = p_region->updt.origin.x;
-            r->origin.y = p_region->updt.origin.y;
-            r->extent.x = p_region->updt.extent.x;
-            r->extent.y = p_region->updt.extent.y;
-            TTML_ImageSpuAppendRegion( p_spu->updater.p_sys, r );
-        }
-    }
-}
-
 static int ParseBlock( decoder_t *p_dec, const block_t *p_block )
 {
-    decoder_sys_t *p_sys = p_dec->p_sys;
-
     tt_time_t *p_timings_array = NULL;
     size_t   i_timings_count = 0;
 
@@ -1241,7 +1038,7 @@ static int ParseBlock( decoder_t *p_dec, const block_t *p_block )
         return VLCDEC_SUCCESS;
 
     /* We cannot display a subpicture with no date */
-    if( p_block->i_pts == VLC_TICK_INVALID )
+    if( p_block->i_pts <= VLC_TS_INVALID )
     {
         msg_Warn( p_dec, "subtitle without a date" );
         return VLCDEC_SUCCESS;
@@ -1259,53 +1056,57 @@ static int ParseBlock( decoder_t *p_dec, const block_t *p_block )
         printf("%ld ", tt_time_Convert( &p_timings_array[i] ) );
     printf("\n");
 #endif
-    vlc_tick_t i_block_start_time = p_block->i_dts - p_sys->pes.i_offset;
-
-    if(TTML_in_PES(p_dec) && i_block_start_time < p_sys->pes.i_prev_segment_start_time )
-        i_block_start_time = p_sys->pes.i_prev_segment_start_time;
 
     for( size_t i=0; i+1 < i_timings_count; i++ )
     {
         /* We Only support absolute timings (2) */
-        if( tt_time_Convert( &p_timings_array[i] ) + VLC_TICK_0 < i_block_start_time )
+        if( tt_time_Convert( &p_timings_array[i] ) + VLC_TS_0 < p_block->i_dts )
             continue;
 
-        if( !TTML_in_PES(p_dec) &&
-            tt_time_Convert( &p_timings_array[i] ) + VLC_TICK_0 > i_block_start_time + p_block->i_length )
+        if( tt_time_Convert( &p_timings_array[i] ) + VLC_TS_0 > p_block->i_dts + p_block->i_length )
             break;
 
-        if( TTML_in_PES(p_dec) && p_sys->pes.i_prev_segment_start_time < tt_time_Convert( &p_timings_array[i] ) )
-            p_sys->pes.i_prev_segment_start_time = tt_time_Convert( &p_timings_array[i] );
-
-        bool b_bitmap_regions = false;
         subpicture_t *p_spu = NULL;
         ttml_region_t *p_regions = GenerateRegions( p_rootnode, p_timings_array[i] );
-        if( p_regions )
+        if( p_regions && ( p_spu = decoder_NewSubpictureText( p_dec ) ) )
         {
-            if( p_regions->bgbitmap.i_bytes > 0 && p_regions->updt.p_segments == NULL )
-            {
-                b_bitmap_regions = true;
-                p_spu = decoder_NewTTML_ImageSpu( p_dec );
-            }
-            else
-            {
-                p_spu = decoder_NewSubpictureText( p_dec );
-            }
-        }
-
-        if( p_regions && p_spu )
-        {
-            p_spu->i_start    = p_sys->pes.i_offset +
-                                VLC_TICK_0 + tt_time_Convert( &p_timings_array[i] );
-            p_spu->i_stop     = p_sys->pes.i_offset +
-                                VLC_TICK_0 + tt_time_Convert( &p_timings_array[i+1] ) - 1;
+            p_spu->i_start    = VLC_TS_0 + tt_time_Convert( &p_timings_array[i] );
+            p_spu->i_stop     = VLC_TS_0 + tt_time_Convert( &p_timings_array[i+1] ) - 1;
             p_spu->b_ephemer  = true;
             p_spu->b_absolute = true;
 
-            if( !b_bitmap_regions ) /* TEXT regions */
-                TTMLRegionsToSpuTextRegions( p_dec, p_spu, p_regions );
-            else /* BITMAP regions */
-                TTMLRegionsToSpuBitmapRegions( p_dec, p_spu, p_regions );
+            subpicture_updater_sys_t *p_spu_sys = p_spu->updater.p_sys;
+            subpicture_updater_sys_region_t *p_updtregion = NULL;
+
+            /* Create region update info from each ttml region */
+            for( ttml_region_t *p_region = p_regions;
+                 p_region; p_region = (ttml_region_t *) p_region->updt.p_next )
+            {
+                if( p_updtregion == NULL )
+                {
+                    p_updtregion = &p_spu_sys->region;
+                }
+                else
+                {
+                    p_updtregion = SubpictureUpdaterSysRegionNew();
+                    if( p_updtregion == NULL )
+                        break;
+                    SubpictureUpdaterSysRegionAdd( &p_spu_sys->region, p_updtregion );
+                }
+
+                /* broken legacy align var (can't handle center...). Will change only regions content. */
+                if( p_dec->p_sys->i_align & SUBPICTURE_ALIGN_MASK )
+                    p_spu_sys->region.inner_align = p_dec->p_sys->i_align;
+
+                p_spu_sys->margin_ratio = 0.0;
+
+                /* copy and take ownership of pointeds */
+                *p_updtregion = p_region->updt;
+                p_updtregion->p_next = NULL;
+                p_region->updt.p_region_style = NULL;
+                p_region->updt.p_segments = NULL;
+            }
+
         }
 
         /* cleanup */
@@ -1328,6 +1129,7 @@ static int ParseBlock( decoder_t *p_dec, const block_t *p_block )
 }
 
 
+
 /****************************************************************************
  * DecodeBlock: the whole thing
  ****************************************************************************/
@@ -1348,21 +1150,6 @@ static int DecodeBlock( decoder_t *p_dec, block_t *p_block )
     return ret;
 }
 
-static int DecodePESBlock( decoder_t *p_dec, block_t *p_block )
-{
-    decoder_sys_t *p_sys = p_dec->p_sys;
-    return ParsePESEncap( p_dec, &p_sys->pes, DecodeBlock, p_block );
-}
-
-/*****************************************************************************
- * Flush state between seeks
- *****************************************************************************/
-static void Flush( decoder_t *p_dec )
-{
-    decoder_sys_t *p_sys = p_dec->p_sys;
-    ttml_in_pes_Init( &p_sys->pes );
-}
-
 /*****************************************************************************
  * tt_OpenDecoder: probe the decoder and return score
  *****************************************************************************/
@@ -1371,8 +1158,7 @@ int tt_OpenDecoder( vlc_object_t *p_this )
     decoder_t *p_dec = (decoder_t*)p_this;
     decoder_sys_t *p_sys;
 
-    if( p_dec->fmt_in.i_codec != VLC_CODEC_TTML &&
-        !TTML_in_PES(p_dec) )
+    if( p_dec->fmt_in.i_codec != VLC_CODEC_TTML )
         return VLC_EGENERIC;
 
     /* Allocate the memory needed to store the decoder's structure */
@@ -1380,13 +1166,8 @@ int tt_OpenDecoder( vlc_object_t *p_this )
     if( unlikely( p_sys == NULL ) )
         return VLC_ENOMEM;
 
-    if( !TTML_in_PES( p_dec ) )
-        p_dec->pf_decode = DecodeBlock;
-    else
-        p_dec->pf_decode = DecodePESBlock;
-    p_dec->pf_flush = Flush;
+    p_dec->pf_decode = DecodeBlock;
     p_sys->i_align = var_InheritInteger( p_dec, "ttml-align" );
-    ttml_in_pes_Init( &p_sys->pes );
 
     return VLC_SUCCESS;
 }

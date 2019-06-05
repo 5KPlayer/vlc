@@ -2,6 +2,7 @@
  * video.c: Generic lua interface functions
  *****************************************************************************
  * Copyright (C) 2007-2008 the VideoLAN team
+ * $Id: 258e0d21cddb49abe3a459ea716862a92d276fd6 $
  *
  * Authors: Antoine Cellerier <dionoea at videolan tod org>
  *
@@ -43,15 +44,23 @@
  *****************************************************************************/
 static int vlclua_fullscreen( lua_State *L )
 {
+    vout_thread_t *p_vout;
     int i_ret;
 
-    vout_thread_t *p_vout = vlclua_get_vout_internal(L);
+    input_thread_t * p_input = vlclua_get_input_internal( L );
+    if( !p_input ) return vlclua_error( L );
+
+    p_vout = input_GetVout( p_input );
     if( !p_vout )
+    {
+        vlc_object_release( p_input );
         return vlclua_error( L );
+    }
 
     i_ret = vlclua_var_toggle_or_set( L, p_vout, "fullscreen" );
 
-    vout_Release(p_vout);
+    vlc_object_release( p_vout );
+    vlc_object_release( p_input );
     return i_ret;
 }
 

@@ -2,6 +2,7 @@
  * x11_factory.hpp
  *****************************************************************************
  * Copyright (C) 2003 the VideoLAN team
+ * $Id: c8f2ce00ac30930089866be032cc8c249a623d51 $
  *
  * Authors: Cyril Deguet     <asmax@via.ecp.fr>
  *          Olivier Teulière <ipkiss@via.ecp.fr>
@@ -25,7 +26,6 @@
 #define X11_FACTORY_HPP
 
 #include <X11/Xlib.h>
-#include <X11/Xcursor/Xcursor.h>
 
 #include "../src/os_factory.hpp"
 #include "../src/generic_window.hpp"
@@ -128,7 +128,7 @@ public:
     virtual int getScreenHeight() const;
 
     /// Get Monitor Information
-    virtual void getMonitorInfo( OSWindow *pWindow,
+    virtual void getMonitorInfo( const GenericWindow &rWindow,
                                  int* x, int* y,
                                  int* width, int* height ) const;
     virtual void getMonitorInfo( int numScreen,
@@ -144,17 +144,14 @@ public:
     virtual void getMousePos( int &rXPos, int &rYPos ) const;
 
     /// Change the cursor
-    virtual void changeCursor( CursorType_t type ) const;
+    virtual void changeCursor( CursorType_t type ) const
+        { /*TODO*/ (void)type; }
 
     /// Delete a directory recursively
     virtual void rmDir( const std::string &rPath );
 
     /// Get the timer loop
     X11TimerLoop *getTimerLoop() const { return m_pTimerLoop; }
-
-    /// retain current window where mouse pointer lies
-    void setPointerWindow( Window win );
-
 
 private:
     /// X11 display
@@ -167,11 +164,6 @@ private:
     std::list<std::string> m_resourcePath;
     /// Monitor geometry
     int m_screenWidth, m_screenHeight;
-    /// cursor management variables
-    mutable std::map<CursorType_t, Cursor> mCursors;
-    void initCursors();
-    Window mPointerWindow, mVoutWindow;
-    Cursor mEmptyCursor;
 };
 
 #endif

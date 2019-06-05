@@ -2,6 +2,7 @@
  * statistic.h : vout statistic
  *****************************************************************************
  * Copyright (C) 2009 Laurent Aimar
+ * $Id: 12f880d51b989a526b32301f44b1d7d417d7c653 $
  *
  * Authors: Laurent Aimar <fenrir _AT_ videolan _DOT_ org>
  *
@@ -22,7 +23,7 @@
 
 #ifndef LIBVLC_VOUT_STATISTIC_H
 # define LIBVLC_VOUT_STATISTIC_H
-# include <stdatomic.h>
+# include <vlc_atomic.h>
 
 /* NOTE: Both statistics are atomic on their own, so one might be older than
  * the other one. Currently, only one of them is updated at a time, so this
@@ -47,21 +48,19 @@ static inline void vout_statistic_GetReset(vout_statistic_t *stat,
                                            unsigned *restrict displayed,
                                            unsigned *restrict lost)
 {
-    *displayed = atomic_exchange_explicit(&stat->displayed, 0,
-                                          memory_order_relaxed);
-    *lost = atomic_exchange_explicit(&stat->lost, 0, memory_order_relaxed);
+    *displayed = atomic_exchange(&stat->displayed, 0);
+    *lost      = atomic_exchange(&stat->lost, 0);
 }
 
 static inline void vout_statistic_AddDisplayed(vout_statistic_t *stat,
                                                int displayed)
 {
-    atomic_fetch_add_explicit(&stat->displayed, displayed,
-                              memory_order_relaxed);
+    atomic_fetch_add(&stat->displayed, displayed);
 }
 
 static inline void vout_statistic_AddLost(vout_statistic_t *stat, int lost)
 {
-    atomic_fetch_add_explicit(&stat->lost, lost, memory_order_relaxed);
+    atomic_fetch_add(&stat->lost, lost);
 }
 
 #endif

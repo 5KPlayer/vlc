@@ -278,12 +278,12 @@ vlc_module_begin ()
     set_subcategory( SUBCAT_INPUT_ACCESS )
 
     set_section( N_( "Video input" ), NULL )
-    add_loadfile(CFG_PREFIX "dev", "/dev/video0",
-                 VIDEO_DEVICE_TEXT, VIDEO_DEVICE_LONGTEXT)
+    add_loadfile( CFG_PREFIX "dev", "/dev/video0",
+                  VIDEO_DEVICE_TEXT, VIDEO_DEVICE_LONGTEXT, false )
         change_safe()
 #ifdef ZVBI_COMPILED
-    add_loadfile(CFG_PREFIX "vbidev", NULL,
-                 VBI_DEVICE_TEXT, VBI_DEVICE_LONGTEXT)
+    add_loadfile( CFG_PREFIX "vbidev", NULL,
+                  VBI_DEVICE_TEXT, VBI_DEVICE_LONGTEXT, false )
 #endif
     add_string( CFG_PREFIX "standard", "",
                 STANDARD_TEXT, STANDARD_LONGTEXT, false )
@@ -315,8 +315,8 @@ vlc_module_begin ()
     add_obsolete_bool( CFG_PREFIX "use-libv4l2" ) /* since 2.1.0 */
 
     set_section( N_( "Tuner" ), NULL )
-    add_loadfile(CFG_PREFIX "radio-dev", "/dev/radio0",
-                 RADIO_DEVICE_TEXT, RADIO_DEVICE_LONGTEXT)
+    add_loadfile( CFG_PREFIX "radio-dev", "/dev/radio0",
+                  RADIO_DEVICE_TEXT, RADIO_DEVICE_LONGTEXT, false )
         change_safe()
     add_obsolete_integer( CFG_PREFIX "tuner" ) /* since 2.1.0 */
     add_integer( CFG_PREFIX "tuner-frequency", -1, FREQUENCY_TEXT,
@@ -416,7 +416,7 @@ vlc_module_begin ()
     add_obsolete_integer( CFG_PREFIX "samplerate" )
 
     add_shortcut( "v4l", "v4l2" )
-    set_capability( "access", 2 )
+    set_capability( "access_demux", 0 )
     set_callbacks( DemuxOpen, DemuxClose )
 
     add_submodule ()
@@ -429,7 +429,7 @@ vlc_module_begin ()
     add_submodule ()
     add_shortcut ("radio" /*, "fm", "am" */)
     set_description (N_("Video4Linux radio tuner"))
-    set_capability ("access", 1)
+    set_capability ("access_demux", 0)
     set_callbacks (RadioOpen, RadioClose)
 
 vlc_module_end ()

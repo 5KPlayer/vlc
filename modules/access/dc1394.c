@@ -50,11 +50,11 @@ static void Close( vlc_object_t * );
 vlc_module_begin()
     set_shortname( N_("DC1394") )
     set_description( N_("IIDC Digital Camera (FireWire) input") )
-    set_capability( "access", 0 )
+    set_capability( "access_demux", 10 )
     set_callbacks( Open, Close )
 vlc_module_end()
 
-typedef struct
+struct demux_sys_t
 {
     /* camera info */
     dc1394_t            *p_dccontext;
@@ -77,7 +77,7 @@ typedef struct
     unsigned int        focus;
     es_out_id_t         *p_es_video;
     dc1394video_frame_t *frame;
-} demux_sys_t;
+};
 
 /*****************************************************************************
  * Local prototypes
@@ -166,12 +166,15 @@ static int Open( vlc_object_t *p_this )
     es_format_t   fmt;
     dc1394error_t res;
 
-    if (p_demux->out == NULL)
+    if( strncmp(p_demux->psz_access, "dc1394", 6) != 0 )
         return VLC_EGENERIC;
 
     /* Set up p_demux */
     p_demux->pf_demux = Demux;
     p_demux->pf_control = Control;
+    p_demux->info.i_update = 0;
+    p_demux->info.i_title = 0;
+    p_demux->info.i_seekpoint = 0;
 
     p_demux->p_sys = p_sys = vlc_obj_calloc( p_this, 1, sizeof( demux_sys_t ) );
     if( !p_sys )
@@ -452,7 +455,7 @@ static block_t *GrabVideo( demux_t *p_demux )
     memcpy( p_block->p_buffer, (const char *)p_sys->frame->image,
             p_sys->width * p_sys->height * 2 );
 
-    p_block->i_pts = p_block->i_dts = vlc_tick_now();
+    p_block->i_pts = p_block->i_dts = mdate();
     dc1394_capture_enqueue( p_sys->camera, p_sys->frame );
     return p_block;
 }
@@ -470,7 +473,7 @@ static int Demux( demux_t *p_demux )
         /* Sleep so we do not consume all the cpu, 10ms seems
          * like a good value (100fps)
          */
-        vlc_tick_sleep( VLC_HARD_MIN_SLEEP );
+        msleep( 10000 );
         return 1;
     }
 
@@ -498,11 +501,11 @@ static int Control( demux_t *p_demux, int i_query, va_list args )
             return VLC_SUCCESS;
 
         case DEMUX_GET_PTS_DELAY:
-            *va_arg( args, vlc_tick_t * ) = DEFAULT_PTS_DELAY;
+            *va_arg( args, int64_t * ) = (int64_t)DEFAULT_PTS_DELAY;
             return VLC_SUCCESS;
 
         case DEMUX_GET_TIME:
-            *va_arg( args, vlc_tick_t * ) = vlc_tick_now();
+            *va_arg( args, int64_t * ) = mdate();
             return VLC_SUCCESS;
 
         /* TODO implement others */

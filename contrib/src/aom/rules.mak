@@ -9,7 +9,7 @@ PKGS_FOUND += aom
 endif
 
 $(TARBALLS)/aom-$(AOM_VERSION).tar.gz:
-	$(call download_pkg,$(AOM_GITURL),aom)
+	$(call download,$(AOM_GITURL))
 
 .sum-aom: aom-$(AOM_VERSION).tar.gz
 	$(warning $@ not implemented)
@@ -18,8 +18,11 @@ $(TARBALLS)/aom-$(AOM_VERSION).tar.gz:
 aom: aom-$(AOM_VERSION).tar.gz .sum-aom
 	rm -Rf $@-$(AOM_VERSION) $@
 	mkdir -p $@-$(AOM_VERSION)
-	tar xvzfo "$<" -C $@-$(AOM_VERSION)
+	tar xvzf "$<" -C $@-$(AOM_VERSION)
 	$(APPLY) $(SRC)/aom/aom-target-cpu.patch
+ifdef HAVE_WINSTORE
+	$(APPLY) $(SRC)/aom/aom-pthreads-win32.patch
+endif
 ifdef HAVE_ANDROID
 	$(APPLY) $(SRC)/aom/aom-android-pthreads.patch
 	$(APPLY) $(SRC)/aom/aom-android-cpufeatures.patch
@@ -30,9 +33,6 @@ ifdef HAVE_ANDROID
 endif
 
 DEPS_aom =
-ifdef HAVE_WIN32
-DEPS_aom += pthreads $(DEPS_pthreads)
-endif
 
 AOM_LDFLAGS := $(LDFLAGS)
 
@@ -46,11 +46,8 @@ AOM_CONF := \
 	-DENABLE_TESTS=OFF \
 	-DCONFIG_INSTALL_BINS=0 \
 	-DCONFIG_INSTALL_DOCS=0 \
-	-DCONFIG_DEPENDENCY_TRACKING=0
-
-ifndef BUILD_ENCODERS
-AOM_CONF += -DCONFIG_AV1_ENCODER=0
-endif
+	-DCONFIG_DEPENDENCY_TRACKING=0 \
+	-DCONFIG_AV1_ENCODER=0
 
 ifndef HAVE_WIN32
 AOM_CONF += -DCONFIG_PIC=1
@@ -93,7 +90,7 @@ endif
 .aom: aom toolchain.cmake
 	cd $< && mkdir -p aom_build
 	cd $</aom_build && LDFLAGS="$(AOM_LDFLAGS)" $(HOSTVARS) $(CMAKE) ../ $(AOM_CONF)
-	cd $< && $(MAKE) -C aom_build
-	$(call pkg_static,"aom_build/aom.pc")
+	cd $</aom_build && $(MAKE)
+	cd $</aom_build && ../../../../contrib/src/pkg-static.sh aom.pc
 	cd $</aom_build && $(MAKE) install
 	touch $@

@@ -44,11 +44,11 @@
  * filter is destroyed before the other ones. */
 static struct {
     vlc_mutex_t lock;
-    vlc_decoder_device *dec_device;
+    struct vlc_vaapi_instance *inst;
     filter_t *owner;
 } holder = { VLC_STATIC_MUTEX, NULL, NULL };
 
-vlc_decoder_device *
+struct vlc_vaapi_instance *
 vlc_vaapi_FilterHoldInstance(filter_t *filter, VADisplay *dpy)
 {
 
@@ -62,36 +62,35 @@ vlc_vaapi_FilterHoldInstance(filter_t *filter, VADisplay *dpy)
         return NULL;
     }
 
-    vlc_decoder_device *dec_device = NULL;
+    struct vlc_vaapi_instance *va_inst = NULL;
 
     vlc_mutex_lock(&holder.lock);
-    if (holder.dec_device != NULL)
+    if (holder.inst != NULL)
     {
-        dec_device = vlc_decoder_device_Hold(holder.dec_device);
-        *dpy = dec_device->opaque;
+        va_inst = holder.inst;
+        *dpy = vlc_vaapi_HoldInstance(holder.inst);
     }
     else
     {
         holder.owner = filter;
-        holder.dec_device = dec_device = pic->p_sys ?
+        holder.inst = va_inst = pic->p_sys ?
             vlc_vaapi_PicSysHoldInstance(pic->p_sys, dpy) : NULL;
-        assert(dec_device == NULL || dec_device->type == VLC_DECODER_DEVICE_VAAPI);
     }
     vlc_mutex_unlock(&holder.lock);
     picture_Release(pic);
 
-    return dec_device;
+    return va_inst;
 }
 
 void
 vlc_vaapi_FilterReleaseInstance(filter_t *filter,
-                                vlc_decoder_device *dec_device)
+                                struct vlc_vaapi_instance *va_inst)
 {
-    vlc_decoder_device_Release(dec_device);
+    vlc_vaapi_ReleaseInstance(va_inst);
     vlc_mutex_lock(&holder.lock);
     if (filter == holder.owner)
     {
-        holder.dec_device = NULL;
+        holder.inst = NULL;
         holder.owner = NULL;
     }
     vlc_mutex_unlock(&holder.lock);
@@ -102,7 +101,7 @@ vlc_vaapi_FilterReleaseInstance(filter_t *filter,
 
 struct  va_filter_desc
 {
-    vlc_decoder_device *dec_device;
+    struct vlc_vaapi_instance *inst;
     VADisplay           dpy;
     VAConfigID          conf;
     VAContextID         ctx;
@@ -110,13 +109,13 @@ struct  va_filter_desc
     VASurfaceID *       surface_ids;
 };
 
-typedef struct
+struct  filter_sys_t
 {
     struct va_filter_desc       va;
     picture_pool_t *            dest_pics;
     bool                        b_pipeline_fast;
     void *                      p_data;
-} filter_sys_t;
+};
 
 #define DEST_PICS_POOL_SZ       3
 
@@ -254,7 +253,7 @@ struct  deint_data
 
     struct
     {
-        vlc_tick_t date;
+        mtime_t date;
         int     i_nb_fields;
     } meta[METADATA_SIZE];
 
@@ -274,7 +273,6 @@ Filter(filter_t * filter, picture_t * src,
                                          VAProcPipelineParameterBuffer *))
 {
     filter_sys_t *const filter_sys = filter->p_sys;
-    VABufferID          pipeline_buf = VA_INVALID_ID;
     picture_t *const    dest = picture_pool_Wait(filter_sys->dest_pics);
     if (!dest)
         return NULL;
@@ -303,6 +301,7 @@ Filter(filter_t * filter, picture_t * src,
     if (pf_prepare_render_surface)
         pf_prepare_render_surface(filter_sys->p_data);
 
+    VABufferID                          pipeline_buf = VA_INVALID_ID;
     VAProcPipelineParameterBuffer *     pipeline_params;
 
     pipeline_buf =
@@ -375,13 +374,13 @@ Open(filter_t * filter,
     filter_sys->va.conf = VA_INVALID_ID;
     filter_sys->va.ctx = VA_INVALID_ID;
     filter_sys->va.buf = VA_INVALID_ID;
-    filter_sys->va.dec_device =
+    filter_sys->va.inst =
         vlc_vaapi_FilterHoldInstance(filter, &filter_sys->va.dpy);
-    if (!filter_sys->va.dec_device)
+    if (!filter_sys->va.inst)
         goto error;
 
     filter_sys->dest_pics =
-        vlc_vaapi_PoolNew(VLC_OBJECT(filter), filter_sys->va.dec_device,
+        vlc_vaapi_PoolNew(VLC_OBJECT(filter), filter_sys->va.inst,
                           filter_sys->va.dpy, DEST_PICS_POOL_SZ,
                           &filter_sys->va.surface_ids, &filter->fmt_out.video,
                           true);
@@ -454,10 +453,8 @@ error:
     if (filter_sys->va.conf != VA_INVALID_ID)
         vlc_vaapi_DestroyConfig(VLC_OBJECT(filter),
                                 filter_sys->va.dpy, filter_sys->va.conf);
-    if (filter_sys->dest_pics)
-        picture_pool_Release(filter_sys->dest_pics);
-    if (filter_sys->va.dec_device)
-        vlc_vaapi_FilterReleaseInstance(filter, filter_sys->va.dec_device);
+    if (filter_sys->va.inst)
+        vlc_vaapi_FilterReleaseInstance(filter, filter_sys->va.inst);
     free(filter_sys);
     return VLC_EGENERIC;
 }
@@ -470,7 +467,7 @@ Close(filter_t *filter, filter_sys_t * filter_sys)
     vlc_vaapi_DestroyBuffer(obj, filter_sys->va.dpy, filter_sys->va.buf);
     vlc_vaapi_DestroyContext(obj, filter_sys->va.dpy, filter_sys->va.ctx);
     vlc_vaapi_DestroyConfig(obj, filter_sys->va.dpy, filter_sys->va.conf);
-    vlc_vaapi_FilterReleaseInstance(filter, filter_sys->va.dec_device);
+    vlc_vaapi_FilterReleaseInstance(filter, filter_sys->va.inst);
     free(filter_sys);
 }
 
@@ -915,10 +912,10 @@ DeinterlaceX2(filter_t * filter, picture_t * src)
     if (p_deint_data->history.num_pics < p_deint_data->history.sz)
         return NULL;
 
-    vlc_tick_t i_field_dur = 0;
+    mtime_t i_field_dur = 0;
     unsigned int i = 0;
     for ( ; i < METADATA_SIZE-1; i ++)
-        if (p_deint_data->meta[i].date != VLC_TICK_INVALID)
+        if (p_deint_data->meta[i].date > VLC_TS_INVALID)
             break;
     if (i < METADATA_SIZE-1) {
         unsigned int i_fields_total = 0;
@@ -927,7 +924,7 @@ DeinterlaceX2(filter_t * filter, picture_t * src)
         i_field_dur = (src->date - p_deint_data->meta[i].date) / i_fields_total;
     }
     else if (fmt->i_frame_rate_base)
-        i_field_dur = vlc_tick_from_samples(fmt->i_frame_rate_base, fmt->i_frame_rate);
+        i_field_dur = CLOCK_FREQ * fmt->i_frame_rate_base / fmt->i_frame_rate;
 
     picture_t *dest[2] = {NULL, NULL};
     for (i = 0; i < 2; ++i)
@@ -946,10 +943,10 @@ DeinterlaceX2(filter_t * filter, picture_t * src)
 
     dest[0]->p_next = dest[1];
     dest[0]->date = cur->date;
-    if (dest[0]->date != VLC_TICK_INVALID)
+    if (dest[0]->date > VLC_TS_INVALID)
         dest[1]->date = dest[0]->date + i_field_dur;
     else
-        dest[1]->date = VLC_TICK_INVALID;
+        dest[1]->date = VLC_TS_INVALID;
 
     return dest[0];
 
@@ -964,8 +961,7 @@ error:
 static void
 Deinterlace_Flush(filter_t *filter)
 {
-    filter_sys_t *p_sys = filter->p_sys;
-    struct deint_data *const p_deint_data = p_sys->p_data;
+    struct deint_data *const    p_deint_data = filter->p_sys->p_data;
 
     while (p_deint_data->history.num_pics)
     {
@@ -976,20 +972,20 @@ Deinterlace_Flush(filter_t *filter)
 
     for (unsigned int i = 0; i < METADATA_SIZE; ++i)
     {
-        p_deint_data->meta[i].date = VLC_TICK_INVALID;
+        p_deint_data->meta[i].date = VLC_TS_INVALID;
         p_deint_data->meta[i].i_nb_fields = 2;
     }
 }
 
 static inline bool
 OpenDeinterlace_IsValidType(filter_t * filter,
-                            VAProcFilterCapDeinterlacing const caps[],
+                            VAProcDeinterlacingType const caps[],
                             unsigned int num_caps,
                             struct deint_mode const * deint_mode)
 {
     (void) filter;
     for (unsigned int j = 0; j < num_caps; ++j)
-        if (caps[j].type == deint_mode->type)
+        if (caps[j] == deint_mode->type)
             return true;
     return false;
 }
@@ -997,7 +993,7 @@ OpenDeinterlace_IsValidType(filter_t * filter,
 static inline int
 OpenDeinterlace_GetMode(filter_t * filter, char const * deint_mode,
                         struct deint_mode * p_deint_mode,
-                        VAProcFilterCapDeinterlacing const caps[],
+                        VAProcDeinterlacingType const caps[],
                         unsigned int num_caps)
 {
     bool fallback = false;
@@ -1050,8 +1046,7 @@ OpenDeinterlace_InitFilterParams(filter_t * filter, void * p_data,
 {
     struct deint_data *const    p_deint_data = p_data;
     filter_sys_t *const         filter_sys = filter->p_sys;
-    VAProcFilterCapDeinterlacing
-                                caps[VAProcDeinterlacingCount];
+    VAProcDeinterlacingType     caps[VAProcDeinterlacingCount];
     unsigned int                num_caps = VAProcDeinterlacingCount;
 
     if (vlc_vaapi_QueryVideoProcFilterCaps(VLC_OBJECT(filter),
@@ -1147,7 +1142,7 @@ OpenDeinterlace(vlc_object_t * obj)
 
     for (unsigned int i = 0; i < METADATA_SIZE; ++i)
     {
-        p_data->meta[i].date = VLC_TICK_INVALID;
+        p_data->meta[i].date = VLC_TS_INVALID;
         p_data->meta[i].i_nb_fields = 2;
     }
 

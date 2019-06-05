@@ -2,6 +2,7 @@
  * qtl.c: QuickTime Media Link Importer
  *****************************************************************************
  * Copyright (C) 2006 VLC authors and VideoLAN
+ * $Id: d24e8b9ea5de6a2d260d68212a9146cad70e189c $
  *
  * Authors: Antoine Cellerier <dionoea -@t- videolan -Dot- org>
  *
@@ -116,7 +117,7 @@ static int ReadDir( stream_t *p_demux, input_item_node_t *p_subitems )
     char *psz_mimetype = NULL;
     int i_volume = 100;
 
-    p_xml_reader = xml_ReaderCreate( p_demux, p_demux->s );
+    p_xml_reader = xml_ReaderCreate( p_demux, p_demux->p_source );
     if( !p_xml_reader )
         goto error;
 

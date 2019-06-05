@@ -2,6 +2,7 @@
  * vlm.c: Generic lua VLM wrapper
  *****************************************************************************
  * Copyright (C) 2007-2008 the VideoLAN team
+ * $Id: 7b2b7083062516e0406b2fa4a88e44eb1f1e98c7 $
  *
  * Authors: Antoine Cellerier <dionoea at videolan tod org>
  *
@@ -52,7 +53,7 @@ static const luaL_Reg vlclua_vlm_reg[] = {
 static int vlclua_vlm_new( lua_State *L )
 {
     vlc_object_t *p_this = vlclua_get_this( L );
-    vlm_t *p_vlm = vlm_New( vlc_object_instance(p_this), NULL );
+    vlm_t *p_vlm = vlm_New( p_this );
     if( !p_vlm )
         return luaL_error( L, "Cannot start VLM." );
 

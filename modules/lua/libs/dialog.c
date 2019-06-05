@@ -2,6 +2,7 @@
  * dialog.c: Functions to create interface dialogs from Lua extensions
  *****************************************************************************
  * Copyright (C) 2009-2010 VideoLAN and authors
+ * $Id: 488b032226f6491b62ccbd12f75760eea82d0bcd $
  *
  * Authors: Jean-Philippe André < jpeg # videolan.org >
  *
@@ -267,7 +268,7 @@ static int vlclua_dialog_delete( lua_State *L )
 
     /* Destroy widgets */
     extension_widget_t *p_widget;
-    ARRAY_FOREACH( p_widget, p_dlg->widgets )
+    FOREACH_ARRAY( p_widget, p_dlg->widgets )
     {
         if( !p_widget )
             continue;
@@ -283,6 +284,7 @@ static int vlclua_dialog_delete( lua_State *L )
         }
         free( p_widget );
     }
+    FOREACH_END()
 
     ARRAY_RESET( p_dlg->widgets );
 
@@ -380,7 +382,7 @@ static int lua_GetDialogUpdate( lua_State *L )
     /* Read entry in the Lua registry */
     lua_pushlightuserdata( L, (void*) &key_update );
     lua_gettable( L, LUA_REGISTRYINDEX );
-    return luaL_checkinteger( L, -1 );
+    return luaL_checkint( L, -1 );
 }
 
 /** Manually update a dialog
@@ -571,22 +573,22 @@ static int vlclua_create_widget_inner( lua_State *L, int i_args,
 
     /* Set common arguments: col, row, hspan, vspan, width, height */
     if( lua_isnumber( L, arg ) )
-        p_widget->i_column = luaL_checkinteger( L, arg );
+        p_widget->i_column = luaL_checkint( L, arg );
     else goto end_of_args;
     if( lua_isnumber( L, ++arg ) )
-        p_widget->i_row = luaL_checkinteger( L, arg );
+        p_widget->i_row = luaL_checkint( L, arg );
     else goto end_of_args;
     if( lua_isnumber( L, ++arg ) )
-        p_widget->i_horiz_span = luaL_checkinteger( L, arg );
+        p_widget->i_horiz_span = luaL_checkint( L, arg );
     else goto end_of_args;
     if( lua_isnumber( L, ++arg ) )
-        p_widget->i_vert_span = luaL_checkinteger( L, arg );
+        p_widget->i_vert_span = luaL_checkint( L, arg );
     else goto end_of_args;
     if( lua_isnumber( L, ++arg ) )
-        p_widget->i_width = luaL_checkinteger( L, arg );
+        p_widget->i_width = luaL_checkint( L, arg );
     else goto end_of_args;
     if( lua_isnumber( L, ++arg ) )
-        p_widget->i_height = luaL_checkinteger( L, arg );
+        p_widget->i_height = luaL_checkint( L, arg );
     else goto end_of_args;
 
 end_of_args:
@@ -1056,7 +1058,7 @@ static int DeleteWidget( extension_dialog_t *p_dialog,
     int pos = -1;
     bool found = false;
     extension_widget_t *p_iter;
-    ARRAY_FOREACH( p_iter, p_dialog->widgets )
+    FOREACH_ARRAY( p_iter, p_dialog->widgets )
     {
         pos++;
         if( p_iter == p_widget )
@@ -1065,6 +1067,7 @@ static int DeleteWidget( extension_dialog_t *p_dialog,
             break;
         }
     }
+    FOREACH_END()
 
     if( !found )
         return VLC_EGENERIC;

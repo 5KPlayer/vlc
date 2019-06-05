@@ -2,6 +2,7 @@
  * x11_timer.cpp
  *****************************************************************************
  * Copyright (C) 2003 the VideoLAN team
+ * $Id: 87280baab93097f98d2bde421bbe9560e324ad4b $
  *
  * Authors: Cyril Deguet     <asmax@via.ecp.fr>
  *          Olivier Teulière <ipkiss@via.ecp.fr>
@@ -48,9 +49,9 @@ X11Timer::~X11Timer()
 
 void X11Timer::start( int delay, bool oneShot )
 {
-    m_interval = 1000LL * (vlc_tick_t)delay;
+    m_interval = 1000LL * (mtime_t)delay;
     m_oneShot = oneShot;
-    m_nextDate = vlc_tick_now() + m_interval;
+    m_nextDate = mdate() + m_interval;
     m_pTimerLoop->addTimer( *this );
 }
 
@@ -61,7 +62,7 @@ void X11Timer::stop()
 }
 
 
-vlc_tick_t X11Timer::getNextDate() const
+mtime_t X11Timer::getNextDate() const
 {
     return m_nextDate;
 }
@@ -102,8 +103,8 @@ void X11TimerLoop::removeTimer( X11Timer &rTimer )
 
 void X11TimerLoop::waitNextTimer()
 {
-    vlc_tick_t curDate = vlc_tick_now();
-    vlc_tick_t nextDate = INT64_MAX;
+    mtime_t curDate = mdate();
+    mtime_t nextDate = LAST_MDATE;
 
     X11Timer *nextTimer = NULL;
 
@@ -111,7 +112,7 @@ void X11TimerLoop::waitNextTimer()
     std::list<X11Timer*>::const_iterator timer;
     for( timer = m_timers.begin(); timer != m_timers.end(); ++timer )
     {
-        vlc_tick_t timerDate = (*timer)->getNextDate();
+        mtime_t timerDate = (*timer)->getNextDate();
         if( timerDate < nextDate )
         {
             nextTimer = *timer;

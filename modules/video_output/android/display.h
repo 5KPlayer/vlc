@@ -36,7 +36,7 @@
 #include <vlc_vout_display.h>
 #include <android/native_window.h>
 
-typedef struct
+struct picture_sys_t
 {
     union {
         struct {
@@ -50,7 +50,7 @@ typedef struct
             void (*pf_release)(decoder_t *p_dec, unsigned int i_index,
                                bool b_render);
             void (*pf_release_ts)(decoder_t *p_dec, unsigned int i_index,
-                                  vlc_tick_t i_ts);
+                                  mtime_t i_ts);
         } hw;
         struct {
             vout_display_sys_t *p_vd_sys;
@@ -59,7 +59,7 @@ typedef struct
         } sw;
     };
     bool b_locked;
-} picture_sys_t;
+};
 
 static inline void
 AndroidOpaquePicture_DetachDecoder(picture_sys_t *p_picsys)
@@ -101,6 +101,7 @@ static inline void AndroidOpaquePicture_DetachVout(picture_t *p_pic)
     }
     else
         vlc_mutex_unlock(&p_picsys->hw.lock);
+    free(p_pic);
 }
 
 static inline void
@@ -122,7 +123,7 @@ AndroidOpaquePicture_Release(picture_sys_t *p_picsys, bool b_render)
 }
 
 static inline void
-AndroidOpaquePicture_ReleaseAtTime(picture_sys_t *p_picsys, vlc_tick_t i_ts)
+AndroidOpaquePicture_ReleaseAtTime(picture_sys_t *p_picsys, mtime_t i_ts)
 {
     if (!p_picsys->b_locked)
         return;

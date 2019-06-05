@@ -53,9 +53,6 @@ struct test_es_out_t
 {
     struct es_out_t out;
     struct es_out_id_t *ids;
-#ifdef HAVE_DECODERS
-    vlc_object_t *parent;
-#endif
 };
 
 struct es_out_id_t
@@ -63,7 +60,6 @@ struct es_out_id_t
     struct es_out_id_t *next;
 #ifdef HAVE_DECODERS
     decoder_t *decoder;
-    es_format_t fmt;
 #endif
 };
 
@@ -81,18 +77,17 @@ static es_out_id_t *EsOutAdd(es_out_t *out, const es_format_t *fmt)
     id->next = ctx->ids;
     ctx->ids = id;
 #ifdef HAVE_DECODERS
-    es_format_Copy(&id->fmt, fmt);
-    id->decoder = test_decoder_create(ctx->parent, &id->fmt);
-    if (id->decoder == NULL)
-        es_format_Clean(&id->fmt);
+    id->decoder = test_decoder_create((void *)out->p_sys, fmt);
 #endif
 
     debug("[%p] Added   ES\n", (void *)id);
     return id;
 }
 
-static void EsOutCheckId(struct test_es_out_t *ctx, es_out_id_t *id)
+static void EsOutCheckId(es_out_t *out, es_out_id_t *id)
 {
+    struct test_es_out_t *ctx = (struct test_es_out_t *) out;
+
     for (es_out_id_t *ids = ctx->ids; ids != NULL; ids = ids->next)
         if (ids == id)
             return;
@@ -102,10 +97,8 @@ static void EsOutCheckId(struct test_es_out_t *ctx, es_out_id_t *id)
 
 static int EsOutSend(es_out_t *out, es_out_id_t *id, block_t *block)
 {
-    struct test_es_out_t *ctx = (struct test_es_out_t *) out;
-
     //debug("[%p] Sent    ES: %zu\n", (void *)idd, block->i_buffer);
-    EsOutCheckId(ctx, id);
+    EsOutCheckId(out, id);
 #ifdef HAVE_DECODERS
     if (id->decoder)
         test_decoder_process(id->decoder, block);
@@ -123,7 +116,6 @@ static void IdDelete(es_out_id_t *id)
         /* Drain */
         test_decoder_process(id->decoder, NULL);
         test_decoder_destroy(id->decoder);
-        es_format_Clean(&id->fmt);
     }
 #endif
     free(id);
@@ -148,32 +140,23 @@ static void EsOutDelete(es_out_t *out, es_out_id_t *id)
 
 static int EsOutControl(es_out_t *out, int query, va_list args)
 {
-    struct test_es_out_t *ctx = (struct test_es_out_t *) out;
-
     switch (query)
     {
         case ES_OUT_SET_ES:
             break;
         case ES_OUT_RESTART_ES:
-        {
-#ifdef HAVE_DECODERS
-            es_out_id_t* id = va_arg(args, es_out_id_t*);
-            EsOutCheckId(ctx, id);
-            test_decoder_destroy(id->decoder);
-            test_decoder_create(ctx->parent, &id->fmt);
-#endif
-            break;
-        }
+            abort();
         case ES_OUT_SET_ES_DEFAULT:
         case ES_OUT_SET_ES_STATE:
             break;
         case ES_OUT_GET_ES_STATE:
-            EsOutCheckId(ctx, va_arg(args, es_out_id_t *));
+            EsOutCheckId(out, va_arg(args, es_out_id_t *));
             *va_arg(args, bool *) = true;
             break;
         case ES_OUT_SET_ES_CAT_POLICY:
             break;
         case ES_OUT_SET_GROUP:
+            abort();
         case ES_OUT_SET_PCR:
         case ES_OUT_SET_GROUP_PCR:
         case ES_OUT_RESET_PCR:
@@ -211,15 +194,6 @@ static void EsOutDestroy(es_out_t *out)
     free(ctx);
 }
 
-static const struct es_out_callbacks es_out_cbs =
-{
-    .add = EsOutAdd,
-    .send = EsOutSend,
-    .del = EsOutDelete,
-    .control = EsOutControl,
-    .destroy = EsOutDestroy,
-};
-
 static es_out_t *test_es_out_create(vlc_object_t *parent)
 {
     struct test_es_out_t *ctx = malloc(sizeof (*ctx));
@@ -232,19 +206,24 @@ static es_out_t *test_es_out_create(vlc_object_t *parent)
     ctx->ids = NULL;
 
     es_out_t *out = &ctx->out;
-    out->cbs = &es_out_cbs;
-#ifdef HAVE_DECODERS
-    ctx->parent = parent;
-#endif
+    out->pf_add = EsOutAdd;
+    out->pf_send = EsOutSend;
+    out->pf_del = EsOutDelete;
+    out->pf_control = EsOutControl;
+    out->pf_destroy = EsOutDestroy;
+    out->p_sys = (void *)parent;
+
     return out;
 }
 
 static unsigned demux_test_and_clear_flags(demux_t *demux, unsigned flags)
 {
     unsigned update;
-    if (demux_Control(demux, DEMUX_TEST_AND_CLEAR_FLAGS, &update))
-        return 0;
-    return update;
+    if (demux_Control(demux, DEMUX_TEST_AND_CLEAR_FLAGS, &update) == VLC_SUCCESS)
+        return update;
+    unsigned ret = demux->info.i_update & flags;
+    demux->info.i_update &= ~flags;
+    return ret;
 }
 
 static void demux_get_title_list(demux_t *demux)
@@ -290,7 +269,7 @@ static int demux_process_stream(const struct vlc_run_args *args, stream_t *s)
     if (out == NULL)
         return -1;
 
-    demux_t *demux = demux_New(VLC_OBJECT(s), name, s, out);
+    demux_t *demux = demux_New(VLC_OBJECT(s), name, "", s, out);
     if (demux == NULL)
     {
         es_out_Delete(out);
@@ -314,8 +293,8 @@ static int demux_process_stream(const struct vlc_run_args *args, stream_t *s)
 
             int seekpoint = 0;
             double position = 0.0;
-            vlc_tick_t time = 0;
-            vlc_tick_t length = 0;
+            mtime_t time = 0;
+            mtime_t length = 0;
 
             /* Call controls for increased code coverage */
             demux_Control(demux, DEMUX_GET_SEEKPOINT, &seekpoint);
@@ -329,7 +308,7 @@ static int demux_process_stream(const struct vlc_run_args *args, stream_t *s)
     demux_Delete(demux);
     es_out_Delete(out);
 
-    debug("Completed with %" PRIuMAX " iteration(s).\n", i);
+    debug("Completed with %ju iteration(s).\n", i);
 
     return val == VLC_DEMUXER_EOF ? 0 : -1;
 }
@@ -363,18 +342,6 @@ int vlc_demux_process_path(const struct vlc_run_args *args, const char *path)
     return ret;
 }
 
-int libvlc_demux_process_memory(libvlc_instance_t *vlc,
-                                const struct vlc_run_args *args,
-                                const unsigned char *buf, size_t length)
-{
-    stream_t *s = vlc_stream_MemoryNew(VLC_OBJECT(vlc->p_libvlc_int),
-                                       (void *)buf, length, true);
-    if (s == NULL)
-        fprintf(stderr, "Error: cannot create input stream\n");
-
-    return demux_process_stream(args, s);
-}
-
 int vlc_demux_process_memory(const struct vlc_run_args *args,
                              const unsigned char *buf, size_t length)
 {
@@ -382,7 +349,12 @@ int vlc_demux_process_memory(const struct vlc_run_args *args,
     if (vlc == NULL)
         return -1;
 
-    int ret = libvlc_demux_process_memory(vlc, args, buf, length);
+    stream_t *s = vlc_stream_MemoryNew(VLC_OBJECT(vlc->p_libvlc_int),
+                                       (void *)buf, length, true);
+    if (s == NULL)
+        fprintf(stderr, "Error: cannot create input stream\n");
+
+    int ret = demux_process_stream(args, s);
     libvlc_release(vlc);
     return ret;
 }
@@ -395,86 +367,82 @@ extern vlc_plugin_cb vlc_static_modules[];
 
 #ifdef HAVE_DECODERS
 #define DECODER_PLUGINS(f) \
-    f(codec_adpcm) \
-    f(codec_aes3) \
-    f(codec_araw) \
-    f(codec_g711) \
-    f(codec_lpcm) \
-    f(codec_uleaddvaudio) \
-    f(codec_rawvideo) \
-    f(codec_cc) \
-    f(codec_cvdsub) \
-    f(codec_dvbsub) \
-    f(codec_scte18) \
-    f(codec_scte27) \
-    f(codec_spudec_spudec) \
-    f(codec_stl) \
-    f(codec_subsdec) \
-    f(codec_subsusf) \
-    f(codec_svcdsub) \
-    f(codec_textst) \
-    f(codec_substx3g)
+    f(adpcm) \
+    f(aes3) \
+    f(araw) \
+    f(g711) \
+    f(lpcm) \
+    f(uleaddvaudio) \
+    f(rawvideo) \
+    f(cc) \
+    f(cvdsub) \
+    f(dvbsub) \
+    f(scte18) \
+    f(scte27) \
+    f(spudec) \
+    f(stl) \
+    f(subsdec) \
+    f(subsusf) \
+    f(svcdsub) \
+    f(textst) \
+    f(substx3g)
 #else
 #define DECODER_PLUGINS(f)
 #endif
 
 #define PLUGINS(f) \
-    f(misc_xml_xml) \
-    f(logger_console) \
-    f(access_filesystem) \
-    f(demux_aiff) \
-    f(demux_asf_asf) \
-    f(demux_au) \
-    f(demux_avi_avi) \
-    f(demux_caf) \
-    f(demux_mpeg_es) \
-    f(demux_flacsys) \
-    f(demux_mpeg_h26x) \
-    f(demux_mjpeg) \
-    PLUGIN_MKV(f) \
-    f(demux_mp4_mp4) \
-    f(demux_nsc) \
-    f(demux_nsv) \
-    f(demux_mpeg_ps) \
-    f(demux_pva) \
-    f(services_discovery_sap) \
-    f(demux_smf) \
-    f(demux_subtitle) \
+    f(xml) \
+    f(console) \
+    f(filesystem) \
+    f(xml) \
+    f(aiff) \
+    f(asf) \
+    f(au) \
+    f(avi) \
+    f(caf) \
+    f(diracsys) \
+    f(es) \
+    f(flacsys) \
+    f(h26x) \
+    f(mjpeg) \
+    f(mkv) \
+    f(mp4) \
+    f(nsc) \
+    f(nsv) \
+    f(ps) \
+    f(pva) \
+    f(sap) \
+    f(smf) \
+    f(subtitle) \
     PLUGIN_TS(f) \
-    f(demux_tta) \
-    f(codec_ttml_ttml) \
-    f(demux_ty) \
-    f(demux_voc) \
-    f(demux_wav) \
-    f(codec_webvtt_webvtt) \
-    f(demux_xa) \
-    f(packetizer_a52) \
-    f(packetizer_copy) \
-    f(packetizer_dts) \
-    f(packetizer_flac) \
-    f(packetizer_h264) \
-    f(packetizer_hevc) \
-    f(packetizer_mlp) \
-    f(packetizer_mpeg4audio) \
-    f(packetizer_mpeg4video) \
-    f(packetizer_mpegaudio) \
-    f(packetizer_mpegvideo) \
-    f(packetizer_vc1) \
-    f(demux_rawvid) \
-    f(demux_rawaud) \
-    f(demux_ogg) \
+    f(tta) \
+    f(ttml) \
+    f(ty) \
+    f(voc) \
+    f(wav) \
+    f(webvtt) \
+    f(xa) \
+    f(a52) \
+    f(copy) \
+    f(dirac) \
+    f(dts) \
+    f(flac) \
+    f(h264) \
+    f(hevc) \
+    f(mlp) \
+    f(mpeg4audio) \
+    f(mpeg4video) \
+    f(mpegaudio) \
+    f(mpegvideo) \
+    f(vc1) \
+    f(rawvid) \
+    f(rawaud) \
     DECODER_PLUGINS(f)
 
 #ifdef HAVE_DVBPSI
-# define PLUGIN_TS(f) f(demux_mpeg_ts)
+# define PLUGIN_TS(f) f(ts)
 #else
 # define PLUGIN_TS(f)
-#endif
-
-#ifdef HAVE_MATROSKA
-# define PLUGIN_MKV(f) f(demux_mkv_mkv)
-#else
-# define PLUGIN_MKV(f)
 #endif
 
 #define DECL_PLUGIN(p) \

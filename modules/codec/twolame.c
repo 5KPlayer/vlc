@@ -3,6 +3,7 @@
  *            (using libtwolame from http://www.twolame.org/)
  *****************************************************************************
  * Copyright (C) 2004-2005 VLC authors and VideoLAN
+ * $Id: 6fdad1164c69ebe4f3572871ab423c0298949f6b $
  *
  * Authors: Christophe Massiot <massiot@via.ecp.fr>
  *          Gildas Bazin
@@ -95,21 +96,21 @@ static const char *const ppsz_enc_options[] = {
 /*****************************************************************************
  * encoder_sys_t : twolame encoder descriptor
  *****************************************************************************/
-typedef struct
+struct encoder_sys_t
 {
     /*
      * Input properties
      */
     int16_t p_buffer[MPEG_FRAME_SIZE * 2];
     int i_nb_samples;
-    vlc_tick_t i_pts;
+    mtime_t i_pts;
 
     /*
      * libtwolame properties
      */
     twolame_options *p_twolame;
     unsigned char p_out_buffer[MAX_CODED_FRAME_SIZE];
-} encoder_sys_t;
+};
 
 /*****************************************************************************
  * OpenEncoder: probe the encoder and return score
@@ -288,8 +289,8 @@ static block_t *Encode( encoder_t *p_enc, block_t *p_aout_buf )
         if( !p_block )
             return NULL;
         memcpy( p_block->p_buffer, p_sys->p_out_buffer, i_used );
-        p_block->i_length = vlc_tick_from_samples( MPEG_FRAME_SIZE,
-                                                   p_enc->fmt_out.audio.i_rate );
+        p_block->i_length = CLOCK_FREQ *
+                (mtime_t)MPEG_FRAME_SIZE / (mtime_t)p_enc->fmt_out.audio.i_rate;
         p_block->i_dts = p_block->i_pts = p_sys->i_pts;
         p_sys->i_pts += p_block->i_length;
 
@@ -300,8 +301,8 @@ static block_t *Encode( encoder_t *p_enc, block_t *p_aout_buf )
     int i_nb_samples = p_aout_buf->i_nb_samples;
 
     p_sys->i_pts = p_aout_buf->i_pts -
-                vlc_tick_from_samples( p_sys->i_nb_samples,
-                                       p_enc->fmt_out.audio.i_rate );
+                (mtime_t)1000000 * (mtime_t)p_sys->i_nb_samples /
+                (mtime_t)p_enc->fmt_out.audio.i_rate;
 
     while ( p_sys->i_nb_samples + i_nb_samples >= MPEG_FRAME_SIZE )
     {
@@ -331,8 +332,8 @@ static block_t *Encode( encoder_t *p_enc, block_t *p_aout_buf )
             return NULL;
         }
         memcpy( p_block->p_buffer, p_sys->p_out_buffer, i_used );
-        p_block->i_length = vlc_tick_from_samples( MPEG_FRAME_SIZE,
-                                                   p_enc->fmt_out.audio.i_rate );
+        p_block->i_length = CLOCK_FREQ *
+                (mtime_t)MPEG_FRAME_SIZE / (mtime_t)p_enc->fmt_out.audio.i_rate;
         p_block->i_dts = p_block->i_pts = p_sys->i_pts;
         p_sys->i_pts += p_block->i_length;
         block_ChainAppend( &p_chain, p_block );

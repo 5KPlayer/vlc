@@ -29,13 +29,6 @@ typedef struct csa_t csa_t;
 
 #define TS_PSI_PAT_PID 0x00
 
-#if (VLC_TICK_INVALID + 1 != VLC_TICK_0)
-#   error "can't define TS_UNKNOWN reference"
-#else
-#   define TS_TICK_UNKNOWN (VLC_TICK_INVALID - 1)
-#endif
-#define SETANDVALID(a) (a != TS_TICK_UNKNOWN && a != VLC_TICK_INVALID)
-
 typedef enum ts_standards_e
 {
     TS_STANDARD_AUTO = 0,
@@ -56,9 +49,6 @@ struct demux_sys_t
     stream_t   *stream;
     bool        b_canseek;
     bool        b_canfastseek;
-    int         current_title;
-    int         current_seekpoint;
-    unsigned    updates;
     vlc_mutex_t     csa_lock;
 
     /* TS packet size (188, 192, 204) */
@@ -128,7 +118,7 @@ struct demux_sys_t
 
     struct
     {
-        stime_t i_first_dts;     /* first dts encountered for the stream */
+        mtime_t i_first_dts;     /* first dts encountered for the stream */
         int     i_timesourcepid; /* which pid we saved the dts from */
         enum { PAT_WAITING = 0, PAT_MISSING, PAT_FIXTRIED } status; /* set if we haven't seen PAT within MIN_PAT_INTERVAL */
     } patfix;

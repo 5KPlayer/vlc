@@ -42,7 +42,7 @@
 /****************************************************************************
  * Local prototypes
  ****************************************************************************/
-typedef struct
+struct decoder_sys_t
 {
     struct
     {
@@ -60,13 +60,13 @@ typedef struct
             block_t *p_chain;
             block_t **pp_chain_last;
         } pre, frame, post;
-        vlc_tick_t dts;
-        vlc_tick_t pts;
+        mtime_t dts;
+        mtime_t pts;
     } tu;
     uint32_t i_seen;
     int i_next_block_flags;
 
-} av1_sys_t;
+};
 
 #define BLOCK_FLAG_DROP (1 << BLOCK_FLAG_PRIVATE_SHIFT)
 
@@ -89,13 +89,13 @@ static bool block_Differs(const block_t *a, const block_t *b)
 #define PUSHQ(name,b) \
 {\
     block_ChainLastAppend(&p_sys->name.pp_chain_last, b);\
-    if(p_sys->tu.dts == VLC_TICK_INVALID)\
+    if(p_sys->tu.dts == VLC_TS_INVALID)\
         p_sys->tu.dts = b->i_dts; p_sys->tu.pts = b->i_pts;\
 }
 
 static void UpdateDecoderFormat(decoder_t *p_dec)
 {
-    av1_sys_t *p_sys = p_dec->p_sys;
+    decoder_sys_t *p_sys = p_dec->p_sys;
     if(!p_sys->p_sequence_header)
         return;
 
@@ -136,7 +136,7 @@ static void UpdateDecoderFormat(decoder_t *p_dec)
     video_color_primaries_t prim;
     video_color_space_t space;
     video_transfer_func_t xfer;
-    video_color_range_t full;
+    bool full;
     if(p_dec->fmt_in.video.primaries == COLOR_PRIMARIES_UNDEF &&
        AV1_get_colorimetry(p_sys->p_sequence_header, &prim, &xfer, &space, &full) &&
        prim != COLOR_PRIMARIES_UNDEF &&
@@ -147,7 +147,7 @@ static void UpdateDecoderFormat(decoder_t *p_dec)
         p_dec->fmt_out.video.primaries = prim;
         p_dec->fmt_out.video.transfer = xfer;
         p_dec->fmt_out.video.space = space;
-        p_dec->fmt_out.video.color_range = full;
+        p_dec->fmt_out.video.b_color_range_full = full;
     }
 
     if(!p_dec->fmt_in.i_extra && !p_dec->fmt_out.i_extra)
@@ -163,7 +163,7 @@ static void UpdateDecoderFormat(decoder_t *p_dec)
 
 static block_t * OutputQueues(decoder_t *p_dec, bool b_valid)
 {
-    av1_sys_t *p_sys = p_dec->p_sys;
+    decoder_sys_t *p_sys = p_dec->p_sys;
     block_t *p_output = NULL;
     block_t **pp_output_last = &p_output;
     uint32_t i_flags = 0; /* Because block_ChainGather does not merge flags or times */
@@ -202,8 +202,8 @@ static block_t * OutputQueues(decoder_t *p_dec, bool b_valid)
     }
 
     p_sys->tu.b_has_visible_frame = false;
-    p_sys->tu.dts = VLC_TICK_INVALID;
-    p_sys->tu.pts = VLC_TICK_INVALID;
+    p_sys->tu.dts = VLC_TS_INVALID;
+    p_sys->tu.pts = VLC_TS_INVALID;
     p_sys->i_seen = 0;
 
     return p_output;
@@ -215,7 +215,7 @@ static block_t * OutputQueues(decoder_t *p_dec, bool b_valid)
 static block_t *GatherAndValidateChain(decoder_t *p_dec, block_t *p_outputchain)
 {
     block_t *p_output = NULL;
-    av1_sys_t *p_sys = p_dec->p_sys;
+    decoder_sys_t *p_sys = p_dec->p_sys;
     VLC_UNUSED(p_sys);
 
     if(p_outputchain)
@@ -262,7 +262,7 @@ static block_t *GatherAndValidateChain(decoder_t *p_dec, block_t *p_outputchain)
 
 static block_t *ParseOBUBlock(decoder_t *p_dec, block_t *p_obu)
 {
-    av1_sys_t *p_sys = p_dec->p_sys;
+    decoder_sys_t *p_sys = p_dec->p_sys;
 
     block_t * p_output = NULL;
     enum av1_obu_type_e OBUtype = AV1_OBUGetType(p_obu->p_buffer);
@@ -372,7 +372,7 @@ static block_t *ParseOBUBlock(decoder_t *p_dec, block_t *p_obu)
  ****************************************************************************/
 static void PacketizeFlush(decoder_t *p_dec)
 {
-    av1_sys_t *p_sys = p_dec->p_sys;
+    decoder_sys_t *p_sys = p_dec->p_sys;
 
     block_ChainRelease(OutputQueues(p_dec, false));
 
@@ -390,8 +390,8 @@ static void PacketizeFlush(decoder_t *p_dec)
     block_ChainRelease(p_sys->obus.p_chain);
     INITQ(obus);
 
-    p_sys->tu.dts = VLC_TICK_INVALID;
-    p_sys->tu.pts = VLC_TICK_INVALID;
+    p_sys->tu.dts = VLC_TS_INVALID;
+    p_sys->tu.pts = VLC_TS_INVALID;
     p_sys->tu.b_has_visible_frame = false;
     p_sys->i_seen = 0;
     p_sys->i_next_block_flags = BLOCK_FLAG_DISCONTINUITY;
@@ -402,7 +402,7 @@ static void PacketizeFlush(decoder_t *p_dec)
  ****************************************************************************/
 static block_t *PacketizeOBU(decoder_t *p_dec, block_t **pp_block)
 {
-    av1_sys_t *p_sys = p_dec->p_sys;
+    decoder_sys_t *p_sys = p_dec->p_sys;
 
     block_t *p_block = pp_block ? *pp_block : NULL;
     if(p_block)
@@ -475,8 +475,8 @@ static block_t *PacketizeOBU(decoder_t *p_dec, block_t **pp_block)
             p_obublock->i_pts = p_frag->i_pts;
             p_obublock->i_flags = p_frag->i_flags;
             p_frag->i_flags = 0;
-            p_frag->i_dts = VLC_TICK_INVALID;
-            p_frag->i_pts = VLC_TICK_INVALID;
+            p_frag->i_dts = VLC_TS_INVALID;
+            p_frag->i_pts = VLC_TS_INVALID;
         }
 
         p_output = ParseOBUBlock(p_dec, p_obublock);
@@ -503,7 +503,7 @@ static block_t *PacketizeOBU(decoder_t *p_dec, block_t **pp_block)
 static void Close(vlc_object_t *p_this)
 {
     decoder_t *p_dec = (decoder_t*)p_this;
-    av1_sys_t *p_sys = p_dec->p_sys;
+    decoder_sys_t *p_sys = p_dec->p_sys;
 
     PacketizeFlush(p_dec);
 
@@ -516,12 +516,12 @@ static void Close(vlc_object_t *p_this)
 static int Open(vlc_object_t *p_this)
 {
     decoder_t *p_dec = (decoder_t*)p_this;
-    av1_sys_t *p_sys;
+    decoder_sys_t *p_sys;
 
     if (p_dec->fmt_in.i_codec != VLC_CODEC_AV1)
         return VLC_EGENERIC;
 
-    p_dec->p_sys = p_sys = calloc(1, sizeof(av1_sys_t));
+    p_dec->p_sys = p_sys = calloc(1, sizeof(decoder_sys_t));
     if (!p_dec->p_sys)
         return VLC_ENOMEM;
 
@@ -529,8 +529,8 @@ static int Open(vlc_object_t *p_this)
     p_sys->p_sequence_header_block = NULL;
     p_sys->p_sequence_header = NULL;
     p_sys->tu.b_has_visible_frame = false;
-    p_sys->tu.dts = VLC_TICK_INVALID;
-    p_sys->tu.pts = VLC_TICK_INVALID;
+    p_sys->tu.dts = VLC_TS_INVALID;
+    p_sys->tu.pts = VLC_TS_INVALID;
     p_sys->i_seen = 0;
     p_sys->i_next_block_flags = 0;
     INITQ(tu.pre);

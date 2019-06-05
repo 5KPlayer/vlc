@@ -135,7 +135,7 @@ static const char * const ppsz_sd_options[] = { "sd", NULL };
 /*****************************************************************************
  * Local structures
  *****************************************************************************/
-typedef struct
+struct services_discovery_sys_t
 {
     lua_State *L;
     char *psz_filename;
@@ -146,7 +146,7 @@ typedef struct
 
     char **ppsz_query;
     int i_query;
-} services_discovery_sys_t;
+};
 static const luaL_Reg p_reg[] = { { NULL, NULL } };
 
 /*****************************************************************************

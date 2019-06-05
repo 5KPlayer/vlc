@@ -2,6 +2,7 @@
  * scene.c : scene video filter (based on modules/video_output/image.c)
  *****************************************************************************
  * Copyright (C) 2004-2008 VLC authors and VideoLAN
+ * $Id: 6ed0bfe62217a7eb0976ff4838518fbad1ae5cbd $
  *
  * Authors: Jean-Paul Saman <jpsaman@videolan.org>
  *          Clément Stenac <zorglub@videolan.org>
@@ -131,7 +132,7 @@ typedef struct scene_t {
 /*****************************************************************************
  * filter_sys_t: private data
  *****************************************************************************/
-typedef struct
+struct filter_sys_t
 {
     image_handler_t *p_image;
     scene_t scene;
@@ -145,7 +146,7 @@ typedef struct
     int32_t i_ratio;  /* save every n-th frame */
     int32_t i_frames; /* frames count */
     bool  b_replace;
-} filter_sys_t;
+};
 
 /*****************************************************************************
  * Create: initialize and set pf_video_filter()
@@ -208,7 +209,7 @@ static int Create( vlc_object_t *p_this )
 static void Destroy( vlc_object_t *p_this )
 {
     filter_t *p_filter = (filter_t *)p_this;
-    filter_sys_t *p_sys = p_filter->p_sys;
+    filter_sys_t *p_sys = (filter_sys_t *) p_filter->p_sys;
 
     image_HandlerDelete( p_sys->p_image );
 
@@ -279,13 +280,14 @@ static void SavePicture( filter_t *p_filter, picture_t *p_pic )
     char *psz_temp = NULL;
     int i_ret;
 
-    video_format_Init( &fmt_out, p_sys->i_format );
+    memset( &fmt_out, 0, sizeof(video_format_t) );
 
     /* Save snapshot psz_format to a memory zone */
     fmt_in = p_pic->format;
     fmt_out.i_sar_num = fmt_out.i_sar_den = 1;
     fmt_out.i_width = p_sys->i_width;
     fmt_out.i_height = p_sys->i_height;
+    fmt_out.i_chroma = p_sys->i_format;
 
     /*
      * Save the snapshot to a temporary file and

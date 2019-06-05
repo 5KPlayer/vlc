@@ -563,7 +563,7 @@ sl_header_data DecodeSLHeader( unsigned i_data, const uint8_t *p_data,
         struct
         {
             bool *p_b;
-            vlc_tick_t *p_t;
+            mtime_t *p_t;
         } const timestamps[2] = { { &b_has_dts, &ret.i_dts }, { &b_has_cts, &ret.i_pts } };
 
         bs_read( &s, sl->i_packet_seqnum_length );
@@ -602,8 +602,7 @@ sl_header_data DecodeSLHeader( unsigned i_data, const uint8_t *p_data,
                     i_read |= bs_read( &s, i_bits );
                 }
                 if( sl->i_timestamp_resolution )
-                    *(timestamps[i].p_t) = VLC_TICK_0 +
-                        vlc_tick_from_samples(i_read, sl->i_timestamp_resolution);
+                    *(timestamps[i].p_t) = VLC_TS_0 + CLOCK_FREQ * i_read / sl->i_timestamp_resolution;
             }
 
             bs_read( &s, sl->i_AU_length );
@@ -680,15 +679,15 @@ void DecodeODCommand( vlc_object_t *p_object, od_descriptors_t *p_ods,
         switch( i_tag )
         {
             case ODTag_ObjectDescrUpdate:
-                ObjectDescrUpdateCommandRead( p_object, p_ods, i_length, p_data );
+                ObjectDescrUpdateCommandRead( p_object, p_ods, i_data, p_data );
                 break;
             case ODTag_ObjectDescrRemove:
-                ObjectDescrRemoveCommandRead( p_object, p_ods, i_length, p_data );
+                ObjectDescrRemoveCommandRead( p_object, p_ods, i_data, p_data );
                 break;
             default:
                 break;
         }
         p_data += i_length;
-        i_data -= i_length;
+        i_data -= i_data;
     }
 }

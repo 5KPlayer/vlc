@@ -24,7 +24,8 @@
 
 #include <vlc_common.h>
 #include "../libvlc.h"
-#include <vlc_playlist_legacy.h>
+#include <vlc_playlist.h>
+#include <vlc_input.h>
 #include <vlc_interface.h>
 #include <vlc_url.h>
 
@@ -102,7 +103,8 @@ static void IPCHelperThread( void *arg )
                                  ( char const ** )
                                      ( i_options ? &ppsz_argv[ i_opt + 1 ] :
                                                    NULL ),
-                                 VLC_INPUT_OPTION_TRUSTED );
+                                 VLC_INPUT_OPTION_TRUSTED,
+                                 true );
             }
 
             for( ; i_options >= 0; i_options-- )

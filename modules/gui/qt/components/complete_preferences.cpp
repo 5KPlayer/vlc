@@ -2,6 +2,7 @@
  * complete_preferences.cpp : "Normal preferences"
  ****************************************************************************
  * Copyright (C) 2006-2011 the VideoLAN team
+ * $Id: bca44457d37b1776eab196046f15fd23d41c5ffd $
  *
  * Authors: Clément Stenac <zorglub@videolan.org>
  *
@@ -404,25 +405,10 @@ static void populateLoadedSet( QSet<QString> *loaded, vlc_object_t *p_node )
     if ( !EMPTY_STR( name ) ) loaded->insert( QString( name ) );
     free( name );
 
-    size_t count = 0, size;
-    vlc_object_t **tab = NULL;
-
-    do
-    {
-        delete[] tab;
-        size = count;
-        tab = new vlc_object_t *[size];
-        count = vlc_list_children(p_node, tab, size);
-    }
-    while (size < count);
-
-    for (size_t i = 0; i < count ; i++)
-    {
-        populateLoadedSet( loaded, tab[i] );
-        vlc_object_release(tab[i]);
-    }
-
-    delete[] tab;
+    vlc_list_t *l = vlc_list_children( p_node );
+    for( int i=0; i < l->i_count; i++ )
+        populateLoadedSet( loaded, (vlc_object_t *)l->p_values[i].p_address );
+    vlc_list_release( l );
 }
 
 /* Updates the PrefsItemData loaded status to reflect currently
@@ -434,7 +420,7 @@ void PrefsTree::updateLoadedStatus( QTreeWidgetItem *item = NULL,
 
     if( loaded == NULL )
     {
-        vlc_object_t *p_root = VLC_OBJECT( vlc_object_instance(p_intf) );
+        vlc_object_t *p_root = VLC_OBJECT( p_intf->obj.libvlc );
         loaded = new QSet<QString>();
         populateLoadedSet( loaded, p_root );
         b_release = true;

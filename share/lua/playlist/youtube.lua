@@ -316,7 +316,7 @@ function parse()
                 if not path then
                     -- If this is a live stream, the URL map will be empty
                     -- and we get the URL from this field instead
-                    local hlsvp = string.match( line, '\\"hlsManifestUrl\\": *\\"(.-)\\"' )
+                    local hlsvp = string.match( line, "\"hlsvp\": *\"(.-)\"" )
                     if hlsvp then
                         hlsvp = string.gsub( hlsvp, "\\/", "/" )
                         path = hlsvp
@@ -372,7 +372,7 @@ function parse()
         if not path then
             -- If this is a live stream, the URL map will be empty
             -- and we get the URL from this field instead
-            local hlsvp = string.match( line, "%%22hlsManifestUrl%%22%%3A%%22(.-)%%22" )
+            local hlsvp = string.match( line, "&hlsvp=([^&]*)" )
             if hlsvp then
                 hlsvp = vlc.strings.decode_uri( hlsvp )
                 path = hlsvp

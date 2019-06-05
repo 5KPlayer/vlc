@@ -55,8 +55,8 @@
 #define SDI_MODE_FILE     "/sys/class/sdi/sdirx%u/mode"
 #define READ_TIMEOUT      80000
 #define RESYNC_TIMEOUT    500000
-#define CLOCK_GAP         VLC_TICK_FROM_MS(500)
-#define START_DATE        INT64_C(0x100000000)
+#define CLOCK_GAP         INT64_C(500000)
+#define START_DATE        INT64_C(4294967296)
 
 #define DEMUX_BUFFER_SIZE 1350000
 #define MAX_AUDIOS        4
@@ -106,7 +106,7 @@ vlc_module_begin()
     add_string( "linsys-sdi-telx-lang", "", TELX_LANG_TEXT, TELX_LANG_LONGTEXT,
                 true )
 
-    set_capability( "access", 0 )
+    set_capability( "access_demux", 0 )
     add_shortcut( "linsys-sdi" )
     set_callbacks( Open, Close )
 
@@ -146,7 +146,7 @@ enum {
     STATE_SYNC,
 };
 
-typedef struct
+struct demux_sys_t
 {
     /* device reader */
     int              i_fd;
@@ -157,7 +157,7 @@ typedef struct
 
     /* SDI sync */
     int              i_state;
-    vlc_tick_t       i_last_state_change;
+    mtime_t          i_last_state_change;
     unsigned int     i_anc_size, i_active_size, i_picture_size;
     unsigned int     i_line_offset, i_nb_lines;
 
@@ -178,15 +178,15 @@ typedef struct
     char             *psz_telx, *psz_telx_lang;
     bool             b_hd, b_vbi;
     vbi_raw_decoder  rd_wss, rd_telx;
-    vlc_tick_t       i_next_date;
-    vlc_tick_t       i_incr;
+    mtime_t          i_next_date;
+    int              i_incr;
 
     /* ES stuff */
     int              i_id_video;
     es_out_id_t      *p_es_video;
     sdi_audio_t      p_audios[MAX_AUDIOS];
     es_out_id_t      *p_es_telx;
-} demux_sys_t;
+};
 
 static int Control( demux_t *, int, va_list );
 static int DemuxControl( demux_t *, int, va_list );
@@ -212,9 +212,6 @@ static int DemuxOpen( vlc_object_t *p_this )
     demux_sys_t *p_sys;
     char        *psz_parser;
 
-    if (p_demux->out == NULL)
-        return VLC_EGENERIC;
-
     /* Fill p_demux field */
     p_demux->pf_demux = DemuxDemux;
     p_demux->pf_control = DemuxControl;
@@ -223,7 +220,7 @@ static int DemuxOpen( vlc_object_t *p_this )
         return VLC_ENOMEM;
 
     p_sys->i_state = STATE_NOSYNC;
-    p_sys->i_last_state_change = vlc_tick_now();
+    p_sys->i_last_state_change = mdate();
 
     /* SDI AR */
     unsigned int i_num, i_den;
@@ -365,6 +362,7 @@ static int DemuxControl( demux_t *p_demux, int i_query, va_list args )
 static int Control( demux_t *p_demux, int i_query, va_list args )
 {
     bool *pb;
+    int64_t *pi64;
 
     switch( i_query )
     {
@@ -377,8 +375,9 @@ static int Control( demux_t *p_demux, int i_query, va_list args )
             return VLC_SUCCESS;
 
         case DEMUX_GET_PTS_DELAY:
-            *va_arg( args, vlc_tick_t * ) =
-                VLC_TICK_FROM_MS(var_InheritInteger( p_demux, "live-caching" ));
+            pi64 = va_arg( args, int64_t * );
+            *pi64 = INT64_C(1000)
+                  * var_InheritInteger( p_demux, "live-caching" );
             return VLC_SUCCESS;
 
         /* TODO implement others */
@@ -426,7 +425,7 @@ static int StartDecode( demux_t *p_demux )
     char *psz_parser;
 
     p_sys->i_next_date = START_DATE;
-    p_sys->i_incr = vlc_tick_from_samples(p_sys->i_frame_rate_base, p_sys->i_frame_rate);
+    p_sys->i_incr = 1000000 * p_sys->i_frame_rate_base / p_sys->i_frame_rate;
     p_sys->i_block_size = p_sys->i_width * p_sys->i_height * 3 / 2
                            + sizeof(struct block_extension_t);
     if( NewFrame( p_demux ) != VLC_SUCCESS )
@@ -722,9 +721,15 @@ static void DecodeWSS( demux_t *p_demux )
     {
         unsigned int i_old_aspect = p_sys->i_aspect;
         uint8_t *p = p_sliced[0].data;
-        int i_aspect = p[0] & 7;
+        int i_aspect, i_parity;
 
-        if ( !parity(p[0] & 15) )
+        i_aspect = p[0] & 15;
+        i_parity = i_aspect;
+        i_parity ^= i_parity >> 2;
+        i_parity ^= i_parity >> 1;
+        i_aspect &= 7;
+
+        if ( !(i_parity & 1) )
             msg_Warn( p_demux, "WSS parity error" );
         else if ( i_aspect == 7 )
             p_sys->i_aspect = 16 * VOUT_ASPECT_FACTOR / 9;
@@ -929,7 +934,7 @@ static int DecodeAudio( demux_t *p_demux, sdi_audio_t *p_audio )
     if( unlikely( !p_block ) )
         return VLC_ENOMEM;
     p_block->i_dts = p_block->i_pts = p_sys->i_next_date
-        + vlc_tick_from_samples(p_audio->i_delay, p_audio->i_rate);
+        + (mtime_t)p_audio->i_delay * INT64_C(1000000) / p_audio->i_rate;
     p_output = (int16_t *)p_block->p_buffer;
 
     if ( p_audio->i_left_samples == p_audio->i_nb_samples &&
@@ -1414,10 +1419,10 @@ static int HandleSDBuffer( demux_t *p_demux, uint8_t *p_buffer,
     const uint8_t *p_line;
 
     if ( p_sys->i_state != STATE_SYNC
-          && p_sys->i_last_state_change < vlc_tick_now() - RESYNC_TIMEOUT )
+          && p_sys->i_last_state_change < mdate() - RESYNC_TIMEOUT )
     {
         p_sys->i_state = STATE_NOSYNC;
-        p_sys->i_last_state_change = vlc_tick_now();
+        p_sys->i_last_state_change = mdate();
         return VLC_EGENERIC;
     }
 
@@ -1429,8 +1434,7 @@ static int HandleSDBuffer( demux_t *p_demux, uint8_t *p_buffer,
         if ( p_parser == NULL )
             break;
         p_sys->i_state = STATE_STARTSYNC;
-        p_sys->i_last_state_change = vlc_tick_now();
-        /* fallthrough */
+        p_sys->i_last_state_change = mdate();
 
     case STATE_STARTSYNC:
         p_parser = FindReferenceCode( FIELD_1_VBLANK_EAV, p_parser, p_end );
@@ -1438,8 +1442,7 @@ static int HandleSDBuffer( demux_t *p_demux, uint8_t *p_buffer,
             break;
         p_sys->i_anc_size = 0;
         p_sys->i_state = STATE_ANCSYNC;
-        p_sys->i_last_state_change = vlc_tick_now();
-        /* fallthrough */
+        p_sys->i_last_state_change = mdate();
 
     case STATE_ANCSYNC:
         p_parser = CountReference( &p_sys->i_anc_size,
@@ -1448,8 +1451,7 @@ static int HandleSDBuffer( demux_t *p_demux, uint8_t *p_buffer,
             break;
         p_sys->i_active_size = 0;
         p_sys->i_state = STATE_LINESYNC;
-        p_sys->i_last_state_change = vlc_tick_now();
-        /* fallthrough */
+        p_sys->i_last_state_change = mdate();
 
     case STATE_LINESYNC:
         p_parser = CountReference( &p_sys->i_active_size,
@@ -1458,8 +1460,7 @@ static int HandleSDBuffer( demux_t *p_demux, uint8_t *p_buffer,
             break;
         p_sys->i_picture_size = p_sys->i_anc_size + p_sys->i_active_size;
         p_sys->i_state = STATE_ACTIVESYNC;
-        p_sys->i_last_state_change = vlc_tick_now();
-        /* fallthrough */
+        p_sys->i_last_state_change = mdate();
 
     case STATE_ACTIVESYNC:
         p_parser = CountReference( &p_sys->i_picture_size,
@@ -1469,8 +1470,7 @@ static int HandleSDBuffer( demux_t *p_demux, uint8_t *p_buffer,
         p_sys->i_line_offset = p_sys->i_picture_size
                              / (p_sys->i_anc_size + p_sys->i_active_size);
         p_sys->i_state = STATE_VBLANKSYNC;
-        p_sys->i_last_state_change = vlc_tick_now();
-        /* fallthrough */
+        p_sys->i_last_state_change = mdate();
 
     case STATE_VBLANKSYNC:
         p_parser = CountReference( &p_sys->i_picture_size,
@@ -1478,8 +1478,7 @@ static int HandleSDBuffer( demux_t *p_demux, uint8_t *p_buffer,
         if ( p_parser == NULL )
             break;
         p_sys->i_state = STATE_PICSYNC;
-        p_sys->i_last_state_change = vlc_tick_now();
-        /* fallthrough */
+        p_sys->i_last_state_change = mdate();
 
     case STATE_PICSYNC:
         p_parser = CountReference( &p_sys->i_picture_size,
@@ -1494,7 +1493,7 @@ static int HandleSDBuffer( demux_t *p_demux, uint8_t *p_buffer,
                  p_sys->i_anc_size, p_sys->i_active_size,
                  p_sys->i_picture_size, p_sys->i_line_offset + 1 );
             p_sys->i_state = STATE_NOSYNC;
-            p_sys->i_last_state_change = vlc_tick_now();
+            p_sys->i_last_state_change = mdate();
             break;
         }
 
@@ -1556,7 +1555,7 @@ static int HandleSDBuffer( demux_t *p_demux, uint8_t *p_buffer,
                           p_sys->i_current_line + 1, p_line[4], p_line[anc+4] );
                 StopDecode( p_demux );
                 p_sys->i_state = STATE_NOSYNC;
-                p_sys->i_last_state_change = vlc_tick_now();
+                p_sys->i_last_state_change = mdate();
                 break;
             }
 

@@ -92,7 +92,7 @@ int Import_xspf(vlc_object_t *p_this)
     CHECK_FILE(p_stream);
 
     if( !stream_HasExtension( p_stream, ".xspf" )
-     && !stream_IsMimeType( p_stream->s, "application/xspf+xml" ) )
+     && !stream_IsMimeType( p_stream->p_source, "application/xspf+xml" ) )
         return VLC_EGENERIC;
 
     xspf_sys_t *sys = calloc(1, sizeof (*sys));
@@ -135,7 +135,7 @@ static int ReadDir(stream_t *p_stream, input_item_node_t *p_subitems)
     sys->psz_base = strdup(p_stream->psz_url);
 
     /* create new xml parser from stream */
-    p_xml_reader = xml_ReaderCreate(p_stream, p_stream->s);
+    p_xml_reader = xml_ReaderCreate(p_stream, p_stream->p_source);
     if (!p_xml_reader)
         goto end;
 
@@ -444,10 +444,12 @@ static bool parse_track_node COMPLEX_INTERFACE
                             track_elements, ARRAY_SIZE(track_elements));
     if(b_ret)
     {
+        input_item_CopyOptions(p_new_input, p_input_node->p_item);
+
         /* Make sure we have a URI */
         char *psz_uri = input_item_GetURI(p_new_input);
         if (!psz_uri)
-            input_item_SetURI(p_new_input, INPUT_ITEM_URI_NOP);
+            input_item_SetURI(p_new_input, "vlc://nop");
         else
             free(psz_uri);
 
@@ -506,8 +508,7 @@ static bool parse_track_node COMPLEX_INTERFACE
  */
 static bool set_item_info SIMPLE_INTERFACE
 {
-    xspf_sys_t *p_sys = (xspf_sys_t *) opaque;
-
+    VLC_UNUSED(opaque);
     /* exit if setting is impossible */
     if (!psz_name || !psz_value || !p_input)
         return false;
@@ -524,23 +525,13 @@ static bool set_item_info SIMPLE_INTERFACE
     else if (!strcmp(psz_name, "trackNum"))
         input_item_SetTrackNum(p_input, psz_value);
     else if (!strcmp(psz_name, "duration"))
-        p_input->i_duration = VLC_TICK_FROM_MS(atol(psz_value));
+        p_input->i_duration = atol(psz_value) * INT64_C(1000);
     else if (!strcmp(psz_name, "annotation"))
         input_item_SetDescription(p_input, psz_value);
     else if (!strcmp(psz_name, "info"))
-    {
-        char *psz_mrl = ProcessMRL( psz_value, p_sys->psz_base );
-        if( psz_mrl )
-            input_item_SetURL(p_input, psz_mrl);
-        free( psz_mrl );
-    }
+        input_item_SetURL(p_input, psz_value);
     else if (!strcmp(psz_name, "image") && *psz_value)
-    {
-        char *psz_mrl = ProcessMRL( psz_value, p_sys->psz_base );
-        if( psz_mrl )
-            input_item_SetArtURL(p_input, psz_mrl);
-        free( psz_mrl );
-    }
+        input_item_SetArtURL(p_input, psz_value);
     return true;
 }
 
@@ -600,7 +591,7 @@ static bool parse_vlcnode_node COMPLEX_INTERFACE
         return false;
     }
     input_item_t *p_new_input =
-        input_item_NewDirectory(INPUT_ITEM_URI_NOP, psz_title, ITEM_NET_UNKNOWN);
+        input_item_NewDirectory("vlc://nop", psz_title, ITEM_NET_UNKNOWN);
     free(psz_title);
     if (p_new_input)
     {

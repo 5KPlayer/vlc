@@ -3,6 +3,7 @@
  *****************************************************************************
  * Copyright (C) 2005-2009 VLC authors and VideoLAN
  * Copyright (C) 2013      Vianney Boyer
+ * $Id: 87006a787cb70165a36659a7dfa541340813894b $
  *
  * Authors: Vianney Boyer <vlcvboyer -at- gmail -dot- com>
  *
@@ -48,8 +49,6 @@
 /*****************************************************************************
  * Local prototypes
  *****************************************************************************/
-
-typedef struct filter_sys_t filter_sys_t;
 
 typedef struct {
     int32_t i_preview_width, i_preview_lines;

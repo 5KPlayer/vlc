@@ -2,6 +2,7 @@
  * sdl_image.c: sdl decoder module making use of libsdl_image.
  *****************************************************************************
  * Copyright (C) 2005 VLC authors and VideoLAN
+ * $Id: 65a1223e1a4b76d5c92cc2027e7cccf800688139 $
  *
  * Authors: Christophe Massiot <massiot@via.ecp.fr>
  *
@@ -37,10 +38,10 @@
 /*****************************************************************************
  * decoder_sys_t : sdl decoder descriptor
  *****************************************************************************/
-typedef struct
+struct decoder_sys_t
 {
     const char *psz_sdl_type;
-} decoder_sys_t;
+};
 
 /*****************************************************************************
  * Local prototypes
@@ -255,7 +256,7 @@ static int DecodeBlock( decoder_t *p_dec, block_t *p_block )
         }
     }
 
-    p_pic->date = (p_block->i_pts != VLC_TICK_INVALID) ?
+    p_pic->date = (p_block->i_pts > VLC_TS_INVALID) ?
         p_block->i_pts : p_block->i_dts;
 
     decoder_QueueVideo( p_dec, p_pic );

@@ -43,7 +43,6 @@
 #include "ts_decoders.h"
 #include "ts_psip_dvbpsi_fixes.h"
 
-#include "timestamps.h"
 #include "ts_pid.h"
 #include "ts.h"
 #include "ts_streams_private.h"
@@ -374,7 +373,7 @@ static vlc_epg_event_t * ATSC_CreateVLCEPGEvent( demux_t *p_demux, ts_psip_conte
                                                              p_ett->p_etm_data, p_ett->i_etm_length );
     }
 
-    if( i_start != VLC_TICK_INVALID && psz_title )
+    if( i_start > VLC_TS_INVALID && psz_title )
     {
 #ifdef ATSC_DEBUG_EIT
         msg_Dbg( p_demux, "EIT Event time %ld +%d %s id 0x%x",
@@ -408,7 +407,7 @@ static time_t ATSC_AddVLCEPGEvent( demux_t *p_demux, ts_psip_context_t *p_basect
             return p_evt->i_start;
         vlc_epg_event_Delete( p_evt );
     }
-    return VLC_TICK_INVALID;
+    return VLC_TS_INVALID;
 }
 
 
@@ -423,8 +422,7 @@ static void ATSC_EIT_Callback( void *p_pid, dvbpsi_atsc_eit_t* p_eit )
     }
 
     demux_t *p_demux = (demux_t *) p_eit_pid->u.p_psip->handle->p_sys;
-    demux_sys_t *p_sys = p_demux->p_sys;
-    ts_pid_t *p_base_pid = GetPID(p_sys, ATSC_BASE_PID);
+    ts_pid_t *p_base_pid = GetPID(p_demux->p_sys, ATSC_BASE_PID);
     ts_psip_t *p_basepsip = p_base_pid->u.p_psip;
     ts_psip_context_t *p_basectx = p_basepsip->p_ctx;
 
@@ -443,7 +441,7 @@ static void ATSC_EIT_Callback( void *p_pid, dvbpsi_atsc_eit_t* p_eit )
         return;
     }
 
-    const ts_pid_t *pid_sibling_ett = ATSC_GetSiblingxTTPID( &p_sys->pids, p_basectx->p_mgt,
+    const ts_pid_t *pid_sibling_ett = ATSC_GetSiblingxTTPID( &p_demux->p_sys->pids, p_basectx->p_mgt,
                                                      p_eit_pid->u.p_psip );
 
     /* Get System Time for finding and setting current event */
@@ -494,7 +492,7 @@ static void ATSC_EIT_Callback( void *p_pid, dvbpsi_atsc_eit_t* p_eit )
     if( p_epg->b_present && i_current_event_start_time )
     {
         vlc_epg_SetCurrent( p_epg, i_current_event_start_time );
-        ts_pat_t *p_pat = ts_pid_Get(&p_sys->pids, 0)->u.p_pat;
+        ts_pat_t *p_pat = ts_pid_Get(&p_demux->p_sys->pids, 0)->u.p_pat;
         ts_pmt_t *p_pmt = ts_pat_Get_pmt(p_pat, i_program_number);
         if(p_pmt)
         {
@@ -522,8 +520,7 @@ static void ATSC_ETT_Callback( void *p_pid, dvbpsi_atsc_ett_t *p_ett )
     }
 
     demux_t *p_demux = (demux_t *) p_ett_pid->u.p_psip->handle->p_sys;
-    demux_sys_t *p_sys = p_demux->p_sys;
-    ts_pid_t *p_base_pid = GetPID(p_sys, ATSC_BASE_PID);
+    ts_pid_t *p_base_pid = GetPID(p_demux->p_sys, ATSC_BASE_PID);
     ts_psip_t *p_basepsip = p_base_pid->u.p_psip;
     ts_psip_context_t *p_basectx = p_basepsip->p_ctx;
 
@@ -544,8 +541,8 @@ static void ATSC_ETT_Callback( void *p_pid, dvbpsi_atsc_ett_t *p_ett )
         /* If ETT with that version isn't already in list (inserted when matched eit is present) */
         if( ATSC_ETTFindByETMId( p_ctx, p_ett->i_etm_id, p_ett->i_version ) == NULL )
         {
-            const dvbpsi_atsc_mgt_t *p_mgt = ts_pid_Get( &p_sys->pids, ATSC_BASE_PID )->u.p_psip->p_ctx->p_mgt;
-            ts_pid_t *p_sibling_eit = ATSC_GetSiblingxTTPID( &p_sys->pids, p_mgt, p_ett_pid->u.p_psip );
+            const dvbpsi_atsc_mgt_t *p_mgt = ts_pid_Get( &p_demux->p_sys->pids, ATSC_BASE_PID )->u.p_psip->p_ctx->p_mgt;
+            ts_pid_t *p_sibling_eit = ATSC_GetSiblingxTTPID( &p_demux->p_sys->pids, p_mgt, p_ett_pid->u.p_psip );
             if( p_sibling_eit )
             {
                 const dvbpsi_atsc_eit_event_t *p_event =
@@ -675,7 +672,6 @@ static void ATSC_MGT_Callback( void *p_cb_basepid, dvbpsi_atsc_mgt_t* p_mgt )
     }
     ts_psip_t *p_mgtpsip = p_base_pid->u.p_psip;
     demux_t *p_demux = (demux_t *) p_mgtpsip->handle->p_sys;
-    demux_sys_t *p_sys = p_demux->p_sys;
 
     if( ( p_mgtpsip->i_version != -1 && p_mgtpsip->i_version == p_mgt->i_version ) ||
           p_mgt->b_current_next == 0 )
@@ -727,7 +723,7 @@ static void ATSC_MGT_Callback( void *p_cb_basepid, dvbpsi_atsc_mgt_t* p_mgt )
                                      ? ATSC_CVCT_TABLE_ID
                                      : ATSC_TVCT_TABLE_ID;
             if( !ATSC_ATTACH( p_mgtpsip->handle, VCT, i_table_id,
-                              GetPID(p_sys, 0)->u.p_pat->i_ts_id, p_base_pid ) )
+                              GetPID(p_demux->p_sys, 0)->u.p_pat->i_ts_id, p_base_pid ) )
                 msg_Dbg( p_demux, "  * pid=%d listening for ATSC VCT", p_base_pid->i_pid );
         }
         else if( p_tab->i_table_type >= ATSC_TABLE_TYPE_EIT_0 &&
@@ -735,7 +731,7 @@ static void ATSC_MGT_Callback( void *p_cb_basepid, dvbpsi_atsc_mgt_t* p_mgt )
                  p_tab->i_table_type <= ATSC_TABLE_TYPE_EIT_127 &&
                  p_tab->i_table_type_pid != p_base_pid->i_pid )
         {
-            ts_pid_t *pid = GetPID(p_sys, p_tab->i_table_type_pid);
+            ts_pid_t *pid = GetPID(p_demux->p_sys, p_tab->i_table_type_pid);
             if( PIDSetup( p_demux, TYPE_PSIP, pid, NULL ) )
             {
                 SetPIDFilter( p_demux->p_sys, pid, true );
@@ -750,10 +746,10 @@ static void ATSC_MGT_Callback( void *p_cb_basepid, dvbpsi_atsc_mgt_t* p_mgt )
                  p_tab->i_table_type <= ATSC_TABLE_TYPE_ETT_127 &&
                  p_tab->i_table_type_pid != p_base_pid->i_pid )
         {
-            ts_pid_t *pid = GetPID(p_sys, p_tab->i_table_type_pid);
+            ts_pid_t *pid = GetPID(p_demux->p_sys, p_tab->i_table_type_pid);
             if( PIDSetup( p_demux, TYPE_PSIP, pid, NULL ) )
             {
-                SetPIDFilter( p_sys, pid, true );
+                SetPIDFilter( p_demux->p_sys, pid, true );
                 pid->u.p_psip->p_ctx->i_tabletype = p_tab->i_table_type;
                 ATSC_Ready_SubDecoders( pid->u.p_psip->handle, pid );
                 msg_Dbg( p_demux, "  * pid=%d reserved for ATSC ETT", pid->i_pid );
@@ -783,7 +779,6 @@ static void ATSC_STT_Callback( void *p_cb_basepid, dvbpsi_atsc_stt_t* p_stt )
         return;
     }
     demux_t *p_demux = (demux_t *) p_base_pid->u.p_psip->handle->p_sys;
-    demux_sys_t *p_sys = p_demux->p_sys;
     ts_psip_context_t *p_ctx = p_base_pid->u.p_psip->p_ctx;
     dvbpsi_t *p_handle = p_base_pid->u.p_psip->handle;
 
@@ -807,10 +802,10 @@ static void ATSC_STT_Callback( void *p_cb_basepid, dvbpsi_atsc_stt_t* p_stt )
         time_t i_current_time = atsc_a65_GPSTimeToEpoch( p_stt->i_system_time,
                                                          p_stt->i_gps_utc_offset );
         EIT_DEBUG_TIMESHIFT( i_current_time );
-        p_sys->i_network_time =  i_current_time;
-        p_sys->i_network_time_update = time(NULL);
+        p_demux->p_sys->i_network_time =  i_current_time;
+        p_demux->p_sys->i_network_time_update = time(NULL);
 
-        es_out_Control( p_demux->out, ES_OUT_SET_EPG_TIME, p_sys->i_network_time );
+        es_out_Control( p_demux->out, ES_OUT_SET_EPG_TIME, p_demux->p_sys->i_network_time );
     }
 
     p_ctx->p_stt = p_stt;
@@ -842,9 +837,8 @@ static void ATSC_NewTable_Callback( dvbpsi_t *p_dvbpsi, uint8_t i_table_id,
                                     uint16_t i_extension, void *p_cb_pid )
 {
     demux_t *p_demux = (demux_t *) p_dvbpsi->p_sys;
-    demux_sys_t *p_sys = p_demux->p_sys;
     assert( ((ts_pid_t *) p_cb_pid)->type == TYPE_PSIP );
-    const ts_pid_t *p_base_pid = ts_pid_Get( &p_sys->pids, ATSC_BASE_PID );
+    const ts_pid_t *p_base_pid = ts_pid_Get( &p_demux->p_sys->pids, ATSC_BASE_PID );
     if( !p_base_pid->u.p_psip->p_ctx->p_vct )
         return;
 

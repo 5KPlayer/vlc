@@ -2,6 +2,7 @@
  * recents.cpp : Recents MRL (menu)
  *****************************************************************************
  * Copyright © 2008-2014 VideoLAN and VLC authors
+ * $Id: 7bfadf1ca97e22a0b5b0a9740d5cebe2b4840efe $
  *
  * Authors: Ludovic Fauvet <etix@l0cal.com>
  *          Jean-baptiste Kempf <jb@videolan.org>
@@ -26,8 +27,6 @@
 #include "dialogs_provider.hpp"
 #include "menus.hpp"
 #include "util/qt_dirs.hpp"
-#include <vlc_cxx_helpers.hpp>
-#include "components/playlist/playlist_controller.hpp"
 
 #include <QStringList>
 #include <QRegExp>
@@ -93,11 +92,8 @@ void RecentsMRL::addRecent( const QString &mrl )
     if( path )
     {
         wchar_t *wmrl = ToWide( path );
-        if (wmrl != NULL)
-        {
-            SHAddToRecentDocs( SHARD_PATHW, wmrl );
-            free( wmrl );
-        }
+        SHAddToRecentDocs( SHARD_PATHW, wmrl );
+        free( wmrl );
         free( path );
     }
 #endif
@@ -158,7 +154,6 @@ void RecentsMRL::save()
 {
     getSettings()->setValue( "RecentsMRL/list", recents );
     getSettings()->setValue( "RecentsMRL/times", times );
-    emit saved();
 }
 
 void RecentsMRL::playMRL( const QString &mrl )
@@ -166,46 +161,72 @@ void RecentsMRL::playMRL( const QString &mrl )
     Open::openMRL( p_intf, mrl );
 }
 
-vlc_tick_t RecentsMRL::time( const QString &mrl )
+int RecentsMRL::time( const QString &mrl )
 {
     if( !isActive )
         return -1;
 
     int i_index = recents.indexOf( mrl );
     if( i_index != -1 )
-        return VLC_TICK_FROM_MS(times.value(i_index, "-1").toInt());
+        return times.value(i_index, "-1").toInt();
     else
         return -1;
 }
 
-void RecentsMRL::setTime( const QString &mrl, const vlc_tick_t time )
+void RecentsMRL::setTime( const QString &mrl, const int64_t time )
 {
     int i_index = recents.indexOf( mrl );
     if( i_index != -1 )
-        times[i_index] = QString::number( MS_FROM_VLC_TICK( time ) );
+        times[i_index] = QString::number( time / 1000 );
 }
 
 int Open::openMRL( intf_thread_t *p_intf,
                     const QString &mrl,
-                    bool b_start )
+                    bool b_start,
+                    bool b_playlist)
 {
-    return openMRLwithOptions( p_intf, mrl, NULL, b_start );
+    return openMRLwithOptions( p_intf, mrl, NULL, b_start, b_playlist );
 }
 
 int Open::openMRLwithOptions( intf_thread_t* p_intf,
                      const QString &mrl,
                      QStringList *options,
                      bool b_start,
+                     bool b_playlist,
                      const char *title)
 {
-    QVector<vlc::playlist::Media> medias {
-        {mrl, qfu(title), options}
-    };
+    /* Options */
+    const char **ppsz_options = NULL;
+    int i_options = 0;
 
-    THEMPL->append(medias, b_start);
+    if( options != NULL && options->count() > 0 )
+    {
+        ppsz_options = new const char *[options->count()];
+        for( int j = 0; j < options->count(); j++ ) {
+            QString option = colon_unescape( options->at(j) );
+            if( !option.isEmpty() ) {
+                ppsz_options[i_options] = strdup(qtu(option));
+                i_options++;
+            }
+        }
+    }
+
+    /* Add to playlist */
+    int i_ret = playlist_AddExt( THEPL, qtu(mrl), title, b_start,
+                  i_options, ppsz_options, VLC_INPUT_OPTION_TRUSTED,
+                  b_playlist );
+
     /* Add to recent items, only if played */
-    if( b_start )
+    if( i_ret == VLC_SUCCESS && b_start && b_playlist )
         RecentsMRL::getInstance( p_intf )->addRecent( mrl );
 
-    return VLC_SUCCESS;
+    /* Free options */
+    if ( ppsz_options != NULL )
+    {
+        for ( int i = 0; i < i_options; ++i )
+            free( (char*)ppsz_options[i] );
+        delete[] ppsz_options;
+    }
+    return i_ret;
 }
+

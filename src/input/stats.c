@@ -2,6 +2,7 @@
  * stats.c: Statistics handling
  *****************************************************************************
  * Copyright (C) 2006 VLC authors and VideoLAN
+ * $Id: d7ee85a6e1fbd9210a38ef75237b57cd3d807a65 $
  *
  * Authors: Clément Stenac <zorglub@videolan.org>
  *
@@ -24,113 +25,185 @@
 # include "config.h"
 #endif
 
-#include <stdlib.h>
-#include <string.h>
-
 #include <vlc_common.h>
 #include "input/input_internal.h"
 
 /**
  * Create a statistics counter
+ * \param i_compute_type the aggregation type. One of STATS_LAST (always
+ * keep the last value), STATS_COUNTER (increment by the passed value),
+ * STATS_MAX (keep the maximum passed value), STATS_MIN, or STATS_DERIVATIVE
+ * (keep a time derivative of the value)
  */
-static void input_rate_Init(input_rate_t *rate)
+counter_t * stats_CounterCreate( int i_compute_type )
 {
-    vlc_mutex_init(&rate->lock);
-    rate->updates = 0;
-    rate->value = 0;
-    rate->samples[0].date = VLC_TICK_INVALID;
-    rate->samples[1].date = VLC_TICK_INVALID;
+    counter_t *p_counter = (counter_t*) malloc( sizeof( counter_t ) ) ;
+
+    if( !p_counter ) return NULL;
+    p_counter->i_compute_type = i_compute_type;
+    p_counter->i_samples = 0;
+    p_counter->pp_samples = NULL;
+
+    p_counter->last_update = 0;
+
+    return p_counter;
 }
 
-static float stats_GetRate(const input_rate_t *rate)
+static inline int64_t stats_GetTotal(const counter_t *counter)
 {
-    if (rate->samples[1].date == VLC_TICK_INVALID)
+    if (counter == NULL || counter->i_samples == 0)
+        return 0;
+    return counter->pp_samples[0]->value;
+}
+
+static inline float stats_GetRate(const counter_t *counter)
+{
+    if (counter == NULL || counter->i_samples < 2)
         return 0.;
 
-    return (rate->samples[0].value - rate->samples[1].value)
-        / (float)(rate->samples[0].date - rate->samples[1].date);
+    return (counter->pp_samples[0]->value - counter->pp_samples[1]->value)
+        / (float)(counter->pp_samples[0]->date - counter->pp_samples[1]->date);
 }
 
-struct input_stats *input_stats_Create(void)
+input_stats_t *stats_NewInputStats( input_thread_t *p_input )
 {
-    struct input_stats *stats = malloc(sizeof (*stats));
-    if (unlikely(stats == NULL))
+    (void)p_input;
+    input_stats_t *p_stats = calloc( 1, sizeof(input_stats_t) );
+    if( !p_stats )
         return NULL;
 
-    input_rate_Init(&stats->input_bitrate);
-    input_rate_Init(&stats->demux_bitrate);
-    atomic_init(&stats->demux_corrupted, 0);
-    atomic_init(&stats->demux_discontinuity, 0);
-    atomic_init(&stats->decoded_audio, 0);
-    atomic_init(&stats->decoded_video, 0);
-    atomic_init(&stats->played_abuffers, 0);
-    atomic_init(&stats->lost_abuffers, 0);
-    atomic_init(&stats->displayed_pictures, 0);
-    atomic_init(&stats->lost_pictures, 0);
-    return stats;
+    vlc_mutex_init( &p_stats->lock );
+    stats_ReinitInputStats( p_stats );
+
+    return p_stats;
 }
 
-void input_stats_Destroy(struct input_stats *stats)
+void stats_ComputeInputStats(input_thread_t *input, input_stats_t *st)
 {
-    vlc_mutex_destroy(&stats->demux_bitrate.lock);
-    vlc_mutex_destroy(&stats->input_bitrate.lock);
-    free(stats);
-}
+    input_thread_private_t *priv = input_priv(input);
 
-void input_stats_Compute(struct input_stats *stats, input_stats_t *st)
-{
+    if (!libvlc_stats(input))
+        return;
+
+    vlc_mutex_lock(&priv->counters.counters_lock);
+    vlc_mutex_lock(&st->lock);
+
     /* Input */
-    vlc_mutex_lock(&stats->input_bitrate.lock);
-    st->i_read_packets = stats->input_bitrate.updates;
-    st->i_read_bytes = stats->input_bitrate.value;
-    st->f_input_bitrate = stats_GetRate(&stats->input_bitrate);
-    vlc_mutex_unlock(&stats->input_bitrate.lock);
+    st->i_read_packets = stats_GetTotal(priv->counters.p_read_packets);
+    st->i_read_bytes = stats_GetTotal(priv->counters.p_read_bytes);
+    st->f_input_bitrate = stats_GetRate(priv->counters.p_input_bitrate);
+    st->i_demux_read_bytes = stats_GetTotal(priv->counters.p_demux_read);
+    st->f_demux_bitrate = stats_GetRate(priv->counters.p_demux_bitrate);
+    st->i_demux_corrupted = stats_GetTotal(priv->counters.p_demux_corrupted);
+    st->i_demux_discontinuity = stats_GetTotal(priv->counters.p_demux_discontinuity);
 
-    vlc_mutex_lock(&stats->demux_bitrate.lock);
-    st->i_demux_read_bytes = stats->demux_bitrate.value;
-    st->f_demux_bitrate = stats_GetRate(&stats->demux_bitrate);
-    vlc_mutex_unlock(&stats->demux_bitrate.lock);
-    st->i_demux_corrupted = atomic_load_explicit(&stats->demux_corrupted,
-                                                 memory_order_relaxed);
-    st->i_demux_discontinuity = atomic_load_explicit(
-                    &stats->demux_discontinuity, memory_order_relaxed);
+    /* Decoders */
+    st->i_decoded_video = stats_GetTotal(priv->counters.p_decoded_video);
+    st->i_decoded_audio = stats_GetTotal(priv->counters.p_decoded_audio);
+
+    /* Sout */
+    if (priv->counters.p_sout_send_bitrate)
+    {
+        st->i_sent_packets = stats_GetTotal(priv->counters.p_sout_sent_packets);
+        st->i_sent_bytes = stats_GetTotal(priv->counters.p_sout_sent_bytes);
+        st->f_send_bitrate = stats_GetRate(priv->counters.p_sout_send_bitrate);
+    }
 
     /* Aout */
-    st->i_decoded_audio = atomic_load_explicit(&stats->decoded_audio,
-                                               memory_order_relaxed);
-    st->i_played_abuffers = atomic_load_explicit(&stats->played_abuffers,
-                                                 memory_order_relaxed);
-    st->i_lost_abuffers = atomic_load_explicit(&stats->lost_abuffers,
-                                               memory_order_relaxed);
+    st->i_played_abuffers = stats_GetTotal(priv->counters.p_played_abuffers);
+    st->i_lost_abuffers = stats_GetTotal(priv->counters.p_lost_abuffers);
 
     /* Vouts */
-    st->i_decoded_video = atomic_load_explicit(&stats->decoded_video,
-                                               memory_order_relaxed);
-    st->i_displayed_pictures = atomic_load_explicit(&stats->displayed_pictures,
-                                                    memory_order_relaxed);
-    st->i_lost_pictures = atomic_load_explicit(&stats->lost_pictures,
-                                               memory_order_relaxed);
+    st->i_displayed_pictures = stats_GetTotal(priv->counters.p_displayed_pictures);
+    st->i_lost_pictures = stats_GetTotal(priv->counters.p_lost_pictures);
+
+    vlc_mutex_unlock(&st->lock);
+    vlc_mutex_unlock(&priv->counters.counters_lock);
 }
+
+void stats_ReinitInputStats( input_stats_t *p_stats )
+{
+    vlc_mutex_lock( &p_stats->lock );
+    p_stats->i_read_packets = p_stats->i_read_bytes =
+    p_stats->f_input_bitrate = p_stats->f_average_input_bitrate =
+    p_stats->i_demux_read_packets = p_stats->i_demux_read_bytes =
+    p_stats->f_demux_bitrate = p_stats->f_average_demux_bitrate =
+    p_stats->i_demux_corrupted = p_stats->i_demux_discontinuity =
+    p_stats->i_displayed_pictures = p_stats->i_lost_pictures =
+    p_stats->i_played_abuffers = p_stats->i_lost_abuffers =
+    p_stats->i_decoded_video = p_stats->i_decoded_audio =
+    p_stats->i_sent_bytes = p_stats->i_sent_packets = p_stats->f_send_bitrate
+     = 0;
+    vlc_mutex_unlock( &p_stats->lock );
+}
+
+void stats_CounterClean( counter_t *p_c )
+{
+    if( p_c )
+    {
+        for( int i = 0; i < p_c->i_samples; i++ )
+            free( p_c->pp_samples[i] );
+        TAB_CLEAN(p_c->i_samples, p_c->pp_samples);
+        free( p_c );
+    }
+}
+
 
 /** Update a counter element with new values
  * \param p_counter the counter to update
  * \param val the vlc_value union containing the new value to aggregate. For
  * more information on how data is aggregated, \see stats_Create
+ * \param val_new a pointer that will be filled with new data
  */
-void input_rate_Add(input_rate_t *counter, uintmax_t val)
+void stats_Update( counter_t *p_counter, uint64_t val, uint64_t *new_val )
 {
-    counter->updates++;
-    counter->value += val;
-
-    /* Ignore samples within a second of another */
-    vlc_tick_t now = vlc_tick_now();
-    if (counter->samples[0].date != VLC_TICK_INVALID
-     && (now - counter->samples[0].date) < VLC_TICK_FROM_SEC(1))
+    if( !p_counter )
         return;
 
-    memcpy(counter->samples + 1, counter->samples,
-           sizeof (counter->samples[0]));
+    switch( p_counter->i_compute_type )
+    {
+    case STATS_DERIVATIVE:
+    {
+        counter_sample_t *p_new, *p_old;
+        mtime_t now = mdate();
+        if( now - p_counter->last_update < CLOCK_FREQ )
+            return;
+        p_counter->last_update = now;
+        /* Insert the new one at the beginning */
+        p_new = (counter_sample_t*)malloc( sizeof( counter_sample_t ) );
+        if (unlikely(p_new == NULL))
+            return; /* NOTE: Losing sample here */
 
-    counter->samples[0].value = counter->value;
-    counter->samples[0].date = now;
+        p_new->value = val;
+        p_new->date = p_counter->last_update;
+        TAB_INSERT(p_counter->i_samples, p_counter->pp_samples, p_new, 0);
+
+        if( p_counter->i_samples == 3 )
+        {
+            p_old = p_counter->pp_samples[2];
+            TAB_ERASE(p_counter->i_samples, p_counter->pp_samples, 2);
+            free( p_old );
+        }
+        break;
+    }
+    case STATS_COUNTER:
+        if( p_counter->i_samples == 0 )
+        {
+            counter_sample_t *p_new = (counter_sample_t*)malloc(
+                                               sizeof( counter_sample_t ) );
+            if (unlikely(p_new == NULL))
+                return; /* NOTE: Losing sample here */
+
+            p_new->value = 0;
+
+            TAB_APPEND(p_counter->i_samples, p_counter->pp_samples, p_new);
+        }
+        if( p_counter->i_samples == 1 )
+        {
+            p_counter->pp_samples[0]->value += val;
+            if( new_val )
+                *new_val = p_counter->pp_samples[0]->value;
+        }
+        break;
+    }
 }

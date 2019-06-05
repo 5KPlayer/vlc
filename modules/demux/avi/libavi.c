@@ -2,6 +2,7 @@
  * libavi.c : LibAVI
  *****************************************************************************
  * Copyright (C) 2001 VLC authors and VideoLAN
+ * $Id: a622b9a3cda308c7dca663e122f0f932d5e4030b $
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -86,8 +87,8 @@ static int AVI_ChunkReadCommon( stream_t *s, avi_chunk_t *p_chk,
 
     if( p_father && AVI_ChunkEnd( p_chk ) > AVI_ChunkEnd( p_father ) )
     {
-        msg_Warn( s, "chunk %4.4s does not fit into parent %"PRIu64,
-                  (char*)&p_chk->common.i_chunk_fourcc, AVI_ChunkEnd( p_father ) );
+        msg_Warn( s, "chunk %4.4s does not fit into parent %ld",
+                     (char*)&p_chk->common.i_chunk_fourcc, AVI_ChunkEnd( p_father ) );
 
         /* How hard is to produce files with the correct declared size ? */
         if( p_father->common.i_chunk_fourcc != AVIFOURCC_RIFF ||

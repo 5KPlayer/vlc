@@ -2,6 +2,7 @@
  * sdp.c : SDP creation helpers
  *****************************************************************************
  * Copyright © 2007 Rémi Denis-Courmont
+ * $Id: ab43de02086af009d8fc666814598d2fb1f5c0d6 $
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published by
@@ -38,7 +39,7 @@
 #define MAXSDPADDRESS 47
 
 static
-char *AddressToSDP (const struct sockaddr *addr, size_t addrlen, char *buf)
+char *AddressToSDP (const struct sockaddr *addr, socklen_t addrlen, char *buf)
 {
     if (addrlen < offsetof (struct sockaddr, sa_family)
                  + sizeof (addr->sa_family))

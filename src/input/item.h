@@ -2,6 +2,7 @@
  * item.h
  *****************************************************************************
  * Copyright (C) 2008 Laurent Aimar
+ * $Id: f4b89a411fd07b6b3082161a749d44094e73dc29 $
  *
  * Authors: Laurent Aimar <fenrir _AT_ videolan _DOT_ org>
  *
@@ -33,7 +34,7 @@ bool input_item_ShouldPreparseSubItems( input_item_t *p_i );
 typedef struct input_item_owner
 {
     input_item_t item;
-    vlc_atomic_rc_t rc;
+    atomic_uint refs;
 } input_item_owner_t;
 
 # define item_owner(item) ((struct input_item_owner *)(item))

@@ -2,6 +2,7 @@
  * vlcproc.hpp
  *****************************************************************************
  * Copyright (C) 2003 the VideoLAN team
+ * $Id: 76ebe1a0c5a976a11b85c7e8cb182df29789cdc0 $
  *
  * Authors: Cyril Deguet     <asmax@via.ecp.fr>
  *          Olivier Teulière <ipkiss@via.ecp.fr>
@@ -170,6 +171,11 @@ private:
     // init variables (libvlc and playlist levels)
     void init_variables();
 
+    /// Callback for intf-show variable
+    static int onIntfShow( vlc_object_t *pObj, const char *pVariable,
+                           vlc_value_t oldVal, vlc_value_t newVal,
+                           void *pParam );
+
     /// Callback for input-current variable
     static int onInputNew( vlc_object_t *pObj, const char *pVariable,
                            vlc_value_t oldVal, vlc_value_t newVal,
@@ -206,21 +212,11 @@ private:
     static int onGenericCallback( vlc_object_t *pObj, const char *pVariable,
                                   vlc_value_t oldVal, vlc_value_t newVal,
                                   void *pParam );
-    static int onInputCallback( vlc_object_t *pObj, const char *pVariable,
-                                vlc_value_t oldVal, vlc_value_t newVal,
-                                void *pParam );
-
-    static int onVoutCallback( vlc_object_t *pObj, const char *pVariable,
-                               vlc_value_t oldVal, vlc_value_t newVal,
-                               void *pParam );
-    static int onAoutCallback( vlc_object_t *pObj, const char *pVariable,
-                               vlc_value_t oldVal, vlc_value_t newVal,
-                               void *pParam );
 
     /// Generic Callback for intf-event
-    static int onIntfEvent( vlc_object_t *pObj, const char *pVariable,
-                            vlc_value_t oldVal, vlc_value_t newVal,
-                            void *pParam );
+    static int onGenericCallback2( vlc_object_t *pObj, const char *pVariable,
+                                   vlc_value_t oldVal, vlc_value_t newVal,
+                                   void *pParam );
 };
 
 #endif

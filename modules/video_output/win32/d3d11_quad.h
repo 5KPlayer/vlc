@@ -28,9 +28,30 @@
 
 #define SPHERE_RADIUS 1.f
 
-#define PS_CONST_LUMI_BOUNDS 0
-#define PS_CONST_COLORSPACE  1
-#define PS_CONST_COUNT       2
+/* A Quad is texture that can be displayed in a rectangle */
+typedef struct
+{
+    picture_sys_t             picSys;
+    const d3d_format_t        *formatInfo;
+    UINT                      resourceCount;
+    ID3D11Buffer              *pVertexBuffer;
+    UINT                      vertexCount;
+    UINT                      vertexStride;
+    ID3D11VertexShader        *d3dvertexShader;
+    ID3D11Buffer              *pIndexBuffer;
+    UINT                      indexCount;
+    ID3D11Buffer              *pVertexShaderConstants;
+    ID3D11Buffer              *pPixelShaderConstants[2];
+    UINT                       PSConstantsCount;
+    ID3D11PixelShader         *d3dpixelShader;
+    ID3D11InputLayout         *pVertexLayout;
+    D3D11_VIEWPORT            cropViewport;
+    unsigned int              i_width;
+    unsigned int              i_height;
+    video_projection_mode_t   projection;
+
+    PS_CONSTANT_BUFFER        shaderConstants;
+} d3d_quad_t;
 
 /* matches the D3D11_INPUT_ELEMENT_DESC we setup */
 typedef struct d3d_vertex_t {
@@ -45,27 +66,21 @@ typedef struct d3d_vertex_t {
     } texture;
 } d3d_vertex_t;
 
-typedef bool (*d3d11_select_plane_t)(void *opaque, size_t plane_index);
-
-void D3D11_RenderQuad(d3d11_device_t *, d3d_quad_t *, d3d_vshader_t *,
+void D3D11_RenderQuad(d3d11_device_t *, d3d_quad_t *,
                       ID3D11ShaderResourceView *resourceViews[D3D11_MAX_SHADER_VIEW],
-                      d3d11_select_plane_t selectPlane, void *selectOpaque);
-
-int D3D11_AllocateQuad(vlc_object_t *, d3d11_device_t *, video_projection_mode_t, d3d_quad_t *);
-#define D3D11_AllocateQuad(a,b,c,d)  D3D11_AllocateQuad(VLC_OBJECT(a),b,c,d)
+                      ID3D11RenderTargetView *);
 
 void D3D11_ReleaseQuad(d3d_quad_t *);
 
 int D3D11_SetupQuad(vlc_object_t *, d3d11_device_t *, const video_format_t *, d3d_quad_t *,
                     const display_info_t *, const RECT *,
+                    ID3D11VertexShader *, ID3D11InputLayout *, video_projection_mode_t,
                     video_orientation_t);
-#define D3D11_SetupQuad(a,b,c,d,e,f,g)  D3D11_SetupQuad(VLC_OBJECT(a),b,c,d,e,f,g)
+#define D3D11_SetupQuad(a,b,c,d,e,f,g,h,i,j)  D3D11_SetupQuad(VLC_OBJECT(a),b,c,d,e,f,g,h,i,j)
 
 bool D3D11_UpdateQuadPosition( vlc_object_t *, d3d11_device_t *, d3d_quad_t *,
                                const RECT *output, video_orientation_t );
 #define D3D11_UpdateQuadPosition(a,b,c,d,e)  D3D11_UpdateQuadPosition(VLC_OBJECT(a),b,c,d,e)
-
-void D3D11_UpdateViewport(d3d_quad_t *, const RECT *, const d3d_format_t *display);
 
 void D3D11_UpdateQuadOpacity(vlc_object_t *, d3d11_device_t *, d3d_quad_t *, float opacity);
 #define D3D11_UpdateQuadOpacity(a,b,c,d)  D3D11_UpdateQuadOpacity(VLC_OBJECT(a),b,c,d)

@@ -2,6 +2,7 @@
  * idummy.c: dummy input plugin, to manage "vlc://" special options
  *****************************************************************************
  * Copyright (C) 2001, 2002 VLC authors and VideoLAN
+ * $Id: 6721df04c7c5b0dd34bb02988011bf33ba157ed7 $
  *
  * Authors: Samuel Hocevar <sam@zoy.org>
  *
@@ -39,7 +40,7 @@ static int OpenDemux( vlc_object_t * );
 vlc_module_begin ()
     set_shortname( N_("Dummy") )
     set_description( N_("Dummy input") )
-    set_capability( "access", 0 )
+    set_capability( "access_demux", 0 )
     set_callbacks( OpenDemux, NULL )
     add_shortcut( "dummy", "vlc" )
 vlc_module_end ()
@@ -55,25 +56,25 @@ static int DemuxNoOp( demux_t *demux )
 static int DemuxHold( demux_t *demux )
 {
     (void) demux;
-    vlc_tick_sleep( VLC_HARD_MIN_SLEEP ); /* FIXME!!! */
+    msleep( 10000 ); /* FIXME!!! */
     return 1;
 }
 
-typedef struct
+struct demux_sys_t
 {
-    vlc_tick_t end;
-    vlc_tick_t length;
-} demux_sys_t;
+    mtime_t end;
+    mtime_t length;
+};
 
 static int DemuxPause( demux_t *demux )
 {
     demux_sys_t *p_sys = demux->p_sys;
-    vlc_tick_t now = vlc_tick_now();
+    mtime_t now = mdate();
 
     if( now >= p_sys->end )
         return 0;
 
-    vlc_tick_sleep( VLC_HARD_MIN_SLEEP ); /* FIXME!!! */
+    msleep( 10000 ); /* FIXME!!! */
     return 1;
 }
 
@@ -87,7 +88,7 @@ static int ControlPause( demux_t *demux, int query, va_list args )
         {
             double *ppos = va_arg( args, double * );
             double pos;
-            vlc_tick_t now = vlc_tick_now();
+            mtime_t now = mdate();
 
             pos = 1. + ((double)(now - p_sys->end) / (double)p_sys->length);
             *ppos = (pos <= 1.) ? pos : 1.;
@@ -97,7 +98,7 @@ static int ControlPause( demux_t *demux, int query, va_list args )
         case DEMUX_SET_POSITION:
         {
             double pos = va_arg( args, double );
-            vlc_tick_t now = vlc_tick_now();
+            mtime_t now = mdate();
 
             p_sys->end = now + (p_sys->length * (1. - pos));
             break;
@@ -105,21 +106,22 @@ static int ControlPause( demux_t *demux, int query, va_list args )
 
         case DEMUX_GET_LENGTH:
         {
-            *va_arg( args, vlc_tick_t * ) = p_sys->length;
+            mtime_t *plen = va_arg( args, mtime_t * );
+            *plen = p_sys->length;
             break;
         }
 
         case DEMUX_GET_TIME:
         {
-            vlc_tick_t *ppos = va_arg( args, vlc_tick_t * );
-            *ppos = vlc_tick_now() + p_sys->length - p_sys->end;
+            mtime_t *ppos = va_arg( args, mtime_t * );
+            *ppos = mdate() + p_sys->length - p_sys->end;
             break;
         }
 
         case DEMUX_SET_TIME:
         {
-            vlc_tick_t pos = va_arg( args, vlc_tick_t );
-            p_sys->end = vlc_tick_now() + p_sys->length - pos;
+            mtime_t pos = va_arg( args, mtime_t );
+            p_sys->end = mdate() + p_sys->length - pos;
             break;
         }
 
@@ -139,7 +141,7 @@ static int ControlPause( demux_t *demux, int query, va_list args )
 static int OpenDemux( vlc_object_t *p_this )
 {
     demux_t *p_demux = (demux_t*)p_this;
-    const char *psz_name = p_demux->psz_location;
+    char * psz_name = p_demux->psz_location;
 
     p_demux->p_sys = NULL;
 
@@ -159,7 +161,7 @@ nop:
         msg_Info( p_demux, "command `quit'" );
         p_demux->pf_demux = DemuxNoOp;
         p_demux->pf_control = DemuxControl;
-        libvlc_Quit( vlc_object_instance(p_demux) );
+        libvlc_Quit( p_demux->obj.libvlc );
         return VLC_SUCCESS;
     }
 
@@ -176,7 +178,7 @@ nop:
     if( !strncasecmp( psz_name, "pause:", 6 ) )
     {
         double f = us_atof( psz_name + 6 );
-        vlc_tick_t length = vlc_tick_from_sec( f );
+        mtime_t length = f * CLOCK_FREQ;
 
         msg_Info( p_demux, "command `pause %f'", f );
         if( length == 0 )
@@ -186,7 +188,7 @@ nop:
         if( p_sys == NULL )
             return VLC_ENOMEM;
 
-        p_sys->end = vlc_tick_now() + length;
+        p_sys->end = mdate() + length;
         p_sys->length = length;
 
         p_demux->p_sys = p_sys;
@@ -206,7 +208,8 @@ static int DemuxControl( demux_t *p_demux, int i_query, va_list args )
     {
     case DEMUX_GET_PTS_DELAY:
     {
-        *va_arg( args, vlc_tick_t * ) = DEFAULT_PTS_DELAY;
+        int64_t *pi_pts_delay = va_arg( args, int64_t * );
+        *pi_pts_delay = DEFAULT_PTS_DELAY;
         return VLC_SUCCESS;
     }
     default:

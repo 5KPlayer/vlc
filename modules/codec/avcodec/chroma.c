@@ -2,6 +2,7 @@
  * chroma.c: libavutil <-> libvlc conversion routines
  *****************************************************************************
  * Copyright (C) 1999-2008 VLC authors and VideoLAN
+ * $Id: e622e25c7a68e74c9dc3caa132606ccfe7280427 $
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *          Gildas Bazin <gbazin@videolan.org>
@@ -85,7 +86,7 @@ static const struct
     {VLC_CODEC_I420_9B, AV_PIX_FMT_YUV420P9BE, 0, 0, 0 },
     {VLC_CODEC_I420_10L, AV_PIX_FMT_YUV420P10LE, 0, 0, 0 },
     {VLC_CODEC_I420_10B, AV_PIX_FMT_YUV420P10BE, 0, 0, 0 },
-#ifdef AV_PIX_FMT_YUV420P12 /* 54, 17, 100 */
+#if (LIBAVUTIL_VERSION_MICRO >= 100 && LIBAVUTIL_VERSION_INT >= AV_VERSION_INT( 54, 17, 100 ) )
     {VLC_CODEC_I420_12L, AV_PIX_FMT_YUV420P12LE, 0, 0, 0 },
     {VLC_CODEC_I420_12B, AV_PIX_FMT_YUV420P12BE, 0, 0, 0 },
 #endif
@@ -99,9 +100,7 @@ static const struct
     {VLC_CODEC_I422_9B, AV_PIX_FMT_YUV422P9BE, 0, 0, 0 },
     {VLC_CODEC_I422_10L, AV_PIX_FMT_YUV422P10LE, 0, 0, 0 },
     {VLC_CODEC_I422_10B, AV_PIX_FMT_YUV422P10BE, 0, 0, 0 },
-    {VLC_CODEC_I422_16L, AV_PIX_FMT_YUV422P16LE, 0, 0, 0 },
-    {VLC_CODEC_I422_16B, AV_PIX_FMT_YUV422P16BE, 0, 0, 0 },
-#ifdef AV_PIX_FMT_YUV422P12 /* 54, 17, 100 */
+#if (LIBAVUTIL_VERSION_MICRO >= 100 && LIBAVUTIL_VERSION_INT >= AV_VERSION_INT( 54, 17, 100 ) )
     {VLC_CODEC_I422_12L, AV_PIX_FMT_YUV422P12LE, 0, 0, 0 },
     {VLC_CODEC_I422_12B, AV_PIX_FMT_YUV422P12BE, 0, 0, 0 },
 #endif
@@ -117,7 +116,7 @@ static const struct
     {VLC_CODEC_I444_9B, AV_PIX_FMT_YUV444P9BE, 0, 0, 0 },
     {VLC_CODEC_I444_10L, AV_PIX_FMT_YUV444P10LE, 0, 0, 0 },
     {VLC_CODEC_I444_10B, AV_PIX_FMT_YUV444P10BE, 0, 0, 0 },
-#ifdef AV_PIX_FMT_YUV444P12 /* 54, 17, 100 */
+#if (LIBAVUTIL_VERSION_MICRO >= 100 && LIBAVUTIL_VERSION_INT >= AV_VERSION_INT( 54, 17, 100 ) )
     {VLC_CODEC_I444_12L, AV_PIX_FMT_YUV444P12LE, 0, 0, 0 },
     {VLC_CODEC_I444_12B, AV_PIX_FMT_YUV444P12BE, 0, 0, 0 },
 #endif
@@ -146,26 +145,10 @@ static const struct
     VLC_RGB( VLC_CODEC_RGB32, AV_PIX_FMT_0BGR32, AV_PIX_FMT_0RGB32, 0x000000ff, 0x0000ff00, 0x00ff0000 )
 #endif
 
-#ifdef WORDS_BIGENDIAN
-    {VLC_CODEC_RGBA64, AV_PIX_FMT_RGBA64BE, 0, 0, 0 },
-#else /* !WORDS_BIGENDIAN */
-    {VLC_CODEC_RGBA64, AV_PIX_FMT_RGBA64LE, 0, 0, 0 },
-#endif /* !WORDS_BIGENDIAN */
-
     {VLC_CODEC_RGBA, AV_PIX_FMT_RGBA, 0, 0, 0 },
     {VLC_CODEC_ARGB, AV_PIX_FMT_ARGB, 0, 0, 0 },
     {VLC_CODEC_BGRA, AV_PIX_FMT_BGRA, 0, 0, 0 },
     {VLC_CODEC_GREY, AV_PIX_FMT_GRAY8, 0, 0, 0},
-#ifdef AV_PIX_FMT_GRAY10
-    {VLC_CODEC_GREY_10L, AV_PIX_FMT_GRAY10LE, 0, 0, 0},
-    {VLC_CODEC_GREY_10B, AV_PIX_FMT_GRAY10BE, 0, 0, 0},
-#endif
-#ifdef AV_PIX_FMT_GRAY12
-    {VLC_CODEC_GREY_12L, AV_PIX_FMT_GRAY12LE, 0, 0, 0},
-    {VLC_CODEC_GREY_12B, AV_PIX_FMT_GRAY12BE, 0, 0, 0},
-#endif
-    {VLC_CODEC_GREY_16L, AV_PIX_FMT_GRAY16LE, 0, 0, 0},
-    {VLC_CODEC_GREY_16B, AV_PIX_FMT_GRAY16BE, 0, 0, 0},
 
      /* Paletized RGB */
     {VLC_CODEC_RGBP, AV_PIX_FMT_PAL8, 0, 0, 0},
@@ -175,29 +158,13 @@ static const struct
     {VLC_CODEC_GBR_PLANAR_9B, AV_PIX_FMT_GBRP9BE, 0, 0, 0 },
     {VLC_CODEC_GBR_PLANAR_10L, AV_PIX_FMT_GBRP10LE, 0, 0, 0 },
     {VLC_CODEC_GBR_PLANAR_10B, AV_PIX_FMT_GBRP10BE, 0, 0, 0 },
-#ifdef AV_PIX_FMT_GBRP12 /* 55, 24, 0 / 51, 74, 100 */
-    {VLC_CODEC_GBR_PLANAR_12L, AV_PIX_FMT_GBRP12LE, 0, 0, 0 },
-    {VLC_CODEC_GBR_PLANAR_12B, AV_PIX_FMT_GBRP12BE, 0, 0, 0 },
-#endif
-#ifdef AV_PIX_FMT_GBRP14 /* ffmpeg only */
-    {VLC_CODEC_GBR_PLANAR_14L, AV_PIX_FMT_GBRP14LE, 0, 0, 0 },
-    {VLC_CODEC_GBR_PLANAR_14B, AV_PIX_FMT_GBRP14BE, 0, 0, 0 },
-#endif
     {VLC_CODEC_GBR_PLANAR_16L, AV_PIX_FMT_GBRP16LE, 0, 0, 0 },
     {VLC_CODEC_GBR_PLANAR_16B, AV_PIX_FMT_GBRP16BE, 0, 0, 0 },
-#ifdef AV_PIX_FMT_GBRAP10 /* 56, 1, 0 / 55, 25, 100 */
-    {VLC_CODEC_GBRA_PLANAR_10L, AV_PIX_FMT_GBRAP10LE, 0, 0, 0 },
-    {VLC_CODEC_GBRA_PLANAR_10B, AV_PIX_FMT_GBRAP10BE, 0, 0, 0 },
-#endif
-#ifdef AV_PIX_FMT_GBRAP12 /* 55, 25, 0, 19, 100 */
-    {VLC_CODEC_GBRA_PLANAR_12L, AV_PIX_FMT_GBRAP12LE, 0, 0, 0 },
-    {VLC_CODEC_GBRA_PLANAR_12B, AV_PIX_FMT_GBRAP12BE, 0, 0, 0 },
-#endif
-    {VLC_CODEC_GBRA_PLANAR_16L, AV_PIX_FMT_GBRAP16LE, 0, 0, 0 },
-    {VLC_CODEC_GBRA_PLANAR_16B, AV_PIX_FMT_GBRAP16BE, 0, 0, 0 },
 
     /* XYZ */
+#if LIBAVUTIL_VERSION_CHECK(52, 10, 0, 25, 100)
     {VLC_CODEC_XYZ12, AV_PIX_FMT_XYZ12, 0xfff0, 0xfff0, 0xfff0},
+#endif
     { 0, 0, 0, 0, 0 }
 };
 
@@ -233,6 +200,7 @@ vlc_fourcc_t FindVlcChroma( int i_ffmpeg_id )
 
 int GetVlcChroma( video_format_t *fmt, int i_ffmpeg_chroma )
 {
+    /* TODO FIXME for rgb format we HAVE to set rgb mask/shift */
     for( int i = 0; chroma_table[i].i_chroma != 0; i++ )
     {
         if( chroma_table[i].i_chroma_id == i_ffmpeg_chroma )
@@ -241,7 +209,6 @@ int GetVlcChroma( video_format_t *fmt, int i_ffmpeg_chroma )
             fmt->i_gmask = chroma_table[i].i_gmask;
             fmt->i_bmask = chroma_table[i].i_bmask;
             fmt->i_chroma = chroma_table[i].i_chroma;
-            video_format_FixRgb( fmt );
             return VLC_SUCCESS;
         }
     }

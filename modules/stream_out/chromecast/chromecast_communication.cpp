@@ -47,15 +47,17 @@ ChromecastCommunication::ChromecastCommunication( vlc_object_t* p_module,
     if (devicePort == 0)
         devicePort = CHROMECAST_CONTROL_PORT;
 
-    m_creds = vlc_tls_ClientCreate( vlc_object_parent(m_module) );
+    m_creds = vlc_tls_ClientCreate( m_module->obj.parent );
     if (m_creds == NULL)
         throw std::runtime_error( "Failed to create TLS client" );
 
+    /* Ignore ca checks */
+    m_creds->obj.flags |= OBJECT_FLAGS_INSECURE;
     m_tls = vlc_tls_SocketOpenTLS( m_creds, targetIP, devicePort, "tcps",
                                    NULL, NULL );
     if (m_tls == NULL)
     {
-        vlc_tls_ClientDelete(m_creds);
+        vlc_tls_Delete(m_creds);
         throw std::runtime_error( "Failed to create client session" );
     }
 
@@ -76,7 +78,7 @@ void ChromecastCommunication::disconnect()
     if ( m_tls != NULL )
     {
         vlc_tls_Close(m_tls);
-        vlc_tls_ClientDelete(m_creds);
+        vlc_tls_Delete(m_creds);
         m_tls = NULL;
     }
 }
@@ -121,6 +123,9 @@ int ChromecastCommunication::buildMessage(const std::string & namespace_,
 ssize_t ChromecastCommunication::receive( uint8_t *p_data, size_t i_size, int i_timeout, bool *pb_timeout )
 {
     ssize_t i_received = 0;
+    struct pollfd ufd[1];
+    ufd[0].fd = vlc_tls_GetFD( m_tls );
+    ufd[0].events = POLLIN;
 
     struct iovec iov;
     iov.iov_base = p_data;
@@ -132,7 +137,7 @@ ssize_t ChromecastCommunication::receive( uint8_t *p_data, size_t i_size, int i_
      * connection as dead. */
     do
     {
-        ssize_t i_ret = m_tls->ops->readv( m_tls, &iov, 1 );
+        ssize_t i_ret = m_tls->readv( m_tls, &iov, 1 );
         if ( i_ret < 0 )
         {
 #ifdef _WIN32
@@ -143,11 +148,6 @@ ssize_t ChromecastCommunication::receive( uint8_t *p_data, size_t i_size, int i_
             {
                 return -1;
             }
-
-            struct pollfd ufd[1];
-            ufd[0].events = POLLIN;
-            ufd[0].fd = vlc_tls_GetPollFD( m_tls, &ufd[0].events );
-
             ssize_t val = vlc_poll_i11e(ufd, 1, i_timeout);
             if ( val < 0 )
                 return -1;

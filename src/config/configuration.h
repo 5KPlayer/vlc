@@ -55,16 +55,6 @@ extern bool config_dirty;
 
 bool config_IsSafe (const char *);
 
-/**
- * Gets the arch-specific installation directory.
- *
- * This function determines the directory containing the architecture-specific
- * installed asset files (such as executable plugins and compiled byte code).
- *
- * @return a heap-allocated string (use free() to release it), or NULL on error
- */
-char *config_GetLibDir(void) VLC_USED VLC_MALLOC;
-
 /* The configuration file */
 #define CONFIG_FILE                     "vlcrc"
 

@@ -2,6 +2,7 @@
  * record.c
  *****************************************************************************
  * Copyright (C) 2008 Laurent Aimar
+ * $Id: 5185d12d899d8ab11222671903e37fa309a86ad8 $
  *
  * Author: Laurent Aimar <fenrir _AT_ videolan _DOT_ org>
  *
@@ -32,7 +33,7 @@
 
 #include <assert.h>
 #include <vlc_stream.h>
-#include <vlc_input_item.h>
+#include <vlc_input.h>
 #include <vlc_fs.h>
 
 
@@ -53,11 +54,11 @@ vlc_module_end()
 /*****************************************************************************
  *
  *****************************************************************************/
-typedef struct
+struct stream_sys_t
 {
     FILE *f;        /* TODO it could be replaced by access_output_t one day */
     bool b_error;
-} stream_sys_t;
+};
 
 
 /****************************************************************************
@@ -79,9 +80,6 @@ static int Open ( vlc_object_t *p_this )
     stream_t *s = (stream_t*)p_this;
     stream_sys_t *p_sys;
 
-    if( s->s->pf_readdir != NULL )
-        return VLC_EGENERIC;
-
     /* */
     s->p_sys = p_sys = malloc( sizeof( *p_sys ) );
     if( !p_sys )
@@ -93,6 +91,7 @@ static int Open ( vlc_object_t *p_this )
     s->pf_read = Read;
     s->pf_seek = Seek;
     s->pf_control = Control;
+    stream_FilterSetDefaultReadDir( s );
 
     return VLC_SUCCESS;
 }
@@ -118,7 +117,7 @@ static ssize_t Read( stream_t *s, void *p_read, size_t i_read )
 {
     stream_sys_t *p_sys = s->p_sys;
     void *p_record = p_read;
-    const ssize_t i_record = vlc_stream_Read( s->s, p_record, i_read );
+    const ssize_t i_record = vlc_stream_Read( s->p_source, p_record, i_read );
 
     /* Dump read data */
     if( p_sys->f )
@@ -132,13 +131,13 @@ static ssize_t Read( stream_t *s, void *p_read, size_t i_read )
 
 static int Seek( stream_t *s, uint64_t offset )
 {
-    return vlc_stream_Seek( s->s, offset );
+    return vlc_stream_Seek( s->p_source, offset );
 }
 
 static int Control( stream_t *s, int i_query, va_list args )
 {
     if( i_query != STREAM_SET_RECORD_STATE )
-        return vlc_stream_vaControl( s->s, i_query, args );
+        return vlc_stream_vaControl( s->p_source, i_query, args );
 
     stream_sys_t *sys = s->p_sys;
     bool b_active = (bool)va_arg( args, int );
@@ -179,8 +178,7 @@ static int Start( stream_t *s, const char *psz_extension )
 
     /* Create file name
      * TODO allow prefix configuration */
-    psz_file = input_item_CreateFilename( s->p_input_item, psz_path,
-                                          INPUT_RECORD_PREFIX, psz_extension );
+    psz_file = input_CreateFilename( s->p_input, psz_path, INPUT_RECORD_PREFIX, psz_extension );
 
     free( psz_path );
 
@@ -195,7 +193,7 @@ static int Start( stream_t *s, const char *psz_extension )
     }
 
     /* signal new record file */
-    var_SetString( vlc_object_instance(s), "record-file", psz_file );
+    var_SetString( s->obj.libvlc, "record-file", psz_file );
 
     msg_Dbg( s, "Recording into %s", psz_file );
     free( psz_file );

@@ -29,9 +29,7 @@
 #include <string.h>
 #include <sys/types.h>
 #include <unistd.h>
-#ifdef HAVE_SYS_SOCKET_H
 #include <sys/socket.h>
-#endif
 
 #include <vlc_common.h>
 #include <vlc_block.h>

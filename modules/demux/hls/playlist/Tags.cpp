@@ -216,7 +216,7 @@ void AttributesTag::parseAttributes(const std::string &field)
                 break;
             }
             else /* out of range */
-                iss.get();
+                return;
         }
 
         std::string attrname = oss.str();
@@ -239,16 +239,6 @@ void AttributesTag::parseAttributes(const std::string &field)
             else if(c == '"')
             {
                 b_quoted = !b_quoted;
-                if(!b_quoted)
-                {
-                    oss.put((char)iss.get());
-                    break;
-                }
-            }
-            else if(!b_quoted && (c < '-' || c > 'z')) /* out of range */
-            {
-                iss.get();
-                continue;
             }
 
             if(!iss.eof())
@@ -277,20 +267,13 @@ ValuesListTag::~ValuesListTag()
 void ValuesListTag::parseAttributes(const std::string &field)
 {
     std::size_t pos = field.find(',');
-    Attribute *attr;
     if(pos != std::string::npos)
     {
-        attr = new (std::nothrow) Attribute("DURATION", field.substr(0, pos));
+        Attribute *attr = new (std::nothrow) Attribute("DURATION", field.substr(0, pos));
         if(attr)
             addAttribute(attr);
 
         attr = new (std::nothrow) Attribute("TITLE", field.substr(pos));
-        if(attr)
-            addAttribute(attr);
-    }
-    else /* broken EXTINF without mandatory comma */
-    {
-        attr = new (std::nothrow) Attribute("DURATION", field);
         if(attr)
             addAttribute(attr);
     }
@@ -316,7 +299,6 @@ Tag * TagFactory::createTagByName(const std::string &name, const std::string &va
         {"EXT-X-I-FRAMES-ONLY",             Tag::EXTXIFRAMESONLY},
         {"EXT-X-MEDIA",                     AttributesTag::EXTXMEDIA},
         {"EXT-X-STREAM-INF",                AttributesTag::EXTXSTREAMINF},
-        {"EXT-X-SESSION-KEY",               AttributesTag::EXTXSESSIONKEY},
         {"EXTINF",                          ValuesListTag::EXTINF},
         {"",                                SingleValueTag::URI},
         {NULL,                              0},
@@ -349,7 +331,6 @@ Tag * TagFactory::createTagByName(const std::string &name, const std::string &va
             return new (std::nothrow) ValuesListTag(exttagmapping[i].i, value);
 
         case AttributesTag::EXTXKEY:
-        case AttributesTag::EXTXSESSIONKEY:
         case AttributesTag::EXTXMAP:
         case AttributesTag::EXTXMEDIA:
         case AttributesTag::EXTXSTREAMINF:

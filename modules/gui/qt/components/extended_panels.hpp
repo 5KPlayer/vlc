@@ -2,6 +2,7 @@
  * extended_panels.hpp : Exentended Panels
  ****************************************************************************
  * Copyright (C) 2006 the VideoLAN team
+ * $Id: 6c7567966934720307afb0d0f18419495e70d38e $
  *
  * Authors: Clément Stenac <zorglub@videolan.org>
  *          Antoine Cellerier <dionoea at videolan dot org>
@@ -33,7 +34,6 @@
 #include "qt.hpp"
 #include "ui/equalizer.h"
 #include "ui/video_effects.h"
-#include "adapters/variables.hpp"
 
 #include <QTabWidget>
 
@@ -250,7 +250,6 @@ private:
     SyncWidget *subsSpin;
     QDoubleSpinBox *subSpeedSpin;
     QDoubleSpinBox *subDurationSpin;
-    QVLCFloat m_SubsDelayCfgFactor;
 
     bool b_userAction;
 

@@ -21,37 +21,32 @@
 #define SEGMENTCHUNK_HPP
 
 #include <string>
+#include "ICanonicalUrl.hpp"
 #include "../http/Chunk.h"
 #include "../StreamFormat.hpp"
 
 namespace adaptive
 {
-    namespace encryption
-    {
-        class CommonEncryptionSession;
-    }
 
     namespace playlist
     {
         using namespace http;
-        using namespace encryption;
 
         class BaseRepresentation;
+        class ISegment;
 
         class SegmentChunk : public AbstractChunk
         {
         public:
-            SegmentChunk(AbstractChunkSource *, BaseRepresentation *);
+            SegmentChunk(ISegment *segment, AbstractChunkSource *, BaseRepresentation *);
             virtual ~SegmentChunk();
-            void         setEncryptionSession(CommonEncryptionSession *);
+            virtual void onDownload(block_t **); // reimpl
             StreamFormat getStreamFormat() const;
             bool discontinuity;
 
         protected:
-            bool         decrypt(block_t **);
-            virtual void onDownload(block_t **); /* impl */
+            ISegment *segment;
             BaseRepresentation *rep;
-            CommonEncryptionSession *encryptionSession;
         };
 
     }

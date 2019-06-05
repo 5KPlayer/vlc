@@ -3,6 +3,7 @@
  *****************************************************************************
  * Copyright (C) 2003-2005 VLC authors and VideoLAN
  * Copyright © 2005-2010 Rémi Denis-Courmont
+ * $Id: 05092257a4a1f09451dc1e956d07b02093908dd4 $
  *
  * Author: Rémi Denis-Courmont <rem # videolan,org>
  *
@@ -73,27 +74,6 @@ VLC_USED static inline const char *IsUTF8(const char *str)
 }
 
 /**
- * Checks ASCII validity.
- *
- * Checks whether a null-terminated string is a valid ASCII bytes sequence
- * (non-printable ASCII characters 1-31 are permitted).
- *
- * \param str string to check
- *
- * \retval str the string is a valid null-terminated ASCII sequence
- * \retval NULL the string is not an ASCII sequence
- */
-VLC_USED static inline const char *IsASCII(const char *str)
-{
-    unsigned char c;
-
-    for (const char *p = str; (c = *p) != '\0'; p++)
-        if (c >= 0x80)
-            return NULL;
-    return str;
-}
-
-/**
  * Removes non-UTF-8 sequences.
  *
  * Replaces invalid or <i>over-long</i> UTF-8 bytes sequences within a
@@ -143,50 +123,6 @@ VLC_API char * vlc_strcasestr(const char *, const char *) VLC_USED;
 
 VLC_API char * FromCharset( const char *charset, const void *data, size_t data_size ) VLC_USED;
 VLC_API void * ToCharset( const char *charset, const char *in, size_t *outsize ) VLC_USED;
-
-#ifdef __APPLE__
-# include <CoreFoundation/CoreFoundation.h>
-
-/* Obtains a copy of the contents of a CFString in specified encoding.
- * Returns char* (must be freed by caller) or NULL on failure.
- */
-VLC_USED static inline char *FromCFString(const CFStringRef cfString,
-    const CFStringEncoding cfStringEncoding)
-{
-    // Try the quick way to obtain the buffer
-    const char *tmpBuffer = CFStringGetCStringPtr(cfString, cfStringEncoding);
-
-    if (tmpBuffer != NULL) {
-       return strdup(tmpBuffer);
-    }
-
-    // The quick way did not work, try the long way
-    CFIndex length = CFStringGetLength(cfString);
-    CFIndex maxSize =
-        CFStringGetMaximumSizeForEncoding(length, cfStringEncoding);
-
-    // If result would exceed LONG_MAX, kCFNotFound is returned
-    if (unlikely(maxSize == kCFNotFound)) {
-        return NULL;
-    }
-
-    // Account for the null terminator
-    maxSize++;
-
-    char *buffer = (char *)malloc(maxSize);
-
-    if (unlikely(buffer == NULL)) {
-        return NULL;
-    }
-
-    // Copy CFString in requested encoding to buffer
-    Boolean success = CFStringGetCString(cfString, buffer, maxSize, cfStringEncoding);
-
-    if (!success)
-        FREENULL(buffer);
-    return buffer;
-}
-#endif
 
 #ifdef _WIN32
 VLC_USED
@@ -266,6 +202,13 @@ static inline char *ToANSI (const char *utf8)
     return ToCodePage (GetACP (), utf8);
 }
 
+# ifdef UNICODE
+#  define FromT FromWide
+#  define ToT   ToWide
+# else
+#  define FromT FromANSI
+#  define ToT   ToANSI
+# endif
 # define FromLocale    FromANSI
 # define ToLocale      ToANSI
 # define LocaleFree(s) free((char *)(s))

@@ -1,6 +1,7 @@
 /*
  * media_player.c - libvlc smoke test
  *
+ * $Id: f3198b5bcf3ac76a60b115446cbb6dcf77c4ef2e $
  */
 
 /**********************************************************************
@@ -21,61 +22,30 @@
  **********************************************************************/
 
 #include "test.h"
-#include <vlc_common.h>
 
-static void on_event(const struct libvlc_event_t *event, void *data)
+static void wait_playing(libvlc_media_player_t *mp)
 {
-    (void) event;
-    vlc_sem_t *sem = data;
-    vlc_sem_post(sem);
+    libvlc_state_t state;
+    do {
+        state = libvlc_media_player_get_state (mp);
+    } while(state != libvlc_Playing &&
+            state != libvlc_Error &&
+            state != libvlc_Ended );
+
+    state = libvlc_media_player_get_state (mp);
+    assert(state == libvlc_Playing || state == libvlc_Ended);
 }
 
-static void play_and_wait(libvlc_media_player_t *mp)
+static void wait_paused(libvlc_media_player_t *mp)
 {
-    libvlc_event_manager_t *em = libvlc_media_player_event_manager(mp);
+    libvlc_state_t state;
+    do {
+        state = libvlc_media_player_get_state (mp);
+    } while(state != libvlc_Paused &&
+            state != libvlc_Ended );
 
-    vlc_sem_t sem;
-    vlc_sem_init(&sem, 0);
-
-    int res;
-    res = libvlc_event_attach(em, libvlc_MediaPlayerPlaying, on_event, &sem);
-    assert(!res);
-
-    libvlc_media_player_play(mp);
-
-    test_log("Waiting for playing\n");
-    vlc_sem_wait(&sem);
-
-    libvlc_event_detach(em, libvlc_MediaPlayerPlaying, on_event, &sem);
-
-    vlc_sem_destroy(&sem);
-}
-
-static void pause_and_wait(libvlc_media_player_t *mp)
-{
-    libvlc_event_manager_t *em = libvlc_media_player_event_manager(mp);
-
-    vlc_sem_t sem;
-    vlc_sem_init(&sem, 0);
-
-    int res;
-    res = libvlc_event_attach(em, libvlc_MediaPlayerPaused, on_event, &sem);
-    assert(!res);
-    res = libvlc_event_attach(em, libvlc_MediaPlayerEndReached, on_event, &sem);
-    assert(!res);
-
-    libvlc_media_player_set_pause(mp, true);
-
-    /* the end may have been already reached before attaching the event */
-    if (libvlc_media_player_get_state(mp) == libvlc_Playing)
-    {
-        test_log("Waiting for pause\n");
-        vlc_sem_wait(&sem);
-    }
-
-    vlc_sem_destroy(&sem);
-    libvlc_event_detach(em, libvlc_MediaPlayerPaused, on_event, &sem);
-    libvlc_event_detach(em, libvlc_MediaPlayerEndReached, on_event, &sem);
+    state = libvlc_media_player_get_state (mp);
+    assert(state == libvlc_Paused || state == libvlc_Ended);
 }
 
 /* Test a bunch of A/V properties. This most does nothing since the current
@@ -127,7 +97,7 @@ static void test_media_player_set_media(const char** argv, int argc)
 {
     const char * file = test_default_sample;
 
-    test_log ("Testing set_media\n");
+    log ("Testing set_media\n");
 
     libvlc_instance_t *vlc = libvlc_new (argc, argv);
     assert (vlc != NULL);
@@ -142,9 +112,11 @@ static void test_media_player_set_media(const char** argv, int argc)
 
     libvlc_media_release (md);
 
-    play_and_wait(mp);
+    libvlc_media_player_play (mp);
 
-    libvlc_media_player_stop_async (mp);
+    wait_playing (mp);
+
+    libvlc_media_player_stop (mp);
     libvlc_media_player_release (mp);
     libvlc_release (vlc);
 }
@@ -156,7 +128,7 @@ static void test_media_player_play_stop(const char** argv, int argc)
     libvlc_media_player_t *mi;
     const char * file = test_default_sample;
 
-    test_log ("Testing play and pause of %s\n", file);
+    log ("Testing play and pause of %s\n", file);
 
     vlc = libvlc_new (argc, argv);
     assert (vlc != NULL);
@@ -169,9 +141,11 @@ static void test_media_player_play_stop(const char** argv, int argc)
 
     libvlc_media_release (md);
 
-    play_and_wait(mi);
+    libvlc_media_player_play (mi);
 
-    libvlc_media_player_stop_async (mi);
+    wait_playing (mi);
+
+    libvlc_media_player_stop (mi);
     libvlc_media_player_release (mi);
     libvlc_release (vlc);
 }
@@ -183,7 +157,7 @@ static void test_media_player_pause_stop(const char** argv, int argc)
     libvlc_media_player_t *mi;
     const char * file = test_default_sample;
 
-    test_log ("Testing pause and stop of %s\n", file);
+    log ("Testing pause and stop of %s\n", file);
 
     vlc = libvlc_new (argc, argv);
     assert (vlc != NULL);
@@ -199,13 +173,17 @@ static void test_media_player_pause_stop(const char** argv, int argc)
     test_audio_video(mi);
     test_role(mi);
 
-    play_and_wait(mi);
+    libvlc_media_player_play (mi);
+    log ("Waiting for playing\n");
+    wait_playing (mi);
     test_audio_video(mi);
 
-    pause_and_wait(mi);
+    libvlc_media_player_set_pause (mi, true);
+    log ("Waiting for pause\n");
+    wait_paused (mi);
     test_audio_video(mi);
 
-    libvlc_media_player_stop_async (mi);
+    libvlc_media_player_stop (mi);
     test_audio_video(mi);
 
     libvlc_media_player_release (mi);

@@ -21,7 +21,6 @@
 #define SMOOTHSEGMENT_HPP
 
 #include "../adaptive/playlist/SegmentTemplate.h"
-#include "../adaptive/playlist/SegmentChunk.hpp"
 
 namespace smooth
 {
@@ -29,20 +28,13 @@ namespace smooth
     {
         using namespace adaptive::playlist;
 
-        class SmoothSegmentChunk : public SegmentChunk
-        {
-            public:
-                SmoothSegmentChunk(AbstractChunkSource *, BaseRepresentation *);
-                ~SmoothSegmentChunk();
-                virtual void onDownload(block_t **); /* reimpl */
-        };
-
         class SmoothSegment : public MediaSegmentTemplate
         {
             public:
                 SmoothSegment(SegmentInformation * = NULL);
-                ~SmoothSegment();
-                virtual SegmentChunk* createChunk(AbstractChunkSource *, BaseRepresentation *); /* reimpl */
+
+            protected:
+                virtual void onChunkDownload(block_t **, SegmentChunk *, BaseRepresentation *); //reimpl
         };
     }
 }

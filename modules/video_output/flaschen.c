@@ -54,9 +54,8 @@
 #define T_HEIGHT N_("Height")
 #define LT_HEIGHT N_("Video height")
 
-static int Open(vout_display_t *vd, const vout_display_cfg_t *cfg,
-                video_format_t *fmtp, vlc_video_context *context);
-static void Close(vout_display_t *vd);
+static int Open( vlc_object_t * );
+static void Close( vlc_object_t * );
 
 vlc_module_begin ()
     set_shortname( N_("Flaschen") )
@@ -78,27 +77,31 @@ vlc_module_end ()
  *****************************************************************************/
 struct vout_display_sys_t {
     int             fd;
+
+    picture_pool_t *pool;
 };
-static void            Display(vout_display_t *, picture_t *);
+static picture_pool_t *Pool(vout_display_t *, unsigned count);
+static void            Display(vout_display_t *, picture_t *, subpicture_t *);
 static int             Control(vout_display_t *, int, va_list);
 
 /*****************************************************************************
  * Open: activates flaschen vout display method
  *****************************************************************************/
-static int Open(vout_display_t *vd, const vout_display_cfg_t *cfg,
-                video_format_t *fmtp, vlc_video_context *context)
+static int Open(vlc_object_t *object)
 {
+    vout_display_t *vd = (vout_display_t *)object;
     vout_display_sys_t *sys;
     int fd;
-    const unsigned port = 1337;
+    unsigned port = 1337;
 
     vd->sys = sys = calloc(1, sizeof(*sys));
     if (!sys)
         return VLC_ENOMEM;
+    sys->pool = NULL;
     sys->fd = -1;
 
     /* */
-    video_format_t fmt = *fmtp;
+    video_format_t fmt = vd->fmt;
     fmt.i_chroma = VLC_CODEC_RGB24;
     /* TODO: check if this works on big-endian systems */
     fmt.i_rmask = 0xff0000;
@@ -137,25 +140,39 @@ static int Open(vout_display_t *vd, const vout_display_cfg_t *cfg,
     setsockopt (fd, SOL_SOCKET, SO_RCVBUF, &(int){ 0 }, sizeof (int));
 
 
-    *fmtp = fmt;
+    vd->fmt     = fmt;
 
+    vd->pool    = Pool;
     vd->prepare = NULL;
     vd->display = Display;
     vd->control = Control;
 
-    (void) cfg; (void) context;
+    vout_display_DeleteWindow(vd, NULL);
+
     return VLC_SUCCESS;
 }
 
-static void Close(vout_display_t *vd)
+static void Close(vlc_object_t *object)
 {
+    vout_display_t *vd = (vout_display_t *)object;
     vout_display_sys_t *sys = vd->sys;
+
+    if (sys->pool)
+        picture_pool_Release(sys->pool);
 
     net_Close(sys->fd);
     free(sys);
 }
 
-static void Display(vout_display_t *vd, picture_t *picture)
+static picture_pool_t *Pool(vout_display_t *vd, unsigned count)
+{
+    vout_display_sys_t *sys = vd->sys;
+    if (!sys->pool)
+        sys->pool = picture_pool_NewFromFormat(&vd->fmt, count);
+    return sys->pool;
+}
+
+static void Display(vout_display_t *vd, picture_t *picture, subpicture_t *subpicture)
 {
 #ifdef IOV_MAX
     const long iovmax = IOV_MAX;
@@ -163,17 +180,17 @@ static void Display(vout_display_t *vd, picture_t *picture)
     const long iovmax = sysconf(_SC_IOV_MAX);
 #endif
     vout_display_sys_t *sys = vd->sys;
-    video_format_t *fmt = &picture->format;
     int result;
+    VLC_UNUSED(subpicture);
 
     char buffer[64];
     int header_len = snprintf(buffer, sizeof(buffer), "P6\n%d %d\n255\n",
-                              fmt->i_width, fmt->i_height);
+                              vd->fmt.i_width, vd->fmt.i_height);
     /* TODO: support offset_{x,y,z}? (#FT:...) */
     /* Note the protocol doesn't include any picture order field. */
     /* (maybe add as comment?) */
 
-    int iovcnt = 1 + fmt->i_height;
+    int iovcnt = 1 + vd->fmt.i_height;
     if (unlikely(iovcnt > iovmax))
         return;
 
@@ -185,7 +202,7 @@ static void Display(vout_display_t *vd, picture_t *picture)
     for (int i = 1; i < iovcnt; i++)
     {
         iov[i].iov_base = src;
-        iov[i].iov_len = fmt->i_width * 3;
+        iov[i].iov_len = vd->fmt.i_width * 3;
         src += picture->p->i_pitch;
     }
 
@@ -201,9 +218,11 @@ static void Display(vout_display_t *vd, picture_t *picture)
     result = sendmsg(sys->fd, &hdr, 0);
     if (result < 0)
         msg_Err(vd, "sendmsg: error %s in vout display flaschen", vlc_strerror_c(errno));
-    else if (result < (int)(header_len + fmt->i_width * fmt->i_height * 3))
+    else if (result < (int)(header_len + vd->fmt.i_width * vd->fmt.i_height * 3))
         msg_Err(vd, "sendmsg only sent %d bytes in vout display flaschen", result);
         /* we might want to drop some frames? */
+
+    picture_Release(picture);
 }
 
 /**
@@ -218,8 +237,7 @@ static int Control(vout_display_t *vd, int query, va_list args)
     case VOUT_DISPLAY_CHANGE_ZOOM:
     case VOUT_DISPLAY_CHANGE_DISPLAY_FILLED:
     case VOUT_DISPLAY_CHANGE_SOURCE_ASPECT:
-    case VOUT_DISPLAY_CHANGE_SOURCE_CROP:
-        return VLC_SUCCESS;
+        return VLC_EGENERIC;
 
     default:
         msg_Err(vd, "Unsupported query in vout display flaschen");

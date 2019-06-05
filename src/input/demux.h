@@ -3,6 +3,7 @@
  *****************************************************************************
  * Copyright (C) 1998-2008 VLC authors and VideoLAN
  * Copyright (C) 2008 Laurent Aimar
+ * $Id: 00be2e9ab8f4823e2343d49132bd3cab92ae5358 $
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *
@@ -31,8 +32,9 @@
 
 /* stream_t *s could be null and then it mean a access+demux in one */
 demux_t *demux_NewAdvanced( vlc_object_t *p_obj, input_thread_t *p_parent_input,
-                            const char *psz_demux, const char *url,
-                            stream_t *s, es_out_t *out, bool );
+                            const char *psz_access, const char *psz_demux,
+                            const char *psz_path, stream_t *s, es_out_t *out, bool );
+#define demux_NewAdvanced( a, b, c, d, e, f, g, h ) demux_NewAdvanced(VLC_OBJECT(a),b,c,d,e,f,g,h)
 
 unsigned demux_TestAndClearFlags( demux_t *, unsigned );
 int demux_GetTitle( demux_t * );
@@ -48,11 +50,6 @@ int demux_GetSeekpoint( demux_t * );
  *
  * @param source input stream around which to build a filter chain
  * @param list colon-separated list of stream filters (upstream first)
- *
- * @note Like stream_FilterAutoNew(), this function takes ownership of the
- * source input stream, and transfers it to the first demux filter in the
- * constructed chain. Any use of the source after the function call is invalid
- * and undefined (unless the chain ends up empty).
  *
  * @return The last demux (filter) in the chain.
  * The return value is always a valid (non-NULL) demux pointer.

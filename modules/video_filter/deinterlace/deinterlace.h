@@ -2,6 +2,7 @@
  * deinterlace.h : deinterlacer plugin for vlc
  *****************************************************************************
  * Copyright (C) 2000-2011 VLC authors and VideoLAN
+ * $Id: 355f2f48824b3ab115c5a5c871ccc19feed58e25 $
  *
  * Author: Sam Hocevar <sam@zoy.org>
  *         Christophe Massiot <massiot@via.ecp.fr>
@@ -64,7 +65,7 @@ static const char *const mode_list_text[] = {
 /**
  * Top-level deinterlace subsystem state.
  */
-typedef struct
+struct filter_sys_t
 {
     const vlc_chroma_description_t *chroma;
 
@@ -82,6 +83,6 @@ typedef struct
         phosphor_sys_t phosphor; /**< Phosphor algorithm state. */
         ivtc_sys_t ivtc;         /**< IVTC algorithm state. */
     };
-} filter_sys_t;
+};
 
 #endif

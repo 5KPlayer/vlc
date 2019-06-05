@@ -2,6 +2,7 @@
  * notify.c : libnotify notification plugin
  *****************************************************************************
  * Copyright (C) 2006-2009 the VideoLAN team
+ * $Id: bd6bba6c32c8881bcb84c7d5030116a5508181ef $
  *
  * Authors: Christophe Mutricy <xtophe -at- videolan -dot- org>
  *
@@ -31,7 +32,7 @@
 #include <vlc_common.h>
 #include <vlc_plugin.h>
 #include <vlc_interface.h>
-#include <vlc_player.h>
+#include <vlc_input.h>
 #include <vlc_playlist.h>
 #include <vlc_url.h>
 
@@ -71,8 +72,8 @@ vlc_module_end ()
 /*****************************************************************************
  * Local prototypes
  *****************************************************************************/
-static void on_current_media_changed(vlc_player_t *player,
-                                     input_item_t *new_media, void *data);
+static int ItemChange( vlc_object_t *, const char *,
+                       vlc_value_t, vlc_value_t, void * );
 static int Notify( vlc_object_t *, const char *, GdkPixbuf *, intf_thread_t * );
 #define MAX_LENGTH 256
 
@@ -81,8 +82,6 @@ struct intf_sys_t
     NotifyNotification *notification;
     vlc_mutex_t     lock;
     bool            b_has_actions;
-    vlc_playlist_t  *playlist;
-    struct vlc_player_listener_id *player_listener;
 };
 
 /*****************************************************************************
@@ -96,27 +95,9 @@ static int Open( vlc_object_t *p_this )
     if( !p_sys )
         return VLC_ENOMEM;
 
-    p_sys->playlist = vlc_intf_GetMainPlaylist(p_intf);
-    vlc_player_t *player = vlc_playlist_GetPlayer(p_sys->playlist);
-    static const struct vlc_player_cbs player_cbs =
-    {
-        .on_current_media_changed = on_current_media_changed
-    };
-    vlc_player_Lock(player);
-    p_sys->player_listener = vlc_player_AddListener(player, &player_cbs, p_intf);
-    vlc_player_Unlock(player);
-    if (!p_sys->player_listener)
-    {
-        free(p_sys);
-        return VLC_EGENERIC;
-    }
-
     if( !notify_init( APPLICATION_NAME ) )
     {
         free( p_sys );
-        vlc_player_Lock(player);
-        vlc_player_RemoveListener(player, p_sys->player_listener);
-        vlc_player_Unlock(player);
         msg_Err( p_intf, "can't find notification daemon" );
         return VLC_EGENERIC;
     }
@@ -141,6 +122,9 @@ static int Open( vlc_object_t *p_this )
         g_list_free( p_caps );
     }
 
+    /* */
+    var_AddCallback( pl_Get( p_intf ), "input-current", ItemChange, p_intf );
+
     return VLC_SUCCESS;
 }
 
@@ -152,10 +136,7 @@ static void Close( vlc_object_t *p_this )
     intf_thread_t   *p_intf = ( intf_thread_t* ) p_this;
     intf_sys_t      *p_sys  = p_intf->p_sys;
 
-    vlc_player_t *player = vlc_playlist_GetPlayer(p_sys->playlist);
-    vlc_player_Lock(player);
-    vlc_player_RemoveListener(player, p_sys->player_listener);
-    vlc_player_Unlock(player);
+    var_DelCallback( pl_Get( p_intf ), "input-current", ItemChange, p_this );
 
     if( p_sys->notification )
     {
@@ -169,35 +150,42 @@ static void Close( vlc_object_t *p_this )
     notify_uninit();
 }
 
-static void on_current_media_changed(vlc_player_t *player,
-                                     input_item_t *p_input_item, void *data)
+/*****************************************************************************
+ * ItemChange: Playlist item change callback
+ *****************************************************************************/
+static int ItemChange( vlc_object_t *p_this, const char *psz_var,
+                       vlc_value_t oldval, vlc_value_t newval, void *param )
 {
-    (void) player;
-    intf_thread_t *p_intf = data;
-    intf_sys_t *p_sys = p_intf->p_sys;
+    VLC_UNUSED(psz_var); VLC_UNUSED(oldval); VLC_UNUSED(newval);
     char           psz_tmp[MAX_LENGTH];
     char           psz_notify[MAX_LENGTH];
     char           *psz_title;
     char           *psz_artist;
     char           *psz_album;
     char           *psz_arturl;
+    input_thread_t *p_input = newval.p_address;
+    intf_thread_t  *p_intf  = param;
+    intf_sys_t     *p_sys   = p_intf->p_sys;
 
-    if (!p_input_item)
-        return;
+    if( !p_input )
+        return VLC_SUCCESS;
+
+    /* Playing something ... */
+    input_item_t *p_input_item = input_GetItem( p_input );
+    psz_title = input_item_GetTitleFbName( p_input_item );
 
     /* Checking for click on directories */
     if(p_input_item->i_type == ITEM_TYPE_DIRECTORY || p_input_item->i_type == ITEM_TYPE_PLAYLIST
         || p_input_item->i_type == ITEM_TYPE_NODE || p_input_item->i_type== ITEM_TYPE_UNKNOWN
         || p_input_item->i_type == ITEM_TYPE_CARD){
-        return;
+        return VLC_SUCCESS;
     }
 
-    psz_title = input_item_GetTitleFbName( p_input_item );
     /* We need at least a title */
     if( EMPTY_STR( psz_title ) )
     {
         free( psz_title );
-        return;
+        return VLC_SUCCESS;
     }
 
     psz_artist = input_item_GetArtist( p_input_item );
@@ -245,13 +233,14 @@ static void on_current_media_changed(vlc_player_t *player,
         {
         /* Load icon from share/ */
             GError *p_error = NULL;
-            char *psz_pixbuf = config_GetSysPath(VLC_SYSDATA_DIR,
-                                     "icons/hicolor/48x48/"PACKAGE_NAME".png");
-            if (psz_pixbuf != NULL)
+            char *psz_pixbuf;
+            char *psz_data = config_GetDataDir();
+            if( asprintf( &psz_pixbuf, "%s/icons/48x48/vlc.png", psz_data ) >= 0 )
             {
                 pix = gdk_pixbuf_new_from_file( psz_pixbuf, &p_error );
                 free( psz_pixbuf );
             }
+            free( psz_data );
         }
     }
 
@@ -280,35 +269,31 @@ static void on_current_media_changed(vlc_player_t *player,
 
     vlc_mutex_lock( &p_sys->lock );
 
-    Notify( VLC_OBJECT(p_intf), psz_notify, pix, p_intf );
+    Notify( p_this, psz_notify, pix, p_intf );
 
     vlc_mutex_unlock( &p_sys->lock );
+
+    return VLC_SUCCESS;
 }
 
 /* libnotify callback, called when the "Next" button is pressed */
 static void Next( NotifyNotification *notification, gchar *psz, gpointer p )
 {
-    intf_thread_t *p_intf = (intf_thread_t *)p;
-    intf_sys_t *p_sys = p_intf->p_sys;
+    intf_thread_t *p_object = (intf_thread_t *)p;
 
     VLC_UNUSED(psz);
     notify_notification_close( notification, NULL );
-    vlc_playlist_Lock(  p_sys->playlist );
-    vlc_playlist_Next( p_sys->playlist );
-    vlc_playlist_Unlock(  p_sys->playlist );
+    playlist_Next( pl_Get( p_object ) );
 }
 
 /* libnotify callback, called when the "Previous" button is pressed */
 static void Prev( NotifyNotification *notification, gchar *psz, gpointer p )
 {
-    intf_thread_t *p_intf = (intf_thread_t *)p;
-    intf_sys_t *p_sys = p_intf->p_sys;
+    intf_thread_t *p_object = (intf_thread_t *)p;
 
     VLC_UNUSED(psz);
     notify_notification_close( notification, NULL );
-    vlc_playlist_Lock(  p_sys->playlist );
-    vlc_playlist_Prev( p_sys->playlist );
-    vlc_playlist_Unlock(  p_sys->playlist );
+    playlist_Prev( pl_Get( p_object ) );
 }
 
 static int Notify( vlc_object_t *p_this, const char *psz_temp, GdkPixbuf *pix,

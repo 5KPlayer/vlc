@@ -18,6 +18,11 @@
  * Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
+/**
+ * @file
+ * This file declares interruptible sleep functions.
+ */
+
 #ifndef VLC_INTERRUPT_H
 # define VLC_INTERRUPT_H 1
 # include <vlc_threads.h>
@@ -34,10 +39,7 @@ struct msghdr;
 
 /**
  * @defgroup interrupt Interruptible sleep
- * @ingroup thread
  * @{
- * @file
- * This file declares interruptible sleep functions.
  * @defgroup interrupt_sleep Interruptible sleep functions
  * @{
  */
@@ -61,7 +63,7 @@ struct msghdr;
 VLC_API int vlc_sem_wait_i11e(vlc_sem_t *);
 
 /**
- * Interruptible variant of vlc_tick_wait().
+ * Interruptible variant of mwait().
  *
  * Waits for a specified timestamp or, if the calling thread has an
  * interruption context, an interruption.
@@ -69,10 +71,10 @@ VLC_API int vlc_sem_wait_i11e(vlc_sem_t *);
  * @return EINTR if an interruption occurred, otherwise 0 once the timestamp is
  * reached.
  */
-VLC_API int vlc_mwait_i11e(vlc_tick_t);
+VLC_API int vlc_mwait_i11e(mtime_t);
 
 /**
- * Interruptible variant of vlc_tick_sleep().
+ * Interruptible variant of msleep().
  *
  * Waits for a specified timeout duration or, if the calling thread has an
  * interruption context, an interruption.
@@ -82,9 +84,9 @@ VLC_API int vlc_mwait_i11e(vlc_tick_t);
  * @return EINTR if an interruption occurred, otherwise 0 once the timeout
  * expired.
  */
-static inline int vlc_msleep_i11e(vlc_tick_t delay)
+static inline int vlc_msleep_i11e(mtime_t delay)
 {
-    return vlc_mwait_i11e(vlc_tick_now() + delay);
+    return vlc_mwait_i11e(mdate() + delay);
 }
 
 /**

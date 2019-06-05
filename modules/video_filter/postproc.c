@@ -2,6 +2,7 @@
  * postproc.c: video postprocessing using libpostproc
  *****************************************************************************
  * Copyright (C) 1999-2009 VLC authors and VideoLAN
+ * $Id: 65968bfdba9fdce32f53608c9d64b22c94e79782 $
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *          Gildas Bazin <gbazin@netcourrier.com>
@@ -105,7 +106,7 @@ static const char *const ppsz_filter_options[] = {
 /*****************************************************************************
  * filter_sys_t : libpostproc video postprocessing descriptor
  *****************************************************************************/
-typedef struct
+struct filter_sys_t
 {
     /* Never changes after init */
     pp_context *pp_context;
@@ -115,7 +116,7 @@ typedef struct
 
     /* Lock when using or changing pp_mode */
     vlc_mutex_t lock;
-} filter_sys_t;
+};
 
 
 /*****************************************************************************
@@ -125,8 +126,7 @@ static int OpenPostproc( vlc_object_t *p_this )
 {
     filter_t *p_filter = (filter_t *)p_this;
     filter_sys_t *p_sys;
-    vlc_value_t val, val_orig;
-    const char *desc;
+    vlc_value_t val, val_orig, text;
     int i_flags = 0;
 
     if( p_filter->fmt_in.video.i_chroma != p_filter->fmt_out.video.i_chroma ||
@@ -197,11 +197,12 @@ static int OpenPostproc( vlc_object_t *p_this )
 
     var_Create( p_filter, FILTER_PREFIX "q", VLC_VAR_INTEGER |
                 VLC_VAR_DOINHERIT | VLC_VAR_ISCOMMAND );
-    var_Change( p_filter, FILTER_PREFIX "q", VLC_VAR_SETTEXT,
-                _("Post processing") );
+
+    text.psz_string = _("Post processing");
+    var_Change( p_filter, FILTER_PREFIX "q", VLC_VAR_SETTEXT, &text, NULL );
 
     var_Get( p_filter, FILTER_PREFIX "q", &val_orig );
-    var_Change( p_filter, FILTER_PREFIX "q", VLC_VAR_DELCHOICE, val_orig );
+    var_Change( p_filter, FILTER_PREFIX "q", VLC_VAR_DELCHOICE, &val_orig, NULL );
 
     val.psz_string = var_GetNonEmptyString( p_filter, FILTER_PREFIX "name" );
     if( val_orig.i_int )
@@ -231,19 +232,20 @@ static int OpenPostproc( vlc_object_t *p_this )
         switch( val.i_int )
         {
             case 0:
-                desc = _("Disable");
+                text.psz_string = _("Disable");
                 break;
             case 1:
-                desc = _("Lowest");
+                text.psz_string = _("Lowest");
                 break;
             case PP_QUALITY_MAX:
-                desc = _("Highest");
+                text.psz_string = _("Highest");
                 break;
             default:
-                desc = NULL;
+                text.psz_string = NULL;
                 break;
         }
-        var_Change( p_filter, FILTER_PREFIX "q", VLC_VAR_ADDCHOICE, val, desc );
+        var_Change( p_filter, FILTER_PREFIX "q", VLC_VAR_ADDCHOICE,
+                    &val, text.psz_string?&text:NULL );
     }
 
     vlc_mutex_init( &p_sys->lock );

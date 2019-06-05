@@ -2,6 +2,7 @@
  * cmd_dvd.cpp
  *****************************************************************************
  * Copyright (C) 2003 the VideoLAN team
+ * $Id: 9e9c5f80c506a48b380ac41a66e323e5ca0303a0 $
  *
  * Authors: Olivier Teulière <ipkiss@via.ecp.fr>
  *
@@ -22,7 +23,7 @@
 
 #include "cmd_dvd.hpp"
 #include <vlc_input.h>
-#include <vlc_playlist_legacy.h>
+#include <vlc_playlist.h>
 
 void CmdDvdNextTitle::execute()
 {
@@ -31,7 +32,7 @@ void CmdDvdNextTitle::execute()
     if( p_input )
     {
         var_TriggerCallback( p_input, "next-title" );
-        input_Release(p_input);
+        vlc_object_release( p_input );
     }
 }
 
@@ -43,7 +44,7 @@ void CmdDvdPreviousTitle::execute()
     if( p_input )
     {
         var_TriggerCallback( p_input, "prev-title" );
-        input_Release(p_input);
+        vlc_object_release( p_input );
     }
 }
 
@@ -55,7 +56,7 @@ void CmdDvdNextChapter::execute()
     if( p_input )
     {
         var_TriggerCallback( p_input, "next-chapter" );
-        input_Release(p_input);
+        vlc_object_release( p_input );
     }
 }
 
@@ -67,7 +68,7 @@ void CmdDvdPreviousChapter::execute()
     if( p_input )
     {
         var_TriggerCallback( p_input, "prev-chapter" );
-        input_Release(p_input);
+        vlc_object_release( p_input );
     }
 }
 
@@ -79,7 +80,7 @@ void CmdDvdRootMenu::execute()
     if( p_input )
     {
         var_SetInteger( p_input, "title  0", 2);
-        input_Release(p_input);
+        vlc_object_release( p_input );
     }
 }
 

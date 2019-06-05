@@ -40,7 +40,6 @@ using namespace adaptive::http;
 AbstractChunkSource::AbstractChunkSource()
 {
     contentLength = 0;
-    requeststatus = RequestStatus::Success;
 }
 
 AbstractChunkSource::~AbstractChunkSource()
@@ -65,11 +64,6 @@ std::string AbstractChunkSource::getContentType() const
     return std::string();
 }
 
-enum RequestStatus AbstractChunkSource::getRequestStatus() const
-{
-    return requeststatus;
-}
-
 AbstractChunk::AbstractChunk(AbstractChunkSource *source_)
 {
     bytesRead = 0;
@@ -84,11 +78,6 @@ AbstractChunk::~AbstractChunk()
 std::string AbstractChunk::getContentType()
 {
     return source->getContentType();
-}
-
-enum RequestStatus AbstractChunk::getRequestStatus() const
-{
-    return source->getRequestStatus();
 }
 
 size_t AbstractChunk::getBytesRead() const
@@ -210,9 +199,9 @@ block_t * HTTPChunkSource::read(size_t readsize)
         return NULL;
     }
 
-    vlc_tick_t time = vlc_tick_now();
+    mtime_t time = mdate();
     ssize_t ret = connection->read(p_block->p_buffer, readsize);
-    time = vlc_tick_now() - time;
+    time = mdate() - time;
     if(ret < 0)
     {
         block_Release(p_block);
@@ -261,10 +250,10 @@ bool HTTPChunkSource::prepare()
                 break;
         }
 
-        requeststatus = connection->request(connparams.getPath(), bytesRange);
-        if(requeststatus != RequestStatus::Success)
+        int i_ret = connection->request(connparams.getPath(), bytesRange);
+        if(i_ret != VLC_SUCCESS)
         {
-            if(requeststatus == RequestStatus::Redirection)
+            if(i_ret == VLC_ETIMEOUT) /* redirection */
             {
                 HTTPConnection *httpconn = dynamic_cast<HTTPConnection *>(connection);
                 if(httpconn)
@@ -377,7 +366,7 @@ void HTTPChunkBufferedSource::bufferize(size_t readsize)
     struct
     {
         size_t size;
-        vlc_tick_t time;
+        mtime_t time;
     } rate = {0,0};
 
     ssize_t ret = connection->read(p_block->p_buffer, readsize);
@@ -388,7 +377,7 @@ void HTTPChunkBufferedSource::bufferize(size_t readsize)
         vlc_mutex_locker locker( &lock );
         done = true;
         rate.size = buffered + consumed;
-        rate.time = vlc_tick_now() - downloadstart;
+        rate.time = mdate() - downloadstart;
         downloadstart = 0;
     }
     else
@@ -401,7 +390,7 @@ void HTTPChunkBufferedSource::bufferize(size_t readsize)
         {
             done = true;
             rate.size = buffered + consumed;
-            rate.time = vlc_tick_now() - downloadstart;
+            rate.time = mdate() - downloadstart;
             downloadstart = 0;
         }
     }
@@ -418,7 +407,7 @@ bool HTTPChunkBufferedSource::prepare()
 {
     if(!prepared)
     {
-        downloadstart = vlc_tick_now();
+        downloadstart = mdate();
         return HTTPChunkSource::prepare();
     }
     return true;

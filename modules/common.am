@@ -8,17 +8,16 @@
 AUTOMAKE_OPTIONS = subdir-objects
 
 NULL =
-pluginsdir = $(pkglibdir)/plugins
+pluginsdir = $(vlclibdir)/plugins
 BUILT_SOURCES =
 CLEANFILES = $(BUILT_SOURCES)
 
 LTLIBVLCCORE = $(top_builddir)/src/libvlccore.la
 
 # Module name from object or executable file name.
-MODULE_STRING = $$(p="$@"; p="$${p\#\#*/}"; p="$${p\#lib}"; p="$${p%_plugin*}"; p=$$(echo "$$p"|sed 's/-/_/g'); p="$${p%.lo}"; echo "$$p")
-MODULE_NAME = $$(p="$@"; p=$$(echo "$$p"|sed 's/lib//g'); p="$${p%_plugin*}"; p=$$(echo "$$p"|sed 's/[-\/]/_/g'); p="$${p%.lo}"; echo "$$p")
+MODULE_NAME = $$(p="$@"; p="$${p\#\#*/}"; p="$${p\#lib}"; p="$${p%_plugin*}"; p=$$(echo "$$p"|sed 's/-/_/g'); p="$${p%.lo}"; echo "$$p")
 
-AM_CPPFLAGS = -DMODULE_STRING=\"$(MODULE_STRING)\"
+AM_CPPFLAGS = -DMODULE_STRING=\"$(MODULE_NAME)\"
 if HAVE_DYNAMIC_PLUGINS
 AM_CPPFLAGS += -D__PLUGIN__
 else
@@ -36,9 +35,6 @@ AM_LDFLAGS = \
 if HAVE_WIN32
 AM_LDFLAGS += $(top_builddir)/modules/module.rc.lo -Wc,-static
 endif
-AM_YFLAGS = -d -Wno-yacc
+AM_YFLAGS = -d
 
-SUFFIXES = .l .y .asm
-
-.asm.lo:
-	$(LIBTOOL) --mode=compile --tag=ASM $(X86ASM) $(X86ASMFLAGS) $(X86ASMDEFS) -I$(top_srcdir)/extras/include/x86/ $< -o $@
+SUFFIXES = .l .y

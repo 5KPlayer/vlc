@@ -30,13 +30,23 @@ namespace adaptive
 {
     namespace playlist
     {
+        class SegmentTimeline;
+
+        class Timelineable
+        {
+            public:
+                Timelineable();
+                ~Timelineable();
+                Property<SegmentTimeline *> segmentTimeline;
+        };
+
         class TimescaleAble
         {
             public:
                 TimescaleAble( TimescaleAble * = NULL );
-                virtual ~TimescaleAble();
+                ~TimescaleAble();
                 void setParentTimescaleAble( TimescaleAble * );
-                virtual Timescale inheritTimescale() const;
+                Timescale inheritTimescale() const;
                 void setTimescale( const Timescale & );
                 void setTimescale( uint64_t );
                 const Timescale & getTimescale() const;

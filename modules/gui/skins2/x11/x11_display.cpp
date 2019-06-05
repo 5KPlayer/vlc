@@ -2,6 +2,7 @@
  * x11_display.cpp
  *****************************************************************************
  * Copyright (C) 2003 the VideoLAN team
+ * $Id: 4dc86cb861c331621d90c58982a162803a7b6566 $
  *
  * Authors: Cyril Deguet     <asmax@via.ecp.fr>
  *          Olivier Teulière <ipkiss@via.ecp.fr>
@@ -340,7 +341,6 @@ void X11Display::testEWMH()
     TEST_EWMH( m_net_wm_window_opacity, "_NET_WM_WINDOW_OPACITY" )
 
     TEST_EWMH( m_net_wm_pid, "_NET_WM_PID" )
-    TEST_EWMH( m_net_workarea, "_NET_WORKAREA" )
 
 #undef TEST_EWMH
 

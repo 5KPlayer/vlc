@@ -3,6 +3,7 @@
  *****************************************************************************
  * Copyright (C) 2009 VLC authors and VideoLAN
  * Copyright (C) 2009 Laurent Aimar <fenrir _AT_ videolan _DOT_ org>
+ * $Id: 5e999926ec8cf309ed201373dd1338285a8cfc6a $
  *
  * Authors: Laurent Aimar <fenrir _AT_ videolan _DOT_ org>
  *
@@ -101,7 +102,7 @@ picture_t *picture_fifo_Peek(picture_fifo_t *fifo)
 
     return picture;
 }
-void picture_fifo_Flush(picture_fifo_t *fifo, vlc_tick_t date, bool flush_before)
+void picture_fifo_Flush(picture_fifo_t *fifo, mtime_t date, bool flush_before)
 {
     picture_t *picture;
 
@@ -117,8 +118,7 @@ void picture_fifo_Flush(picture_fifo_t *fifo, vlc_tick_t date, bool flush_before
         picture_t *next = picture->p_next;
 
         picture->p_next = NULL;
-        if ((date == VLC_TICK_INVALID) ||
-            ( flush_before && picture->date <= date) ||
+        if (( flush_before && picture->date <= date) ||
             (!flush_before && picture->date >= date))
             PictureFifoPush(&tmp, picture);
         else
@@ -130,7 +130,7 @@ void picture_fifo_Flush(picture_fifo_t *fifo, vlc_tick_t date, bool flush_before
     while ((picture = PictureFifoPop(&tmp)) != NULL)
         picture_Release(picture);
 }
-void picture_fifo_OffsetDate(picture_fifo_t *fifo, vlc_tick_t delta)
+void picture_fifo_OffsetDate(picture_fifo_t *fifo, mtime_t delta)
 {
     vlc_mutex_lock(&fifo->lock);
     for (picture_t *picture = fifo->first; picture != NULL;) {
@@ -141,7 +141,7 @@ void picture_fifo_OffsetDate(picture_fifo_t *fifo, vlc_tick_t delta)
 }
 void picture_fifo_Delete(picture_fifo_t *fifo)
 {
-    picture_fifo_Flush(fifo, VLC_TICK_INVALID, true);
+    picture_fifo_Flush(fifo, INT64_MAX, true);
     vlc_mutex_destroy(&fifo->lock);
     free(fifo);
 }

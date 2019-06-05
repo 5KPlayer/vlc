@@ -2,6 +2,7 @@
  * xa.c : xa file demux module for vlc
  *****************************************************************************
  * Copyright (C) 2005 Rémi Denis-Courmont
+ * $Id: c55632e3b15df845c7edb4ed67e3cf15d57ef272 $
  *
  * Authors: Rémi Denis-Courmont <rem # videolan.org>
  *
@@ -37,13 +38,14 @@
  * Module descriptor
  *****************************************************************************/
 static int  Open ( vlc_object_t * );
+static void Close( vlc_object_t * );
 
 vlc_module_begin ()
     set_description( N_("XA demuxer") )
     set_category( CAT_INPUT )
     set_subcategory( SUBCAT_INPUT_DEMUX )
     set_capability( "demux", 10 )
-    set_callbacks( Open, NULL )
+    set_callbacks( Open, Close )
 vlc_module_end ()
 
 /*****************************************************************************
@@ -52,7 +54,7 @@ vlc_module_end ()
 static int Demux  ( demux_t * );
 static int Control( demux_t *, int i_query, va_list args );
 
-typedef struct
+struct demux_sys_t
 {
     es_out_id_t     *p_es;
 
@@ -62,7 +64,7 @@ typedef struct
     unsigned int    i_bitrate;
 
     date_t          pts;
-} demux_sys_t;
+};
 
 typedef struct xa_header_t
 {
@@ -100,7 +102,7 @@ static int Open( vlc_object_t * p_this )
     if( GetWLE( peek + 8 ) != 1 ) /* format tag */
         return VLC_EGENERIC;
 
-    demux_sys_t *p_sys = vlc_obj_malloc( p_this, sizeof (*p_sys) );
+    demux_sys_t *p_sys = malloc( sizeof( demux_sys_t ) );
     if( unlikely( p_sys == NULL ) )
         return VLC_ENOMEM;
 
@@ -108,7 +110,10 @@ static int Open( vlc_object_t * p_this )
     xa_header_t xa;
 
     if( vlc_stream_Read( p_demux->s, &xa, HEADER_LENGTH ) < HEADER_LENGTH )
+    {
+        free( p_sys );
         return VLC_EGENERIC;
+    }
 
     es_format_t fmt;
     es_format_Init( &fmt, AUDIO_ES, VLC_CODEC_ADPCM_XA_EA );
@@ -138,14 +143,15 @@ static int Open( vlc_object_t * p_this )
 
     if( fmt.audio.i_rate == 0 || fmt.audio.i_channels == 0
      || fmt.audio.i_bitspersample != 16 )
+    {
+        free( p_sys );
         return VLC_EGENERIC;
+    }
 
     p_sys->p_es = es_out_Add( p_demux->out, &fmt );
-    if( unlikely(p_sys->p_es == NULL) )
-        return VLC_ENOMEM;
 
     date_Init( &p_sys->pts, fmt.audio.i_rate, 1 );
-    date_Set( &p_sys->pts, VLC_TICK_0 );
+    date_Set( &p_sys->pts, VLC_TS_0 );
 
     p_demux->pf_demux   = Demux;
     p_demux->pf_control = Control;
@@ -168,14 +174,15 @@ static int Demux( demux_t *p_demux )
     if( p_sys->i_data_size > 0 &&
         (i_offset - HEADER_LENGTH) >= p_sys->i_data_size )
     {
-        return VLC_DEMUXER_EOF;
+        /* EOF */
+        return 0;
     }
 
     p_block = vlc_stream_Block( p_demux->s, p_sys->i_frame_size * i_frames );
     if( p_block == NULL )
     {
         msg_Warn( p_demux, "cannot read data" );
-        return VLC_DEMUXER_EOF;
+        return 0;
     }
 
     i_frames = p_block->i_buffer / p_sys->i_frame_size;
@@ -185,7 +192,17 @@ static int Demux( demux_t *p_demux )
 
     date_Increment( &p_sys->pts, i_frames * FRAME_LENGTH );
 
-    return VLC_DEMUXER_SUCCESS;
+    return 1;
+}
+
+/*****************************************************************************
+ * Close: frees unused data
+ *****************************************************************************/
+static void Close ( vlc_object_t * p_this )
+{
+    demux_sys_t *p_sys  = ((demux_t *)p_this)->p_sys;
+
+    free( p_sys );
 }
 
 /*****************************************************************************

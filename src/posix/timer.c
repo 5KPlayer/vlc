@@ -22,13 +22,13 @@
 # include "config.h"
 #endif
 
-#include <stdatomic.h>
 #include <stdnoreturn.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <assert.h>
 
 #include <vlc_common.h>
+#include <vlc_atomic.h>
 
 /*
  * POSIX timers are essentially unusable from a library: there provide no safe
@@ -46,7 +46,7 @@ struct vlc_timer
     vlc_mutex_t  lock;
     void       (*func) (void *);
     void        *data;
-    vlc_tick_t   value, interval;
+    mtime_t      value, interval;
     atomic_uint  overruns;
 };
 
@@ -67,7 +67,7 @@ noreturn static void *vlc_timer_thread (void *data)
 
         if (timer->interval != 0)
         {
-            vlc_tick_t now = vlc_tick_now();
+            mtime_t now = mdate();
 
             if (now > timer->value)
             {   /* Update overrun counter */
@@ -80,7 +80,7 @@ noreturn static void *vlc_timer_thread (void *data)
             }
         }
 
-        vlc_tick_t value = timer->value;
+        mtime_t value = timer->value;
 
         if (vlc_cond_timedwait(&timer->reschedule, &timer->lock, value) == 0)
             continue;
@@ -144,13 +144,13 @@ void vlc_timer_destroy (vlc_timer_t timer)
 }
 
 void vlc_timer_schedule (vlc_timer_t timer, bool absolute,
-                         vlc_tick_t value, vlc_tick_t interval)
+                         mtime_t value, mtime_t interval)
 {
-    if (value == VLC_TIMER_DISARM)
+    if (value == 0)
         interval = 0;
     else
     if (!absolute)
-        value += vlc_tick_now();
+        value += mdate();
 
     vlc_mutex_lock (&timer->lock);
     timer->value = value;

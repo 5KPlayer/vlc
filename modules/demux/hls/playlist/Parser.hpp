@@ -29,14 +29,17 @@
 
 namespace adaptive
 {
-    class SharedResources;
-
     namespace playlist
     {
         class SegmentInformation;
         class MediaSegmentTemplate;
         class BasePeriod;
         class BaseAdaptationSet;
+    }
+
+    namespace http
+    {
+        class AuthStorage;
     }
 }
 
@@ -54,7 +57,7 @@ namespace hls
         class M3U8Parser
         {
             public:
-                M3U8Parser             (adaptive::SharedResources *);
+                M3U8Parser             (AuthStorage *auth);
                 virtual ~M3U8Parser    ();
 
                 M3U8 *             parse  (vlc_object_t *p_obj, stream_t *p_stream, const std::string &);
@@ -65,8 +68,9 @@ namespace hls
                 void createAndFillRepresentation(vlc_object_t *, BaseAdaptationSet *,
                                                  const AttributesTag *, const std::list<Tag *>&);
                 void parseSegments(vlc_object_t *, Representation *, const std::list<Tag *>&);
+                void setFormatFromExtension(Representation *rep, const std::string &);
                 std::list<Tag *> parseEntries(stream_t *);
-                adaptive::SharedResources *resources;
+                AuthStorage *auth;
         };
     }
 }

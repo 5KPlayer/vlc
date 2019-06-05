@@ -2,6 +2,7 @@
  * deinterlace.c : deinterlacer plugin for vlc
  *****************************************************************************
  * Copyright (C) 2000-2011 VLC authors and VideoLAN
+ * $Id: 9f9d5291ff82e14cbc36dfaad031560c3592eba6 $
  *
  * Author: Sam Hocevar <sam@zoy.org>
  *         Christophe Massiot <massiot@via.ecp.fr>
@@ -433,24 +434,17 @@ static void SetFilterMethod( filter_t *p_filter, const char *mode, bool pack )
 static void GetOutputFormat( filter_t *p_filter,
                       video_format_t *p_dst, const video_format_t *p_src )
 {
-    filter_sys_t *p_sys = p_filter->p_sys;
-    GetDeinterlacingOutput(&p_sys->context, p_dst, p_src);
+    GetDeinterlacingOutput(&p_filter->p_sys->context, p_dst, p_src);
 }
 
 /*****************************************************************************
  * video filter functions
  *****************************************************************************/
 
-picture_t *AllocPicture( filter_t *filter )
-{
-    return filter_NewPicture( filter );
-}
-
 /* This is the filter function. See Open(). */
 picture_t *Deinterlace( filter_t *p_filter, picture_t *p_pic )
 {
-    filter_sys_t *p_sys = p_filter->p_sys;
-    return DoDeinterlacing( p_filter, &p_sys->context, p_pic );
+    return DoDeinterlacing( p_filter, &p_filter->p_sys->context, p_pic );
 }
 
 /*****************************************************************************
@@ -459,8 +453,7 @@ picture_t *Deinterlace( filter_t *p_filter, picture_t *p_pic )
 
 void Flush( filter_t *p_filter )
 {
-    filter_sys_t *p_sys = p_filter->p_sys;
-    FlushDeinterlacing(&p_sys->context);
+    FlushDeinterlacing(&p_filter->p_sys->context);
 
     IVTCClearState( p_filter );
 }
@@ -475,8 +468,7 @@ int Mouse( filter_t *p_filter,
 {
     VLC_UNUSED(p_old);
     *p_mouse = *p_new;
-    filter_sys_t *p_sys = p_filter->p_sys;
-    if( p_sys->context.settings.b_half_height )
+    if( p_filter->p_sys->context.settings.b_half_height )
         p_mouse->i_y *= 2;
     return VLC_SUCCESS;
 }
@@ -574,13 +566,8 @@ notsupp:
         p_sys->pf_merge = pixel_size == 1 ? merge8_armv6 : merge16_armv6;
     else
 #endif
-#if defined(CAN_COMPILE_SVE)
-    if( vlc_CPU_ARM_SVE() )
-        p_sys->pf_merge = pixel_size == 1 ? merge8_arm_sve : merge16_arm_sve;
-    else
-#endif
 #if defined(CAN_COMPILE_ARM64)
-    if( vlc_CPU_ARM_NEON() )
+    if( vlc_CPU_ARM64_NEON() )
         p_sys->pf_merge = pixel_size == 1 ? merge8_arm64_neon : merge16_arm64_neon;
     else
 #endif

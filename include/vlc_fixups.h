@@ -90,7 +90,6 @@ typedef struct
 
 #if !defined (HAVE_ALIGNED_ALLOC) || \
     !defined (HAVE_MEMRCHR) || \
-    !defined (HAVE_QSORT_R) || \
     !defined (HAVE_STRLCPY) || \
     !defined (HAVE_STRNDUP) || \
     !defined (HAVE_STRNLEN) || \
@@ -165,6 +164,10 @@ int vasprintf (char **, const char *, va_list);
 #endif
 
 /* string.h */
+#ifndef HAVE_FFSLL
+int ffsll(long long);
+#endif
+
 #ifndef HAVE_MEMRCHR
 void *memrchr(const void *, int, size_t);
 #endif
@@ -403,8 +406,8 @@ enum
 struct pollfd
 {
     int fd;
-    short events;
-    short revents;
+    unsigned events;
+    unsigned revents;
 };
 #endif
 #ifndef HAVE_POLL
@@ -420,6 +423,9 @@ struct if_nameindex
     unsigned if_index;
     char    *if_name;
 };
+# endif
+# ifndef HAVE_IF_NAMETOINDEX
+#  define if_nametoindex(name)   atoi(name)
 # endif
 # define if_nameindex()         (errno = ENOBUFS, NULL)
 # define if_freenameindex(list) (void)0

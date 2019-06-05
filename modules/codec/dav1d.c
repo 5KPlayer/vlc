@@ -72,11 +72,11 @@ vlc_module_end ()
 /*****************************************************************************
  * decoder_sys_t: libaom decoder descriptor
  *****************************************************************************/
-typedef struct
+struct decoder_sys_t
 {
     Dav1dSettings s;
     Dav1dContext *c;
-} decoder_sys_t;
+};
 
 static const struct
 {
@@ -90,12 +90,10 @@ static const struct
     {VLC_CODEC_I422, DAV1D_PIXEL_LAYOUT_I422, 8},
     {VLC_CODEC_I444, DAV1D_PIXEL_LAYOUT_I444, 8},
 
-    {VLC_CODEC_GREY_10L, DAV1D_PIXEL_LAYOUT_I400, 10},
     {VLC_CODEC_I420_10L, DAV1D_PIXEL_LAYOUT_I420, 10},
     {VLC_CODEC_I422_10L, DAV1D_PIXEL_LAYOUT_I422, 10},
     {VLC_CODEC_I444_10L, DAV1D_PIXEL_LAYOUT_I444, 10},
 
-    {VLC_CODEC_GREY_12L, DAV1D_PIXEL_LAYOUT_I400, 12},
     {VLC_CODEC_I420_12L, DAV1D_PIXEL_LAYOUT_I420, 12},
     {VLC_CODEC_I422_12L, DAV1D_PIXEL_LAYOUT_I422, 12},
     {VLC_CODEC_I444_12L, DAV1D_PIXEL_LAYOUT_I444, 12},
@@ -133,7 +131,7 @@ static int NewPicture(Dav1dPicture *img, void *cookie)
         v->primaries = iso_23001_8_cp_to_vlc_primaries(img->seq_hdr->pri);
         v->transfer = iso_23001_8_tc_to_vlc_xfer(img->seq_hdr->trc);
         v->space = iso_23001_8_mc_to_vlc_coeffs(img->seq_hdr->mtrx);
-        v->color_range = img->seq_hdr->color_range ? COLOR_RANGE_FULL : COLOR_RANGE_LIMITED;
+        v->b_color_range_full = img->seq_hdr->color_range;
     }
 
     v->projection_mode = dec->fmt_in.video.projection_mode;
@@ -211,7 +209,7 @@ static int Decode(decoder_t *dec, block_t *block)
             block_Release(block);
             return VLCDEC_ECRITICAL;
         }
-        vlc_tick_t pts = block->i_pts == VLC_TICK_INVALID ? block->i_dts : block->i_pts;
+        mtime_t pts = block->i_pts == VLC_TS_INVALID ? block->i_dts : block->i_pts;
         p_data->m.timestamp = pts;
         b_eos = (block->i_flags & BLOCK_FLAG_END_OF_SEQUENCE);
     }
@@ -319,7 +317,7 @@ static int OpenDecoder(vlc_object_t *p_this)
     dec->fmt_out.video.primaries   = dec->fmt_in.video.primaries;
     dec->fmt_out.video.transfer    = dec->fmt_in.video.transfer;
     dec->fmt_out.video.space       = dec->fmt_in.video.space;
-    dec->fmt_out.video.color_range = dec->fmt_in.video.color_range;
+    dec->fmt_out.video.b_color_range_full = dec->fmt_in.video.b_color_range_full;
 
     return VLC_SUCCESS;
 }

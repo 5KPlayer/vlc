@@ -2,6 +2,7 @@
  * libvlc_media.h:  libvlc external API
  *****************************************************************************
  * Copyright (C) 1998-2009 VLC authors and VideoLAN
+ * $Id: 383f366b6940f7b3d89f5945e015793833ea541f $
  *
  * Authors: Clément Stenac <zorglub@videolan.org>
  *          Jean-Paul Saman <jpsaman@videolan.org>
@@ -27,8 +28,6 @@
 
 # ifdef __cplusplus
 extern "C" {
-# else
-#  include <stdbool.h>
 # endif
 
 /** \defgroup libvlc_media LibVLC media
@@ -140,6 +139,33 @@ typedef struct libvlc_media_stats_t
     float       f_send_bitrate;
 } libvlc_media_stats_t;
 
+typedef struct libvlc_media_track_info_t
+{
+    /* Codec fourcc */
+    uint32_t    i_codec;
+    int         i_id;
+    libvlc_track_type_t i_type;
+
+    /* Codec specific */
+    int         i_profile;
+    int         i_level;
+
+    union {
+        struct {
+            /* Audio specific */
+            unsigned    i_channels;
+            unsigned    i_rate;
+        } audio;
+        struct {
+            /* Video specific */
+            unsigned    i_height;
+            unsigned    i_width;
+        } video;
+    } u;
+
+} libvlc_media_track_info_t;
+
+
 typedef struct libvlc_audio_track_t
 {
     unsigned    i_channels;
@@ -179,17 +205,6 @@ typedef struct libvlc_video_viewpoint_t
     float f_field_of_view; /**< field of view in degrees ]0;180[ (default 80.)*/
 } libvlc_video_viewpoint_t;
 
-typedef enum libvlc_video_multiview_t
-{
-    libvlc_video_multiview_2d,                  /**< No stereoscopy: 2D picture. */
-    libvlc_video_multiview_stereo_sbs,          /**< Side-by-side */
-    libvlc_video_multiview_stereo_tb,           /**< Top-bottom */
-    libvlc_video_multiview_stereo_row,          /**< Row sequential */
-    libvlc_video_multiview_stereo_col,          /**< Column sequential */
-    libvlc_video_multiview_stereo_frame,        /**< Frame sequential */
-    libvlc_video_multiview_stereo_checkerboard, /**< Checkerboard pattern */
-} libvlc_video_multiview_t;
-
 typedef struct libvlc_video_track_t
 {
     unsigned    i_height;
@@ -202,7 +217,6 @@ typedef struct libvlc_video_track_t
     libvlc_video_orient_t       i_orientation;
     libvlc_video_projection_t   i_projection;
     libvlc_video_viewpoint_t    pose; /**< Initial view point */
-    libvlc_video_multiview_t    i_multiview;
 } libvlc_video_track_t;
 
 typedef struct libvlc_subtitle_track_t
@@ -348,6 +362,8 @@ typedef int (*libvlc_media_open_cb)(void *opaque, void **datap,
  *
  * \note If no data is immediately available, then the callback should sleep.
  * \warning The application is responsible for avoiding deadlock situations.
+ * In particular, the callback should return an error if playback is stopped;
+ * if it does not return, then libvlc_media_player_stop() will never return.
  */
 typedef ssize_t (*libvlc_media_read_cb)(void *opaque, unsigned char *buf,
                                         size_t len);
@@ -561,8 +577,6 @@ LIBVLC_API libvlc_media_t *libvlc_media_duplicate( libvlc_media_t *p_md );
 /**
  * Read the meta of the media.
  *
- * Note, you need to call libvlc_media_parse() or play the media at least once
- * before calling this function.
  * If the media has not yet been parsed this will return NULL.
  *
  * \see libvlc_media_parse
@@ -616,11 +630,12 @@ LIBVLC_API libvlc_state_t libvlc_media_get_state(
  * \param p_md: media descriptor object
  * \param p_stats: structure that contain the statistics about the media
  *                 (this structure must be allocated by the caller)
- * \retval true statistics are available
- * \retval false otherwise
+ * \return true if the statistics are available, false otherwise
+ *
+ * \libvlc_return_bool
  */
-LIBVLC_API bool libvlc_media_get_stats(libvlc_media_t *p_md,
-                                       libvlc_media_stats_t *p_stats);
+LIBVLC_API int libvlc_media_get_stats( libvlc_media_t *p_md,
+                                           libvlc_media_stats_t *p_stats );
 
 /* The following method uses libvlc_media_list_t, however, media_list usage is optionnal
  * and this is here for convenience */
@@ -649,10 +664,6 @@ LIBVLC_API libvlc_event_manager_t *
 
 /**
  * Get duration (in ms) of media descriptor object item.
- *
- * Note, you need to call libvlc_media_parse() or play the media at least once
- * before calling this function.
- * Not doing this will result in an undefined result.
  *
  * \param p_md media descriptor object
  * \return duration of media item or -1 on error
@@ -737,8 +748,6 @@ LIBVLC_API void
  * Get media descriptor's user_data. user_data is specialized data
  * accessed by the host application, VLC.framework uses it as a pointer to
  * an native object that references a libvlc_media_t pointer
- * 
- * \see libvlc_media_set_user_data
  *
  * \param p_md media descriptor object
  */
@@ -766,9 +775,6 @@ unsigned libvlc_media_tracks_get( libvlc_media_t *p_md,
 
 /**
  * Get codec description from media elementary stream
- *
- * Note, you need to call libvlc_media_parse() or play the media at least once
- * before calling this function.
  *
  * \version LibVLC 3.0.0 and later.
  *
@@ -808,88 +814,6 @@ void libvlc_media_tracks_release( libvlc_media_track_t **p_tracks,
  */
 LIBVLC_API
 libvlc_media_type_t libvlc_media_get_type( libvlc_media_t *p_md );
-
-/**
- * \brief libvlc_media_thumbnail_request_t An opaque thumbnail request object
- */
-typedef struct libvlc_media_thumbnail_request_t libvlc_media_thumbnail_request_t;
-
-typedef enum libvlc_thumbnailer_seek_speed_t
-{
-    libvlc_media_thumbnail_seek_precise,
-    libvlc_media_thumbnail_seek_fast,
-} libvlc_thumbnailer_seek_speed_t;
-
-/**
- * \brief libvlc_media_get_thumbnail_by_time Start an asynchronous thumbnail generation
- *
- * If the request is successfuly queued, the libvlc_MediaThumbnailGenerated
- * is guaranteed to be emited.
- *
- * \param md media descriptor object
- * \param time The time at which the thumbnail should be generated
- * \param speed The seeking speed \sa{libvlc_thumbnailer_seek_speed_t}
- * \param width The thumbnail width
- * \param height the thumbnail height
- * \param picture_type The thumbnail picture type \sa{libvlc_picture_type_t}
- * \param timeout A timeout value in ms, or 0 to disable timeout
- *
- * \return A valid opaque request object, or NULL in case of failure.
- * It must be released by libvlc_media_thumbnail_cancel().
- *
- * \version libvlc 4.0 or later
- *
- * \see libvlc_picture_t
- * \see libvlc_picture_type_t
- */
-LIBVLC_API libvlc_media_thumbnail_request_t*
-libvlc_media_thumbnail_request_by_time( libvlc_media_t *md,
-                                        libvlc_time_t time,
-                                        libvlc_thumbnailer_seek_speed_t speed,
-                                        unsigned int width, unsigned int height,
-                                        libvlc_picture_type_t picture_type,
-                                        libvlc_time_t timeout );
-
-/**
- * \brief libvlc_media_get_thumbnail_by_pos Start an asynchronous thumbnail generation
- *
- * If the request is successfuly queued, the libvlc_MediaThumbnailGenerated
- * is guaranteed to be emited.
- *
- * \param md media descriptor object
- * \param pos The position at which the thumbnail should be generated
- * \param speed The seeking speed \sa{libvlc_thumbnailer_seek_speed_t}
- * \param width The thumbnail width
- * \param height the thumbnail height
- * \param picture_type The thumbnail picture type \sa{libvlc_picture_type_t}
- * \param timeout A timeout value in ms, or 0 to disable timeout
- *
- * \return A valid opaque request object, or NULL in case of failure.
- * It must be released by libvlc_media_thumbnail_cancel().
- *
- * \version libvlc 4.0 or later
- *
- * \see libvlc_picture_t
- * \see libvlc_picture_type_t
- */
-LIBVLC_API libvlc_media_thumbnail_request_t*
-libvlc_media_thumbnail_request_by_pos( libvlc_media_t *md,
-                                       float pos,
-                                       libvlc_thumbnailer_seek_speed_t speed,
-                                       unsigned int width, unsigned int height,
-                                       libvlc_picture_type_t picture_type,
-                                       libvlc_time_t timeout );
-
-/**
- * @brief libvlc_media_thumbnail_cancel cancels a thumbnailing request
- * @param p_req An opaque thumbnail request object.
- *
- * Cancelling the request will still cause libvlc_MediaThumbnailGenerated event
- * to be emited, with a NULL libvlc_picture_t
- * If the request is cancelled after its completion, the behavior is undefined.
- */
-LIBVLC_API void
-libvlc_media_thumbnail_cancel( libvlc_media_thumbnail_request_t *p_req );
 
 /**
  * Add a slave to the current media.

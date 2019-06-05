@@ -59,12 +59,12 @@ vlc_module_begin()
     set_category(CAT_INPUT)
     set_subcategory(SUBCAT_INPUT_ACCESS)
     add_bool("nfs-auto-guid", true, AUTO_GUID_TEXT, AUTO_GUID_LONGTEXT, true)
-    set_capability("access", 0)
+    set_capability("access", 2)
     add_shortcut("nfs")
     set_callbacks(Open, Close)
 vlc_module_end()
 
-typedef struct
+struct access_sys_t
 {
     struct rpc_context *    p_mount; /* used to to get exports mount point */
     struct nfs_context *    p_nfs;
@@ -95,7 +95,7 @@ typedef struct
             bool b_done;
         } seek;
     } res;
-} access_sys_t;
+};
 
 static bool
 nfs_check_status(stream_t *p_access, int i_status, const char *psz_error,
@@ -293,8 +293,8 @@ FileControl(stream_t *p_access, int i_query, va_list args)
         }
 
         case STREAM_GET_PTS_DELAY:
-            *va_arg(args, vlc_tick_t *) = VLC_TICK_FROM_MS(
-                    var_InheritInteger(p_access, "network-caching") );
+            *va_arg(args, int64_t *) = var_InheritInteger(p_access,
+                                                          "network-caching");
             break;
 
         case STREAM_SET_PAUSE_STATE:

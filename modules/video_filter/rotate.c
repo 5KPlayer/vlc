@@ -2,6 +2,7 @@
  * rotate.c : video rotation filter
  *****************************************************************************
  * Copyright (C) 2000-2008 VLC authors and VideoLAN
+ * $Id: 84e66b02493c521a2a0f0c5ad29ce9554ad9f5a0 $
  *
  * Authors: Antoine Cellerier <dionoea -at- videolan -dot- org>
  *
@@ -29,11 +30,11 @@
 #endif
 
 #include <math.h>                                            /* sin(), cos() */
-#include <stdatomic.h>
 
 #define VLC_MODULE_LICENSE VLC_LICENSE_GPL_2_PLUS
 #include <vlc_common.h>
 #include <vlc_plugin.h>
+#include <vlc_atomic.h>
 #include <vlc_filter.h>
 #include <vlc_picture.h>
 #include "filter_picture.h"
@@ -85,11 +86,11 @@ static const char *const ppsz_filter_options[] = {
 /*****************************************************************************
  * filter_sys_t
  *****************************************************************************/
-typedef struct
+struct filter_sys_t
 {
     atomic_uint_fast32_t sincos;
     motion_sensors_t *p_motion;
-} filter_sys_t;
+};
 
 typedef union {
     uint32_t u;
@@ -99,7 +100,7 @@ typedef union {
     };
 } sincos_t;
 
-static void store_trigo( filter_sys_t *sys, float f_angle )
+static void store_trigo( struct filter_sys_t *sys, float f_angle )
 {
     sincos_t sincos;
 
@@ -110,7 +111,7 @@ static void store_trigo( filter_sys_t *sys, float f_angle )
     atomic_store(&sys->sincos, sincos.u);
 }
 
-static void fetch_trigo( filter_sys_t *sys, int *i_sin, int *i_cos )
+static void fetch_trigo( struct filter_sys_t *sys, int *i_sin, int *i_cos )
 {
     sincos_t sincos = { .u = atomic_load(&sys->sincos) };
 

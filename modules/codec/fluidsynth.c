@@ -2,6 +2,7 @@
  * fluidsynth.c: Software MIDI synthesizer using libfluidsynth
  *****************************************************************************
  * Copyright © 2007 Rémi Denis-Courmont
+ * $Id: f461f3fd14716f2147a200ba614c53ae6c2712f4 $
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published by
@@ -72,7 +73,8 @@ vlc_module_begin ()
     set_category (CAT_INPUT)
     set_subcategory (SUBCAT_INPUT_ACODEC)
     set_callbacks (Open, Close)
-    add_loadfile("soundfont", "", SOUNDFONT_TEXT, SOUNDFONT_LONGTEXT)
+    add_loadfile ("soundfont", "",
+                  SOUNDFONT_TEXT, SOUNDFONT_LONGTEXT, false)
     add_bool ("synth-chorus", true, CHORUS_TEXT, CHORUS_TEXT, false)
     add_float ("synth-gain", .5, GAIN_TEXT, GAIN_LONGTEXT, false)
         change_float_range (0., 10.)
@@ -86,13 +88,13 @@ vlc_module_begin ()
 vlc_module_end ()
 
 
-typedef struct
+struct decoder_sys_t
 {
     fluid_settings_t *settings;
     fluid_synth_t    *synth;
     int               soundfont;
     date_t            end_date;
-} decoder_sys_t;
+};
 
 
 static int  DecodeBlock (decoder_t *p_dec, block_t *p_block);
@@ -173,6 +175,7 @@ static int Open (vlc_object_t *p_this)
     p_dec->fmt_out.i_codec = VLC_CODEC_FL32;
     p_dec->fmt_out.audio.i_bitspersample = 32;
     date_Init (&p_sys->end_date, p_dec->fmt_out.audio.i_rate, 1);
+    date_Set (&p_sys->end_date, 0);
 
     p_dec->p_sys = p_sys;
     p_dec->pf_decode = DecodeBlock;
@@ -195,7 +198,7 @@ static void Flush (decoder_t *p_dec)
 {
     decoder_sys_t *p_sys = p_dec->p_sys;
 
-    date_Set (&p_sys->end_date, VLC_TICK_INVALID);
+    date_Set (&p_sys->end_date, VLC_TS_INVALID);
     //fluid_synth_system_reset (p_sys->synth);
     fluid_synth_program_reset (p_sys->synth);
     for (unsigned channel = 0; channel < 16; channel++)
@@ -221,8 +224,7 @@ static int DecodeBlock (decoder_t *p_dec, block_t *p_block)
         }
     }
 
-    if (p_block->i_pts != VLC_TICK_INVALID
-     && date_Get(&p_sys->end_date) == VLC_TICK_INVALID)
+    if (p_block->i_pts > VLC_TS_INVALID && !date_Get (&p_sys->end_date))
         date_Set (&p_sys->end_date, p_block->i_pts);
     else
     if (p_block->i_pts < date_Get (&p_sys->end_date))

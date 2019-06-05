@@ -2,6 +2,7 @@
  * text_style.c
  *****************************************************************************
  * Copyright (C) 1999-2010 VLC authors and VideoLAN
+ * $Id: 90de47a912415dec4c6620296f3379de10904531 $
  *
  * Author: basOS G <noxelia 4t gmail , com>
  *
@@ -155,49 +156,6 @@ void text_style_Delete( text_style_t *p_style )
     free( p_style );
 }
 
-void text_segment_ruby_ChainDelete( text_segment_ruby_t *p_ruby )
-{
-    while( p_ruby )
-    {
-        text_segment_ruby_t *p_next = p_ruby->p_next;
-        free( p_ruby->psz_base );
-        free( p_ruby->psz_rt );
-        free( p_ruby );
-        p_ruby = p_next;
-    }
-}
-
-text_segment_ruby_t *text_segment_ruby_New( const char *psz_base,
-                                            const char *psz_rt )
-{
-    text_segment_ruby_t *p_rb = malloc(sizeof(*p_rb));
-    if( p_rb )
-    {
-        p_rb->p_next = NULL;
-        p_rb->psz_base = strdup( psz_base );
-        p_rb->psz_rt = strdup( psz_rt );
-        if( !p_rb->psz_base || !p_rb->psz_rt )
-        {
-            text_segment_ruby_ChainDelete( p_rb );
-            return NULL;
-        }
-    }
-    return p_rb;
-}
-
-static text_segment_ruby_t *text_segment_ruby_Duplicate( const text_segment_ruby_t *p_src )
-{
-    text_segment_ruby_t *p_dup = NULL;
-    text_segment_ruby_t **pp_append = &p_dup;
-    for ( ; p_src ; p_src = p_src->p_next )
-    {
-        *pp_append = text_segment_ruby_New( p_src->psz_base, p_src->psz_rt );
-        if( *pp_append )
-            pp_append = &((*pp_append)->p_next);
-    }
-    return p_dup;
-}
-
 text_segment_t *text_segment_New( const char *psz_text )
 {
     text_segment_t* segment = calloc( 1, sizeof(*segment) );
@@ -226,34 +184,12 @@ text_segment_t *text_segment_NewInheritStyle( const text_style_t* p_style )
     return p_segment;
 }
 
-text_segment_t *text_segment_FromRuby( text_segment_ruby_t *p_ruby )
-{
-    text_segment_t *p_segment = text_segment_New( NULL );
-    if( p_segment )
-    {
-        p_segment->p_ruby = p_ruby;
-        size_t i_base = 1;
-        for( text_segment_ruby_t *p = p_ruby; p; p = p->p_next )
-            i_base += strlen( p->psz_base );
-        p_segment->psz_text = malloc( i_base );
-        /* Fallback for those not understanding p_ruby */
-        if( p_segment->psz_text )
-        {
-            *p_segment->psz_text = 0;
-            for( text_segment_ruby_t *p = p_ruby; p; p = p->p_next )
-                strcat( p_segment->psz_text, p->psz_base );
-        }
-    }
-    return p_segment;
-}
-
 void text_segment_Delete( text_segment_t* segment )
 {
     if ( segment != NULL )
     {
         free( segment->psz_text );
         text_style_Delete( segment->style );
-        text_segment_ruby_ChainDelete( segment->p_ruby );
         free( segment );
     }
 }
@@ -281,7 +217,6 @@ text_segment_t *text_segment_Copy( text_segment_t *p_src )
             break;
 
         p_new->style = text_style_Duplicate( p_src->style );
-        p_new->p_ruby = text_segment_ruby_Duplicate( p_src->p_ruby );
 
         if( p_dst == NULL )
         {
@@ -311,7 +246,7 @@ unsigned int vlc_html_color( const char *psz_value, bool* ok )
         (*psz_hex >= '0' && *psz_hex <= '9') ||
         (*psz_hex >= 'A' && *psz_hex <= 'F') )
     {
-        uint32_t i_value = (uint32_t)strtoul( psz_hex, &psz_end, 16 );
+        uint32_t i_value = strtol( psz_hex, &psz_end, 16 );
         if( *psz_end == 0 || isspace( *psz_end ) )
         {
             switch( psz_end - psz_hex )

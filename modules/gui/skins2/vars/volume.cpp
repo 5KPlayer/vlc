@@ -2,6 +2,7 @@
  * volume.cpp
  *****************************************************************************
  * Copyright (C) 2003 the VideoLAN team
+ * $Id: 4a0072c6ae01930f8d0c1ae27ec4870ba42b421e $
  *
  * Authors: Cyril Deguet     <asmax@via.ecp.fr>
  *          Olivier Teulière <ipkiss@via.ecp.fr>
@@ -27,15 +28,15 @@
 #endif
 
 #include <vlc_common.h>
-#include <vlc_playlist_legacy.h>
-#include <vlc_aout.h>
+#include <vlc_playlist.h>
 #include "volume.hpp"
 #include <math.h>
 
 Volume::Volume( intf_thread_t *pIntf ): VarPercent( pIntf )
 {
     // compute preferred step in [0.,1.] range
-    m_step = config_GetFloat( "volume-step" ) / (float)AOUT_VOLUME_MAX;
+    m_step = config_GetFloat( pIntf, "volume-step" )
+             / (float)AOUT_VOLUME_MAX;
 
     // set current volume from the playlist
     setVolume( var_GetFloat( getPL(), "volume" ), false );

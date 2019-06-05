@@ -24,8 +24,7 @@
 #include "Downloader.hpp"
 
 #include <vlc_threads.h>
-
-#include <atomic>
+#include <vlc_atomic.h>
 
 using namespace adaptive::http;
 

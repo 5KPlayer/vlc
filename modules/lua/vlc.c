@@ -2,6 +2,7 @@
  * vlc.c: Generic lua interface functions
  *****************************************************************************
  * Copyright (C) 2007-2008 the VideoLAN team
+ * $Id: 53e02047515c9eeb3664fd8f126891d3f2587b32 $
  *
  * Authors: Antoine Cellerier <dionoea at videolan tod org>
  *          Pierre d'Herbemont <pdherbemont # videolan.org>
@@ -69,6 +70,14 @@
 #define TELNETPWD_TEXT N_( "Password" )
 #define TELNETPWD_LONGTEXT N_( "A single password restricts access " \
     "to this interface." )
+#define RCHOST_TEXT N_("TCP command input")
+#define RCHOST_LONGTEXT N_("Accept commands over a socket rather than stdin. " \
+            "You can set the address and port the interface will bind to." )
+#define CLIHOST_TEXT N_("CLI input")
+#define CLIHOST_LONGTEXT N_( "Accept commands from this source. " \
+    "The CLI defaults to stdin (\"*console\"), but can also bind to a " \
+    "plain TCP socket (\"localhost:4212\") or use the telnet protocol " \
+    "(\"telnet://0.0.0.0:4212\")" )
 
 static int vlc_sd_probe_Open( vlc_object_t * );
 
@@ -86,7 +95,7 @@ vlc_module_begin ()
 
     add_submodule ()
         set_section( N_("Lua HTTP"), 0 )
-            add_password("http-password", NULL, PASS_TEXT, PASS_LONGTEXT)
+            add_password ( "http-password", NULL, PASS_TEXT, PASS_LONGTEXT, false )
             add_string ( "http-src",  NULL, SRC_TEXT,  SRC_LONGTEXT,  true )
             add_bool   ( "http-index", false, INDEX_TEXT, INDEX_LONGTEXT, true )
         set_capability( "interface", 0 )
@@ -95,14 +104,28 @@ vlc_module_begin ()
         set_description( N_("Lua HTTP") )
 
     add_submodule ()
+        set_section( N_("Lua CLI"), 0 )
+            add_string( "rc-host", NULL, RCHOST_TEXT, RCHOST_LONGTEXT, true )
+            add_string( "cli-host", NULL, CLIHOST_TEXT, CLIHOST_LONGTEXT, true )
+        set_capability( "interface", 25 )
+        set_description( N_("Command-line interface") )
+        set_callbacks( Open_LuaCLI, Close_LuaIntf )
+#ifndef _WIN32
+        add_shortcut( "luacli", "luarc", "cli", "rc" )
+#else
+        add_shortcut( "luacli", "luarc" )
+#endif
+
+    add_submodule ()
         set_section( N_("Lua Telnet"), 0 )
             add_string( "telnet-host", "localhost", TELNETHOST_TEXT,
                         TELNETHOST_LONGTEXT, true )
             add_integer( "telnet-port", TELNETPORT_DEFAULT, TELNETPORT_TEXT,
                          TELNETPORT_LONGTEXT, true )
                 change_integer_range( 1, 65535 )
-            add_password("telnet-password", NULL, TELNETPWD_TEXT,
-                         TELNETPWD_LONGTEXT)
+            add_password( "telnet-password", NULL, TELNETPWD_TEXT,
+
+                          TELNETPWD_LONGTEXT, true )
         set_capability( "interface", 0 )
         set_callbacks( Open_LuaTelnet, Close_LuaIntf )
         set_description( N_("Lua Telnet") )
@@ -124,7 +147,7 @@ vlc_module_begin ()
         add_shortcut( "luaplaylist" )
         set_shortname( N_("Lua Playlist") )
         set_description( N_("Lua Playlist Parser Interface") )
-        set_capability( "stream_filter", 302 )
+        set_capability( "stream_filter", 2 )
         set_callbacks( Import_LuaPlaylist, Close_LuaPlaylist )
 
     add_submodule ()
@@ -197,11 +220,11 @@ int vlclua_dir_list(const char *luadirname, char ***restrict listp)
     *listp = list;
 
     /* Lua scripts in user-specific data directory */
-    list = vlclua_dir_list_append(list, config_GetUserDir(VLC_USERDATA_DIR),
+    list = vlclua_dir_list_append(list, config_GetUserDir(VLC_DATA_DIR),
                                   luadirname);
 
-    char *libdir = config_GetSysPath(VLC_PKG_LIBEXEC_DIR, NULL);
-    char *datadir = config_GetSysPath(VLC_PKG_DATA_DIR, NULL);
+    char *libdir = config_GetLibDir();
+    char *datadir = config_GetDataDir();
     bool both = libdir != NULL && datadir != NULL && strcmp(libdir, datadir);
 
     /* Tokenized Lua scripts in architecture-specific data directory */
@@ -464,11 +487,11 @@ input_item_t *vlclua_read_input_item(vlc_object_t *obj, lua_State *L)
         msg_Warn(obj, "Playlist item name should be a string" );
 
     /* Read duration */
-    vlc_tick_t duration = INPUT_DURATION_INDEFINITE;
+    mtime_t duration = -1;
 
     lua_getfield( L, -3, "duration" );
     if (lua_isnumber(L, -1))
-        duration = vlc_tick_from_sec( lua_tonumber(L, -1) );
+        duration = (mtime_t)(lua_tonumber(L, -1) * (CLOCK_FREQ * 1.));
     else if (!lua_isnil(L, -1))
         msg_Warn(obj, "Playlist item duration should be a number (seconds)");
     lua_pop( L, 1 ); /* pop "duration" */

@@ -23,7 +23,6 @@ typedef struct dvbpsi_s dvbpsi_t;
 typedef struct ts_sections_processor_t ts_sections_processor_t;
 
 #include "mpeg4_iod.h"
-#include "timestamps.h"
 
 #include <vlc_common.h>
 #include <vlc_es.h>
@@ -58,11 +57,11 @@ struct ts_pmt_t
 
     struct
     {
-        stime_t i_current;
-        stime_t i_first; // seen <> != TS_TICK_UNKNOWN
+        mtime_t i_current;
+        mtime_t i_first; // seen <> != -1
         /* broken PCR handling */
-        stime_t i_first_dts;
-        stime_t i_pcroffset;
+        mtime_t i_first_dts;
+        mtime_t i_pcroffset;
         bool    b_disable; /* ignore PCR field, use dts */
         bool    b_fix_done;
     } pcr;
@@ -73,7 +72,7 @@ struct ts_pmt_t
         time_t i_event_length;
     } eit;
 
-    stime_t i_last_dts;
+    mtime_t i_last_dts;
     uint64_t i_last_dts_byte;
 
     /* ARIB specific */

@@ -225,7 +225,7 @@ vlc_module_begin ()
                  TTL_LONGTEXT, true )
     add_bool( SOUT_CFG_PREFIX "rtcp-mux", false,
               RTCP_MUX_TEXT, RTCP_MUX_LONGTEXT, false )
-    add_integer( SOUT_CFG_PREFIX "caching", MS_FROM_VLC_TICK(DEFAULT_PTS_DELAY),
+    add_integer( SOUT_CFG_PREFIX "caching", DEFAULT_PTS_DELAY / 1000,
                  CACHING_TEXT, CACHING_LONGTEXT, true )
 
 #ifdef HAVE_SRTP
@@ -252,7 +252,8 @@ vlc_module_begin ()
                  RTSP_TIMEOUT_LONGTEXT, true )
     add_string( "sout-rtsp-user", "",
                 RTSP_USER_TEXT, RTSP_USER_LONGTEXT, true )
-    add_password("sout-rtsp-pwd", "", RTSP_PASS_TEXT, RTSP_PASS_LONGTEXT)
+    add_password( "sout-rtsp-pwd", "",
+                  RTSP_PASS_TEXT, RTSP_PASS_LONGTEXT, true )
 
 vlc_module_end ()
 
@@ -269,13 +270,14 @@ static const char *const ppsz_sout_options[] = {
     "mp4a-latm", NULL
 };
 
-static void *Add( sout_stream_t *, const es_format_t * );
-static void  Del( sout_stream_t *, void * );
-static int   Send( sout_stream_t *, void *, block_t * );
-
-static void *MuxAdd( sout_stream_t *, const es_format_t * );
-static void  MuxDel( sout_stream_t *, void * );
-static int   MuxSend( sout_stream_t *, void *, block_t * );
+static sout_stream_id_sys_t *Add( sout_stream_t *, const es_format_t * );
+static void              Del ( sout_stream_t *, sout_stream_id_sys_t * );
+static int               Send( sout_stream_t *, sout_stream_id_sys_t *,
+                               block_t* );
+static sout_stream_id_sys_t *MuxAdd( sout_stream_t *, const es_format_t * );
+static void              MuxDel ( sout_stream_t *, sout_stream_id_sys_t * );
+static int               MuxSend( sout_stream_t *, sout_stream_id_sys_t *,
+                                  block_t* );
 
 static sout_access_out_t *GrabberCreate( sout_stream_t *p_sout );
 static void* ThreadSend( void * );
@@ -287,10 +289,10 @@ static int SapSetup( sout_stream_t *p_stream );
 static int FileSetup( sout_stream_t *p_stream );
 static int HttpSetup( sout_stream_t *p_stream, const vlc_url_t * );
 
-static vlc_tick_t rtp_init_ts( const vod_media_t *p_media,
+static int64_t rtp_init_ts( const vod_media_t *p_media,
                             const char *psz_vod_session );
 
-typedef struct
+struct sout_stream_sys_t
 {
     /* SDP */
     char    *psz_sdp;
@@ -311,9 +313,9 @@ typedef struct
     rtsp_stream_t *rtsp;
 
     /* RTSP NPT and timestamp computations */
-    vlc_tick_t   i_npt_zero;    /* when NPT=0 packet is sent */
-    vlc_tick_t   i_pts_zero;    /* predicts PTS of NPT=0 packet */
-    vlc_tick_t   i_pts_offset;  /* matches actual PTS to prediction */
+    mtime_t      i_npt_zero;    /* when NPT=0 packet is sent */
+    int64_t      i_pts_zero;    /* predicts PTS of NPT=0 packet */
+    int64_t      i_pts_offset;  /* matches actual PTS to prediction */
     vlc_mutex_t  lock_ts;
 
     /* */
@@ -338,7 +340,7 @@ typedef struct
     vlc_mutex_t      lock_es;
     int              i_es;
     sout_stream_id_sys_t **es;
-} sout_stream_sys_t;
+};
 
 typedef struct rtp_sink_t
 {
@@ -382,7 +384,7 @@ struct sout_stream_id_sys_t
     } listen;
 
     block_fifo_t     *p_fifo;
-    vlc_tick_t        i_caching;
+    int64_t           i_caching;
 };
 
 /*****************************************************************************
@@ -522,7 +524,7 @@ static int Open( vlc_object_t *p_this )
      * without waiting (and already did in the VoD case). So until then,
      * we use an arbitrary reference PTS for timestamp computations, and
      * then actual PTS will catch up using offsets. */
-    p_sys->i_npt_zero = VLC_TICK_INVALID;
+    p_sys->i_npt_zero = VLC_TS_INVALID;
     p_sys->i_pts_zero = rtp_init_ts(p_sys->p_vod_media,
                                     p_sys->psz_vod_session);
     p_sys->i_es = 0;
@@ -936,7 +938,7 @@ rtp_set_ptime (sout_stream_id_sys_t *id, unsigned ptime_ms, size_t bytes)
         id->i_mtu = 12 + (((id->i_mtu - 12) / bytes) * bytes);
 }
 
-uint32_t rtp_compute_ts( unsigned i_clock_rate, vlc_tick_t i_pts )
+uint32_t rtp_compute_ts( unsigned i_clock_rate, int64_t i_pts )
 {
     /* This is an overflow-proof way of doing:
      * return i_pts * (int64_t)i_clock_rate / CLOCK_FREQ;
@@ -949,7 +951,8 @@ uint32_t rtp_compute_ts( unsigned i_clock_rate, vlc_tick_t i_pts )
 }
 
 /** Add an ES as a new RTP stream */
-static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
+static sout_stream_id_sys_t *Add( sout_stream_t *p_stream,
+                                  const es_format_t *p_fmt )
 {
     /* NOTE: As a special case, if we use a non-RTP
      * mux (TS/PS), then p_fmt is NULL. */
@@ -978,7 +981,7 @@ static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
 
     id->b_first_packet = true;
     id->i_caching =
-        VLC_TICK_FROM_MS(var_GetInteger( p_stream, SOUT_CFG_PREFIX "caching"));
+        (int64_t)1000 * var_GetInteger( p_stream, SOUT_CFG_PREFIX "caching");
 
     vlc_rand_bytes (&id->i_sequence, sizeof (id->i_sequence));
     vlc_rand_bytes (id->ssrc, sizeof (id->ssrc));
@@ -1169,7 +1172,7 @@ static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
 #endif
 
     vlc_mutex_lock( &p_sys->lock_ts );
-    id->b_ts_init = ( p_sys->i_npt_zero != VLC_TICK_INVALID );
+    id->b_ts_init = ( p_sys->i_npt_zero != VLC_TS_INVALID );
     vlc_mutex_unlock( &p_sys->lock_ts );
     if( id->b_ts_init )
         id->i_ts_offset = rtp_compute_ts( id->rtp_fmt.clock_rate,
@@ -1214,10 +1217,9 @@ error:
     return NULL;
 }
 
-static void Del( sout_stream_t *p_stream, void *_id )
+static void Del( sout_stream_t *p_stream, sout_stream_id_sys_t *id )
 {
     sout_stream_sys_t *p_sys = p_stream->p_sys;
-    sout_stream_id_sys_t *id = (sout_stream_id_sys_t *)_id;
 
     vlc_mutex_lock( &p_sys->lock_es );
     TAB_REMOVE( p_sys->i_es, p_sys->es, id );
@@ -1260,10 +1262,11 @@ static void Del( sout_stream_t *p_stream, void *_id )
     free( id );
 }
 
-static int Send( sout_stream_t *p_stream, void *_id, block_t *p_buffer )
+static int Send( sout_stream_t *p_stream, sout_stream_id_sys_t *id,
+                 block_t *p_buffer )
 {
-    sout_stream_id_sys_t *id = (sout_stream_id_sys_t *)_id;
-    assert( ((sout_stream_sys_t *)p_stream->p_sys)->p_mux == NULL );
+    assert( p_stream->p_sys->p_mux == NULL );
+    (void)p_stream;
 
     while( p_buffer != NULL )
     {
@@ -1397,7 +1400,7 @@ static void* ThreadSend( void *data )
 # define EWOULDBLOCK  WSAEWOULDBLOCK
 #endif
     sout_stream_id_sys_t *id = data;
-    vlc_tick_t i_caching = id->i_caching;
+    unsigned i_caching = id->i_caching;
 
     for (;;)
     {
@@ -1425,12 +1428,12 @@ static void* ThreadSend( void *data )
                 out->i_buffer = len;
         }
         if (out)
-            vlc_tick_wait (out->i_dts + i_caching);
+            mwait (out->i_dts + i_caching);
         vlc_cleanup_pop ();
         if (out == NULL)
             continue;
 #else
-        vlc_tick_wait (out->i_dts + i_caching);
+        mwait (out->i_dts + i_caching);
         vlc_cleanup_pop ();
 #endif
 
@@ -1554,11 +1557,11 @@ uint16_t rtp_get_seq( sout_stream_id_sys_t *id )
  * feature). In the VoD case, this function is called independently
  * from several parts of the code, so we need to always return the same
  * value. */
-static vlc_tick_t rtp_init_ts( const vod_media_t *p_media,
+static int64_t rtp_init_ts( const vod_media_t *p_media,
                             const char *psz_vod_session )
 {
     if (p_media == NULL || psz_vod_session == NULL)
-        return vlc_tick_now();
+        return mdate();
 
     uint64_t i_ts_init;
     /* As per RFC 2326, session identifiers are at least 8 bytes long */
@@ -1575,9 +1578,9 @@ static vlc_tick_t rtp_init_ts( const vod_media_t *p_media,
  * Also return the NPT corresponding to this timestamp. If the stream
  * output is not started, the initial timestamp that will be used with
  * the first packets for NPT=0 is returned instead. */
-vlc_tick_t rtp_get_ts( const sout_stream_t *p_stream, const sout_stream_id_sys_t *id,
+int64_t rtp_get_ts( const sout_stream_t *p_stream, const sout_stream_id_sys_t *id,
                     const vod_media_t *p_media, const char *psz_vod_session,
-                    vlc_tick_t *p_npt )
+                    int64_t *p_npt )
 {
     if (p_npt != NULL)
         *p_npt = 0;
@@ -1589,19 +1592,19 @@ vlc_tick_t rtp_get_ts( const sout_stream_t *p_stream, const sout_stream_id_sys_t
         return rtp_init_ts(p_media, psz_vod_session);
 
     sout_stream_sys_t *p_sys = p_stream->p_sys;
-    vlc_tick_t i_npt_zero;
+    mtime_t i_npt_zero;
     vlc_mutex_lock( &p_sys->lock_ts );
     i_npt_zero = p_sys->i_npt_zero;
     vlc_mutex_unlock( &p_sys->lock_ts );
 
-    if( i_npt_zero == VLC_TICK_INVALID )
+    if( i_npt_zero == VLC_TS_INVALID )
         return p_sys->i_pts_zero;
 
-    vlc_tick_t now = vlc_tick_now();
+    mtime_t now = mdate();
     if( now < i_npt_zero )
         return p_sys->i_pts_zero;
 
-    vlc_tick_t npt = now - i_npt_zero;
+    int64_t npt = now - i_npt_zero;
     if (p_npt != NULL)
         *p_npt = npt;
 
@@ -1609,13 +1612,13 @@ vlc_tick_t rtp_get_ts( const sout_stream_t *p_stream, const sout_stream_id_sys_t
 }
 
 void rtp_packetize_common( sout_stream_id_sys_t *id, block_t *out,
-                           bool b_m_bit, vlc_tick_t i_pts )
+                           bool b_m_bit, int64_t i_pts )
 {
     if( !id->b_ts_init )
     {
         sout_stream_sys_t *p_sys = id->p_stream->p_sys;
         vlc_mutex_lock( &p_sys->lock_ts );
-        if( p_sys->i_npt_zero == VLC_TICK_INVALID )
+        if( p_sys->i_npt_zero == VLC_TS_INVALID )
         {
             /* This is the first packet of any ES. We initialize the
              * NPT=0 time reference, and the offset to match the
@@ -1673,11 +1676,11 @@ size_t rtp_mtu (const sout_stream_id_sys_t *id)
  *****************************************************************************/
 
 /** Add an ES to a non-RTP muxed stream */
-static void *MuxAdd( sout_stream_t *p_stream, const es_format_t *p_fmt )
+static sout_stream_id_sys_t *MuxAdd( sout_stream_t *p_stream,
+                                     const es_format_t *p_fmt )
 {
     sout_input_t      *p_input;
-    sout_stream_sys_t *p_sys = p_stream->p_sys;
-    sout_mux_t *p_mux = p_sys->p_mux;
+    sout_mux_t *p_mux = p_stream->p_sys->p_mux;
     assert( p_mux != NULL );
 
     p_input = sout_MuxAddStream( p_mux, p_fmt );
@@ -1691,10 +1694,10 @@ static void *MuxAdd( sout_stream_t *p_stream, const es_format_t *p_fmt )
 }
 
 
-static int MuxSend( sout_stream_t *p_stream, void *id, block_t *p_buffer )
+static int MuxSend( sout_stream_t *p_stream, sout_stream_id_sys_t *id,
+                    block_t *p_buffer )
 {
-    sout_stream_sys_t *p_sys = p_stream->p_sys;
-    sout_mux_t *p_mux = p_sys->p_mux;
+    sout_mux_t *p_mux = p_stream->p_sys->p_mux;
     assert( p_mux != NULL );
 
     return sout_MuxSendBuffer( p_mux, (sout_input_t *)id, p_buffer );
@@ -1702,10 +1705,9 @@ static int MuxSend( sout_stream_t *p_stream, void *id, block_t *p_buffer )
 
 
 /** Remove an ES from a non-RTP muxed stream */
-static void MuxDel( sout_stream_t *p_stream, void *id )
+static void MuxDel( sout_stream_t *p_stream, sout_stream_id_sys_t *id )
 {
-    sout_stream_sys_t *p_sys = p_stream->p_sys;
-    sout_mux_t *p_mux = p_sys->p_mux;
+    sout_mux_t *p_mux = p_stream->p_sys->p_mux;
     assert( p_mux != NULL );
 
     sout_MuxDeleteStream( p_mux, (sout_input_t *)id );
@@ -1718,7 +1720,7 @@ static ssize_t AccessOutGrabberWriteBuffer( sout_stream_t *p_stream,
     sout_stream_sys_t *p_sys = p_stream->p_sys;
     sout_stream_id_sys_t *id = p_sys->es[0];
 
-    vlc_tick_t  i_dts = p_buffer->i_dts;
+    int64_t  i_dts = p_buffer->i_dts;
 
     uint8_t         *p_data = p_buffer->p_buffer;
     size_t          i_data  = p_buffer->i_buffer;
@@ -1799,7 +1801,7 @@ static sout_access_out_t *GrabberCreate( sout_stream_t *p_stream )
     p_grab->psz_access  = strdup( "grab" );
     p_grab->p_cfg       = NULL;
     p_grab->psz_path    = strdup( "" );
-    p_grab->p_sys       = p_stream;
+    p_grab->p_sys       = (sout_access_out_sys_t *)p_stream;
     p_grab->pf_seek     = NULL;
     p_grab->pf_write    = AccessOutGrabberWrite;
     return p_grab;

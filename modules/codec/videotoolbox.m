@@ -61,8 +61,14 @@
 
 #endif
 
+// Define stuff for older SDKs
+#if (TARGET_OS_OSX && MAC_OS_X_VERSION_MAX_ALLOWED < 101100) || \
+    (TARGET_OS_IPHONE && __IPHONE_OS_VERSION_MAX_ALLOWED < 90000) || \
+    (TARGET_OS_TV && __TV_OS_VERSION_MAX_ALLOWED < 90000)
+enum { kCMVideoCodecType_HEVC = 'hvc1' };
+#endif
 
-#if (!TARGET_OS_OSX)
+#if (!TARGET_OS_OSX || MAC_OS_X_VERSION_MAX_ALLOWED < 1090)
 const CFStringRef kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder = CFSTR("EnableHardwareAcceleratedVideoDecoder");
 const CFStringRef kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder = CFSTR("RequireHardwareAcceleratedVideoDecoder");
 #endif
@@ -72,7 +78,7 @@ const CFStringRef kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDe
 static int OpenDecoder(vlc_object_t *);
 static void CloseDecoder(vlc_object_t *);
 
-#define VT_ENABLE_TEXT N_("Enable hardware acceleration")
+#define VT_ENABLE_TEXT "Enable hardware acceleration"
 #define VT_REQUIRE_HW_DEC N_("Use Hardware decoders only")
 #define VT_FORCE_CVPX_CHROMA "Force the VT decoder CVPX chroma"
 #define VT_FORCE_CVPX_CHROMA_LONG "Values can be 'BGRA', 'y420', '420f', '420v', '2vuy'. \
@@ -122,8 +128,8 @@ struct frame_info_t
     picture_t *p_picture;
     int i_poc;
     int i_foc;
+    bool b_forced;
     bool b_flush;
-    bool b_eos;
     bool b_keyframe;
     bool b_field;
     bool b_progressive;
@@ -138,7 +144,7 @@ struct frame_info_t
 #define H264_MAX_DPB 16
 #define VT_MAX_SEI_COUNT 16
 
-typedef struct decoder_sys_t
+struct decoder_sys_t
 {
     CMVideoCodecType            codec;
     struct                      hxxx_helper hh;
@@ -185,7 +191,7 @@ typedef struct decoder_sys_t
     date_t                      pts;
 
     struct pic_holder          *pic_holder;
-} decoder_sys_t;
+};
 
 struct pic_holder
 {
@@ -478,7 +484,7 @@ static bool ConfigureVoutH264(decoder_t *p_dec)
         video_color_primaries_t primaries;
         video_transfer_func_t transfer;
         video_color_space_t colorspace;
-        video_color_range_t full_range;
+        bool full_range;
         if (hxxx_helper_get_colorimetry(&p_sys->hh,
                                         &primaries,
                                         &transfer,
@@ -488,7 +494,7 @@ static bool ConfigureVoutH264(decoder_t *p_dec)
             p_dec->fmt_out.video.primaries = primaries;
             p_dec->fmt_out.video.transfer = transfer;
             p_dec->fmt_out.video.space = colorspace;
-            p_dec->fmt_out.video.color_range = full_range;
+            p_dec->fmt_out.video.b_color_range_full = full_range;
         }
     }
 
@@ -849,7 +855,7 @@ static picture_t * RemoveOneFrameFromDPB(decoder_sys_t *p_sys)
         picture_t *p_field = p_info->p_picture;
 
         /* Compute time if missing */
-        if (p_field->date == VLC_TICK_INVALID)
+        if (p_field->date == VLC_TS_INVALID)
             p_field->date = date_Get(&p_sys->pts);
         else
             date_Set(&p_sys->pts, p_field->date);
@@ -930,9 +936,9 @@ static frame_info_t * CreateReorderInfo(decoder_t *p_dec, const block_t *p_block
     p_info->i_length = p_block->i_length;
 
     /* required for still pictures/menus */
-    p_info->b_eos = (p_block->i_flags & BLOCK_FLAG_END_OF_SEQUENCE);
+    p_info->b_forced = (p_block->i_flags & BLOCK_FLAG_END_OF_SEQUENCE);
 
-    if (date_Get(&p_sys->pts) == VLC_TICK_INVALID)
+    if (date_Get(&p_sys->pts) == VLC_TS_INVALID)
         date_Set(&p_sys->pts, p_block->i_dts);
 
     return p_info;
@@ -958,7 +964,7 @@ static void OnDecodedFrame(decoder_t *p_dec, frame_info_t *p_info)
                 break;
             }
             else if (!p_sys->b_poc_based_reorder &&
-                     p_info->p_picture->date > VLC_TICK_INVALID &&
+                     p_info->p_picture->date > VLC_TS_INVALID &&
                      p_sys->p_pic_reorder->p_picture->date > p_info->p_picture->date)
             {
                 p_sys->b_invalid_pic_reorder_max = true;
@@ -1133,8 +1139,15 @@ static CFMutableDictionaryRef CreateSessionDescriptionFormat(decoder_t *p_dec,
             yuvmatrix = kCVImageBufferYCbCrMatrix_ITU_R_601_4;
             break;
         case COLOR_SPACE_BT2020:
-            yuvmatrix = kCVImageBufferColorPrimaries_ITU_R_2020;
-            break;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wpartial-availability"
+            if (&kCVImageBufferColorPrimaries_ITU_R_2020 != nil)
+            {
+                yuvmatrix = kCVImageBufferColorPrimaries_ITU_R_2020;
+                break;
+            }
+#pragma clang diagnostic pop
+            /* fall through */
         case COLOR_SPACE_BT709:
         default:
             yuvmatrix = kCVImageBufferColorPrimaries_ITU_R_709_2;
@@ -1142,6 +1155,9 @@ static CFMutableDictionaryRef CreateSessionDescriptionFormat(decoder_t *p_dec,
     }
     CFDictionarySetValue(decoderConfiguration, kCVImageBufferYCbCrMatrixKey,
                          yuvmatrix);
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wpartial-availability"
 
     /* enable HW accelerated playback, since this is optional on OS X
      * note that the backend may still fallback on software mode if no
@@ -1156,6 +1172,8 @@ static CFMutableDictionaryRef CreateSessionDescriptionFormat(decoder_t *p_dec,
         CFDictionarySetValue(decoderConfiguration,
                              kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder,
                              kCFBooleanTrue);
+
+#pragma clang diagnostic pop
 
     CFDictionarySetValue(decoderConfiguration,
                          kVTDecompressionPropertyKey_FieldMode,
@@ -1488,9 +1506,17 @@ static void CloseDecoder(vlc_object_t *p_this)
 
 static BOOL deviceSupportsHEVC()
 {
-    if (@available(macOS 10.13, iOS 11.0, tvOS 11.0, *))
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wpartial-availability"
+
+#if (TARGET_OS_OSX && MAC_OS_X_VERSION_MAX_ALLOWED >= 101300) || \
+    (TARGET_OS_IPHONE && __IPHONE_OS_VERSION_MAX_ALLOWED >= 110000) || \
+    (TARGET_OS_TV && __TV_OS_VERSION_MAX_ALLOWED >= 110000)
+    if (VTIsHardwareDecodeSupported != nil)
         return VTIsHardwareDecodeSupported(kCMVideoCodecType_HEVC);
     else
+#endif
+#pragma clang diagnostic pop
         return NO;
 }
 
@@ -1592,15 +1618,13 @@ static CFMutableDictionaryRef ESDSExtradataInfoCreate(decoder_t *p_dec,
 
 static int ConfigureVout(decoder_t *p_dec)
 {
-    decoder_sys_t *p_sys = p_dec->p_sys;
-
     /* return our proper VLC internal state */
     p_dec->fmt_out.video = p_dec->fmt_in.video;
     p_dec->fmt_out.video.p_palette = NULL;
     p_dec->fmt_out.i_codec = 0;
 
-    if(p_sys->pf_configure_vout &&
-       !p_sys->pf_configure_vout(p_dec))
+    if(p_dec->p_sys->pf_configure_vout &&
+       !p_dec->p_sys->pf_configure_vout(p_dec))
         return VLC_EGENERIC;
 
     if (!p_dec->fmt_out.video.i_sar_num || !p_dec->fmt_out.video.i_sar_den)
@@ -1646,12 +1670,11 @@ static CMSampleBufferRef VTSampleBufferCreate(decoder_t *p_dec,
                                               CMFormatDescriptionRef fmt_desc,
                                               block_t *p_block)
 {
-    decoder_sys_t *p_sys = p_dec->p_sys;
     OSStatus status;
     CMBlockBufferRef  block_buf = NULL;
     CMSampleBufferRef sample_buf = NULL;
     CMTime pts;
-    if(!p_sys->b_poc_based_reorder && p_block->i_pts == VLC_TICK_INVALID)
+    if(!p_dec->p_sys->b_poc_based_reorder && p_block->i_pts == VLC_TS_INVALID)
         pts = CMTimeMake(p_block->i_dts, CLOCK_FREQ);
     else
         pts = CMTimeMake(p_block->i_pts, CLOCK_FREQ);
@@ -2004,9 +2027,9 @@ skip:
 
 static int UpdateVideoFormat(decoder_t *p_dec, CVPixelBufferRef imageBuffer)
 {
-    decoder_sys_t *p_sys = p_dec->p_sys;
-    NSDictionary *attachmentDict =
-        (__bridge NSDictionary *)CVBufferGetAttachments(imageBuffer, kCVAttachmentMode_ShouldPropagate);
+    CFDictionaryRef attachments = CVBufferGetAttachments(imageBuffer, kCVAttachmentMode_ShouldPropagate);
+    NSDictionary *attachmentDict = (NSDictionary *)attachments;
+
 
     if (attachmentDict != nil && attachmentDict.count > 0
      && p_dec->fmt_out.video.chroma_location == CHROMA_LOCATION_UNDEF)
@@ -2064,13 +2087,13 @@ static int UpdateVideoFormat(decoder_t *p_dec, CVPixelBufferRef imageBuffer)
             assert(CVPixelBufferIsPlanar(imageBuffer) == false);
             break;
         default:
-            p_sys->vtsession_status = VTSESSION_STATUS_ABORT;
+            p_dec->p_sys->vtsession_status = VTSESSION_STATUS_ABORT;
             return -1;
     }
     p_dec->fmt_out.video.i_chroma = p_dec->fmt_out.i_codec;
     if (decoder_UpdateVideoFormat(p_dec) != 0)
     {
-        p_sys->vtsession_status = VTSESSION_STATUS_ABORT;
+        p_dec->p_sys->vtsession_status = VTSESSION_STATUS_ABORT;
         return -1;
     }
     return 0;
@@ -2118,7 +2141,7 @@ static int pic_holder_wait(struct pic_holder *pic_holder, const picture_t *pic)
      * output pictures (will they be rendered immediately ?), so don't wait
      * infinitely. The output will be paced anyway by the vlc_cond_timedwait()
      * call. */
-    vlc_tick_t deadline = vlc_tick_now() + VLC_TICK_FROM_MS(200);
+    mtime_t deadline = mdate() + INT64_C(200000);
     int ret = 0;
     while (ret == 0 && pic_holder->field_reorder_max != 0
         && pic_holder->nb_field_out >= pic_holder->field_reorder_max + reserved_fields)
@@ -2206,8 +2229,7 @@ static void DecoderCallback(void *decompressionOutputRefCon,
         p_info->p_picture = p_pic;
 
         p_pic->date = pts.value;
-        p_pic->b_force = p_info->b_eos;
-        p_pic->b_still = p_info->b_eos;
+        p_pic->b_force = p_info->b_forced;
         p_pic->b_progressive = p_info->b_progressive;
         if(!p_pic->b_progressive)
         {

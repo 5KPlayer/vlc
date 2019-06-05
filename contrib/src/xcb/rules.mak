@@ -15,7 +15,7 @@ PKGS_FOUND += xcb
 endif
 
 $(TARBALLS)/libxcb-$(XCB_VERSION).tar.bz2:
-	$(call download_pkg,$(XCB_URL),xcb)
+	$(call download,$(XCB_URL))
 
 .sum-xcb: libxcb-$(XCB_VERSION).tar.bz2
 
@@ -50,7 +50,7 @@ XCBCONF := \
 	--without-doxygen \
 	$(HOSTCONF)
 
-DEPS_xcb = pthread-stubs xau $(DEPS_xau) xcb-proto $(DEPS_xcb-proto)
+DEPS_xcb = xau $(DEPS_xau) xcb-proto $(DEPS_xcb-proto)
 
 .xcb: libxcb
 	cd $< && $(HOSTVARS) ./configure $(XCBCONF)

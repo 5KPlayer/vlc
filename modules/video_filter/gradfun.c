@@ -2,6 +2,7 @@
  * gradfun.c: wrapper for the gradfun filter from libav
  *****************************************************************************
  * Copyright (C) 2010 Laurent Aimar
+ * $Id: 8ebb95d0aa0aa6210ba4a2a9a3a5de5ab6a3d8ec $
  *
  * Authors: Laurent Aimar <fenrir _AT_ videolan _DOT_ org>
  *
@@ -101,14 +102,13 @@ vlc_module_end()
 static picture_t *Filter(filter_t *, picture_t *);
 static int Callback(vlc_object_t *, char const *, vlc_value_t, vlc_value_t, void *);
 
-typedef struct
-{
+struct filter_sys_t {
     vlc_mutex_t      lock;
     float            strength;
     int              radius;
     const vlc_chroma_description_t *chroma;
     struct vf_priv_s cfg;
-} filter_sys_t;
+};
 
 static int Open(vlc_object_t *object)
 {

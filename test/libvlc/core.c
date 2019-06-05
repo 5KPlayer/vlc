@@ -1,6 +1,7 @@
 /*
  * core.c - libvlc smoke test
  *
+ * $Id: b7fe646cd38e78f30ac4ce7cfb1918a711a5a9a0 $
  */
 
 /**********************************************************************
@@ -28,7 +29,7 @@ static void test_core (const char ** argv, int argc)
 {
     libvlc_instance_t *vlc;
 
-    test_log ("Testing core\n");
+    log ("Testing core\n");
 
     vlc = libvlc_new (argc, argv);
     assert (vlc != NULL);
@@ -56,7 +57,7 @@ static void test_audiovideofilterlists (const char ** argv, int argc)
 {
     libvlc_instance_t *vlc;
 
-    test_log ("Testing libvlc_(audio|video)_filter_list_get()\n");
+    log ("Testing libvlc_(audio|video)_filter_list_get()\n");
 
     vlc = libvlc_new (argc, argv);
     assert (vlc != NULL);

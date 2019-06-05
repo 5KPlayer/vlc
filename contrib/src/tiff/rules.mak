@@ -11,7 +11,6 @@ $(TARBALLS)/tiff-$(TIFF_VERSION).tar.gz:
 tiff: tiff-$(TIFF_VERSION).tar.gz .sum-tiff
 	$(UNPACK)
 	$(UPDATE_AUTOCONFIG)
-	$(APPLY) $(SRC)/tiff/tiff-winstore.patch
 	$(MOVE)
 	mv tiff/config.sub tiff/config.guess tiff/config
 

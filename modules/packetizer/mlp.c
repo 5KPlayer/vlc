@@ -2,6 +2,7 @@
  * mlp.c: packetize MLP/TrueHD audio
  *****************************************************************************
  * Copyright (C) 2008 Laurent Aimar
+ * $Id: 60e02ca615c92aef5cb4654bc357429e1f8b037f $
  *
  * Authors: Laurent Aimar < fenrir _AT videolan _DOT_ org >
  *
@@ -69,7 +70,7 @@ typedef struct
 
 } mlp_header_t;
 
-typedef struct
+struct decoder_sys_t
 {
     /*
      * Input properties
@@ -84,12 +85,12 @@ typedef struct
     date_t  end_date;
     bool    b_discontinuity;
 
-    vlc_tick_t i_pts;
+    mtime_t i_pts;
     int i_frame_size;
 
     bool         b_mlp;
     mlp_header_t mlp;
-} decoder_sys_t;
+};
 
 #define MLP_MAX_SUBSTREAMS (16)
 #define MLP_HEADER_SYNC (28)
@@ -259,7 +260,7 @@ static void Flush( decoder_t *p_dec )
     p_sys->i_state = STATE_NOSYNC;
     p_sys->b_discontinuity = true;
     block_BytestreamEmpty( &p_sys->bytestream );
-    date_Set( &p_sys->end_date, VLC_TICK_INVALID );
+    date_Set( &p_sys->end_date, 0 );
 }
 
 static block_t *Packetize( decoder_t *p_dec, block_t **pp_block )
@@ -288,8 +289,7 @@ static block_t *Packetize( decoder_t *p_dec, block_t **pp_block )
             }
         }
 
-        if( p_block->i_pts == VLC_TICK_INVALID &&
-            date_Get( &p_sys->end_date ) == VLC_TICK_INVALID )
+        if( !date_Get( &p_sys->end_date ) && p_block->i_pts <= VLC_TS_INVALID )
         {
             /* We've just started the stream, wait for the first PTS. */
             msg_Dbg( p_dec, "waiting for PTS" );
@@ -331,7 +331,7 @@ static block_t *Packetize( decoder_t *p_dec, block_t **pp_block )
         case STATE_SYNC:
             /* New frame, set the Presentation Time Stamp */
             p_sys->i_pts = p_sys->bytestream.p_block->i_pts;
-            if( p_sys->i_pts != VLC_TICK_INVALID &&
+            if( p_sys->i_pts > VLC_TS_INVALID &&
                 p_sys->i_pts != date_Get( &p_sys->end_date ) )
             {
                 date_Set( &p_sys->end_date, p_sys->i_pts );
@@ -426,7 +426,11 @@ static block_t *Packetize( decoder_t *p_dec, block_t **pp_block )
                           p_sys->mlp.i_channels, p_sys->mlp.i_rate );
 
                 if( p_sys->mlp.i_rate > 0 )
-                    date_Change( &p_sys->end_date, p_sys->mlp.i_rate, 1 );
+                {
+                    const mtime_t i_end_date = date_Get( &p_sys->end_date );
+                    date_Init( &p_sys->end_date, p_sys->mlp.i_rate, 1 );
+                    date_Set( &p_sys->end_date, i_end_date );
+                }
             }
 
             p_dec->fmt_out.audio.i_rate     = p_sys->mlp.i_rate;
@@ -443,7 +447,7 @@ static block_t *Packetize( decoder_t *p_dec, block_t **pp_block )
 
             /* Make sure we don't reuse the same pts twice */
             if( p_sys->i_pts == p_sys->bytestream.p_block->i_pts )
-                p_sys->i_pts = p_sys->bytestream.p_block->i_pts = VLC_TICK_INVALID;
+                p_sys->i_pts = p_sys->bytestream.p_block->i_pts = VLC_TS_INVALID;
 
             if( p_sys->b_discontinuity )
             {
@@ -480,7 +484,7 @@ static int Open( vlc_object_t *p_this )
 
     /* */
     p_sys->i_state = STATE_NOSYNC;
-    date_Init( &p_sys->end_date, 1, 1 );
+    date_Set( &p_sys->end_date, 0 );
 
     block_BytestreamInit( &p_sys->bytestream );
     p_sys->b_mlp = false;
@@ -493,7 +497,6 @@ static int Open( vlc_object_t *p_this )
     /* Set callback */
     p_dec->pf_packetize = Packetize;
     p_dec->pf_flush     = Flush;
-    p_dec->pf_get_cc    = NULL;
     return VLC_SUCCESS;
 }
 

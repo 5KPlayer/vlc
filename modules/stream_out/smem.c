@@ -2,6 +2,7 @@
  * smem.c: stream output to memory buffer module
  *****************************************************************************
  * Copyright (C) 2009 VLC authors and VideoLAN
+ * $Id: 43ad651fd123e4e807e772c90239926a84209f80 $
  *
  * Authors: Christophe Courtaut <christophe.courtaut@gmail.com>
  *
@@ -124,39 +125,43 @@ static const char *const ppsz_sout_options[] = {
     "video-postrender-callback", "audio-postrender-callback", "video-data", "audio-data", "time-sync", NULL
 };
 
-static void *Add( sout_stream_t *, const es_format_t * );
-static void  Del( sout_stream_t *, void * );
-static int   Send( sout_stream_t *, void *, block_t * );
+static sout_stream_id_sys_t *Add( sout_stream_t *, const es_format_t * );
+static void              Del ( sout_stream_t *, sout_stream_id_sys_t * );
+static int               Send( sout_stream_t *, sout_stream_id_sys_t *, block_t* );
 
-static void *AddVideo( sout_stream_t *p_stream, const es_format_t *p_fmt );
-static void *AddAudio( sout_stream_t *p_stream, const es_format_t *p_fmt );
+static sout_stream_id_sys_t *AddVideo( sout_stream_t *p_stream,
+                                       const es_format_t *p_fmt );
+static sout_stream_id_sys_t *AddAudio( sout_stream_t *p_stream,
+                                       const es_format_t *p_fmt );
 
-static int SendVideo( sout_stream_t *p_stream, void *id, block_t *p_buffer );
-static int SendAudio( sout_stream_t *p_stream, void *id, block_t *p_buffer );
+static int SendVideo( sout_stream_t *p_stream, sout_stream_id_sys_t *id,
+                      block_t *p_buffer );
+static int SendAudio( sout_stream_t *p_stream, sout_stream_id_sys_t *id,
+                      block_t *p_buffer );
 
-typedef struct
+struct sout_stream_id_sys_t
 {
     es_format_t format;
     void *p_data;
-} sout_stream_id_sys_t;
+};
 
-typedef struct
+struct sout_stream_sys_t
 {
     vlc_mutex_t *p_lock;
     void ( *pf_video_prerender_callback ) ( void* p_video_data, uint8_t** pp_pixel_buffer, size_t size );
     void ( *pf_audio_prerender_callback ) ( void* p_audio_data, uint8_t** pp_pcm_buffer, size_t size );
-    void ( *pf_video_postrender_callback ) ( void* p_video_data, uint8_t* p_pixel_buffer, int width, int height, int pixel_pitch, size_t size, vlc_tick_t pts );
-    void ( *pf_audio_postrender_callback ) ( void* p_audio_data, uint8_t* p_pcm_buffer, unsigned int channels, unsigned int rate, unsigned int nb_samples, unsigned int bits_per_sample, size_t size, vlc_tick_t pts );
+    void ( *pf_video_postrender_callback ) ( void* p_video_data, uint8_t* p_pixel_buffer, int width, int height, int pixel_pitch, size_t size, mtime_t pts );
+    void ( *pf_audio_postrender_callback ) ( void* p_audio_data, uint8_t* p_pcm_buffer, unsigned int channels, unsigned int rate, unsigned int nb_samples, unsigned int bits_per_sample, size_t size, mtime_t pts );
     bool time_sync;
-} sout_stream_sys_t;
+};
 
 void VideoPrerenderDefaultCallback( void* p_video_data, uint8_t** pp_pixel_buffer, size_t size );
 void AudioPrerenderDefaultCallback( void* p_audio_data, uint8_t** pp_pcm_buffer, size_t size );
 void VideoPostrenderDefaultCallback( void* p_video_data, uint8_t* p_pixel_buffer, int width, int height,
-                                     int pixel_pitch, size_t size, vlc_tick_t pts );
+                                     int pixel_pitch, size_t size, mtime_t pts );
 void AudioPostrenderDefaultCallback( void* p_audio_data, uint8_t* p_pcm_buffer, unsigned int channels,
                                      unsigned int rate, unsigned int nb_samples, unsigned int bits_per_sample,
-                                     size_t size, vlc_tick_t pts );
+                                     size_t size, mtime_t pts );
 
 /*****************************************************************************
  * Default empty callbacks
@@ -173,7 +178,7 @@ void AudioPrerenderDefaultCallback( void* p_audio_data, uint8_t** pp_pcm_buffer,
 }
 
 void VideoPostrenderDefaultCallback( void* p_video_data, uint8_t* p_pixel_buffer, int width, int height,
-                                     int pixel_pitch, size_t size, vlc_tick_t pts )
+                                     int pixel_pitch, size_t size, mtime_t pts )
 {
     VLC_UNUSED( p_video_data ); VLC_UNUSED( p_pixel_buffer );
     VLC_UNUSED( width ); VLC_UNUSED( height );
@@ -182,7 +187,7 @@ void VideoPostrenderDefaultCallback( void* p_video_data, uint8_t* p_pixel_buffer
 
 void AudioPostrenderDefaultCallback( void* p_audio_data, uint8_t* p_pcm_buffer, unsigned int channels,
                                      unsigned int rate, unsigned int nb_samples, unsigned int bits_per_sample,
-                                     size_t size, vlc_tick_t pts )
+                                     size_t size, mtime_t pts )
 {
     VLC_UNUSED( p_audio_data ); VLC_UNUSED( p_pcm_buffer );
     VLC_UNUSED( channels ); VLC_UNUSED( rate ); VLC_UNUSED( nb_samples );
@@ -221,13 +226,13 @@ static int Open( vlc_object_t *p_this )
         p_sys->pf_audio_prerender_callback = AudioPrerenderDefaultCallback;
 
     psz_tmp = var_GetString( p_stream, SOUT_PREFIX_VIDEO "postrender-callback" );
-    p_sys->pf_video_postrender_callback = (void (*) (void*, uint8_t*, int, int, int, size_t, vlc_tick_t))(intptr_t)atoll( psz_tmp );
+    p_sys->pf_video_postrender_callback = (void (*) (void*, uint8_t*, int, int, int, size_t, mtime_t))(intptr_t)atoll( psz_tmp );
     free( psz_tmp );
     if (p_sys->pf_video_postrender_callback == NULL)
         p_sys->pf_video_postrender_callback = VideoPostrenderDefaultCallback;
 
     psz_tmp = var_GetString( p_stream, SOUT_PREFIX_AUDIO "postrender-callback" );
-    p_sys->pf_audio_postrender_callback = (void (*) (void*, uint8_t*, unsigned int, unsigned int, unsigned int, unsigned int, size_t, vlc_tick_t))(intptr_t)atoll( psz_tmp );
+    p_sys->pf_audio_postrender_callback = (void (*) (void*, uint8_t*, unsigned int, unsigned int, unsigned int, unsigned int, size_t, mtime_t))(intptr_t)atoll( psz_tmp );
     free( psz_tmp );
     if (p_sys->pf_audio_postrender_callback == NULL)
         p_sys->pf_audio_postrender_callback = AudioPostrenderDefaultCallback;
@@ -250,7 +255,8 @@ static void Close( vlc_object_t * p_this )
     free( p_stream->p_sys );
 }
 
-static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
+static sout_stream_id_sys_t *Add( sout_stream_t *p_stream,
+                                  const es_format_t *p_fmt )
 {
     sout_stream_id_sys_t *id = NULL;
 
@@ -261,7 +267,8 @@ static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
     return id;
 }
 
-static void *AddVideo( sout_stream_t *p_stream, const es_format_t *p_fmt )
+static sout_stream_id_sys_t *AddVideo( sout_stream_t *p_stream,
+                                       const es_format_t *p_fmt )
 {
     char* psz_tmp;
     sout_stream_id_sys_t    *id;
@@ -310,7 +317,8 @@ static void *AddVideo( sout_stream_t *p_stream, const es_format_t *p_fmt )
     return id;
 }
 
-static void *AddAudio( sout_stream_t *p_stream, const es_format_t *p_fmt )
+static sout_stream_id_sys_t *AddAudio( sout_stream_t *p_stream,
+                                       const es_format_t *p_fmt )
 {
     char* psz_tmp;
     sout_stream_id_sys_t* id;
@@ -335,17 +343,16 @@ static void *AddAudio( sout_stream_t *p_stream, const es_format_t *p_fmt )
     return id;
 }
 
-static void Del( sout_stream_t *p_stream, void *_id )
+static void Del( sout_stream_t *p_stream, sout_stream_id_sys_t *id )
 {
     VLC_UNUSED( p_stream );
-    sout_stream_id_sys_t *id = (sout_stream_id_sys_t *)_id;
     es_format_Clean( &id->format );
     free( id );
 }
 
-static int Send( sout_stream_t *p_stream, void *_id, block_t *p_buffer )
+static int Send( sout_stream_t *p_stream, sout_stream_id_sys_t *id,
+                 block_t *p_buffer )
 {
-    sout_stream_id_sys_t *id = (sout_stream_id_sys_t *)_id;
     if ( id->format.i_cat == VIDEO_ES )
         return SendVideo( p_stream, id, p_buffer );
     else if ( id->format.i_cat == AUDIO_ES )
@@ -353,10 +360,10 @@ static int Send( sout_stream_t *p_stream, void *_id, block_t *p_buffer )
     return VLC_SUCCESS;
 }
 
-static int SendVideo( sout_stream_t *p_stream, void *_id, block_t *p_buffer )
+static int SendVideo( sout_stream_t *p_stream, sout_stream_id_sys_t *id,
+                      block_t *p_buffer )
 {
     sout_stream_sys_t *p_sys = p_stream->p_sys;
-    sout_stream_id_sys_t *id = (sout_stream_id_sys_t *)_id;
     size_t i_size = p_buffer->i_buffer;
     uint8_t* p_pixels = NULL;
 
@@ -380,10 +387,10 @@ static int SendVideo( sout_stream_t *p_stream, void *_id, block_t *p_buffer )
     return VLC_SUCCESS;
 }
 
-static int SendAudio( sout_stream_t *p_stream, void *_id, block_t *p_buffer )
+static int SendAudio( sout_stream_t *p_stream, sout_stream_id_sys_t *id,
+                      block_t *p_buffer )
 {
     sout_stream_sys_t *p_sys = p_stream->p_sys;
-    sout_stream_id_sys_t *id = (sout_stream_id_sys_t *)_id;
     int i_size;
     uint8_t* p_pcm_buffer = NULL;
     int i_samples = 0;

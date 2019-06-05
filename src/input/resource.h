@@ -2,6 +2,7 @@
  * resource.h
  *****************************************************************************
  * Copyright (C) 2008 Laurent Aimar
+ * $Id: 8f83eb31836c8ae0ed1a082226794c9dd51e34e8 $
  *
  * Authors: Laurent Aimar < fenrir _AT_ videolan _DOT_ org >
  *
@@ -24,8 +25,6 @@
 #define LIBVLC_INPUT_RESOURCE_H 1
 
 #include <vlc_common.h>
-#include <vlc_mouse.h>
-#include "../video_output/vout_internal.h"
 
 /**
  * This function set the associated input.
@@ -37,26 +36,23 @@ void input_resource_SetInput( input_resource_t *, input_thread_t * );
  */
 sout_instance_t *input_resource_RequestSout( input_resource_t *, sout_instance_t *, const char *psz_sout );
 
-vout_thread_t *input_resource_GetVout(input_resource_t *,
-                                      const vout_configuration_t *);
-void input_resource_PutVout(input_resource_t *, vout_thread_t *);
+/**
+ * This function handles vout request.
+ */
+vout_thread_t *input_resource_RequestVout( input_resource_t *, vout_thread_t *,
+                                           const video_format_t *, unsigned dpb_size, bool b_recycle );
 
 /**
  * This function returns one of the current vout if any.
  *
- * You must call vout_Release() on the value returned (if non NULL).
+ * You must call vlc_object_release on the value returned (if non NULL).
  */
 vout_thread_t *input_resource_HoldVout( input_resource_t * );
 
 /**
- * This function returns the dummy vout. It will be the parent of the future
- * main vout and can be used to pre-configure it. */
-vout_thread_t *input_resource_HoldDummyVout( input_resource_t * );
-
-/**
  * This function returns all current vouts if any.
  *
- * You must call vout_Release() on all values returned (if non NULL).
+ * You must call vlc_object_release on all values returned (if non NULL).
  */
 void input_resource_HoldVouts( input_resource_t *, vout_thread_t ***, size_t * );
 
@@ -64,8 +60,6 @@ void input_resource_HoldVouts( input_resource_t *, vout_thread_t ***, size_t * )
  * This function releases all resources (object).
  */
 void input_resource_Terminate( input_resource_t * );
-
-void input_resource_StopFreeVout( input_resource_t * );
 
 /**
  * This function holds the input_resource_t itself

@@ -2,6 +2,7 @@
  * m3u.c : M3U playlist format import
  *****************************************************************************
  * Copyright (C) 2004 VLC authors and VideoLAN
+ * $Id: 9fff1f0ff31f0a4b544c88cdec806cfc6d05ab3b $
  *
  * Authors: Clément Stenac <zorglub@videolan.org>
  *          Sigmund Augdal Helberg <dnumgis@videolan.org>
@@ -82,7 +83,7 @@ int Import_M3U( vlc_object_t *p_this )
     int offset = 0;
 
     CHECK_FILE(p_stream);
-    i_peek = vlc_stream_Peek( p_stream->s, &p_peek, 1024 );
+    i_peek = vlc_stream_Peek( p_stream->p_source, &p_peek, 1024 );
     if( i_peek < 8 )
         return VLC_EGENERIC;
 
@@ -104,7 +105,7 @@ int Import_M3U( vlc_object_t *p_this )
     }
 
     /* File type: playlist, or not (HLS manifest or whatever else) */
-    char *type = stream_MimeType(p_stream->s);
+    char *type = stream_MimeType(p_stream->p_source);
     bool match;
 
     if (p_stream->obj.force)
@@ -137,7 +138,7 @@ int Import_M3U( vlc_object_t *p_this )
     if (!match)
         return VLC_EGENERIC;
 
-    if (offset != 0 && vlc_stream_Seek(p_stream->s, offset))
+    if (offset != 0 && vlc_stream_Seek(p_stream->p_source, offset))
         return VLC_EGENERIC;
 
     msg_Dbg( p_stream, "found valid M3U playlist" );
@@ -217,14 +218,16 @@ static int ReadDir( stream_t *p_demux, input_item_node_t *p_subitems )
     char       *psz_artist = NULL;
     char       *psz_album_art = NULL;
     int        i_parsed_duration = 0;
-    vlc_tick_t i_duration = INPUT_DURATION_INDEFINITE;
+    mtime_t    i_duration = -1;
     const char**ppsz_options = NULL;
     char *    (*pf_dup) (const char *) = p_demux->p_sys;
     int        i_options = 0;
     bool b_cleanup = false;
     input_item_t *p_input;
 
-    psz_line = vlc_stream_ReadLine( p_demux->s );
+    input_item_t *p_current_input = GetCurrentItem(p_demux);
+
+    psz_line = vlc_stream_ReadLine( p_demux->p_source );
     while( psz_line )
     {
         char *psz_parse = psz_line;
@@ -252,7 +255,7 @@ static int ReadDir( stream_t *p_demux, input_item_node_t *p_subitems )
                 FREENULL( psz_artist );
                 parseEXTINF( psz_parse, &psz_artist, &psz_name, &i_parsed_duration );
                 if( i_parsed_duration >= 0 )
-                    i_duration = vlc_tick_from_sec( i_parsed_duration );
+                    i_duration = i_parsed_duration * INT64_C(1000000);
                 if( psz_name )
                     psz_name = pf_dup( psz_name );
                 if( psz_artist )
@@ -309,6 +312,8 @@ static int ReadDir( stream_t *p_demux, input_item_node_t *p_subitems )
             if( !p_input )
                 goto error;
             input_item_AddOptions( p_input, i_options, ppsz_options, 0 );
+            if ( p_current_input )
+                input_item_CopyOptions( p_input, p_current_input );
 
             if( !EMPTY_STR(psz_artist) )
                 input_item_SetArtist( p_input, psz_artist );
@@ -324,7 +329,7 @@ static int ReadDir( stream_t *p_demux, input_item_node_t *p_subitems )
 
         /* Fetch another line */
         free( psz_line );
-        psz_line = vlc_stream_ReadLine( p_demux->s );
+        psz_line = vlc_stream_ReadLine( p_demux->p_source );
         if( !psz_line ) b_cleanup = true;
 
         if( b_cleanup )
@@ -337,7 +342,7 @@ static int ReadDir( stream_t *p_demux, input_item_node_t *p_subitems )
             FREENULL( psz_artist );
             FREENULL( psz_album_art );
             i_parsed_duration = 0;
-            i_duration = INPUT_DURATION_INDEFINITE;
+            i_duration = -1;
 
             b_cleanup = false;
         }

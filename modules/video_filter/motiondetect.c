@@ -2,6 +2,7 @@
  * motiondetect.c : Second version of a motion detection plugin.
  *****************************************************************************
  * Copyright (C) 2000-2008 VLC authors and VideoLAN
+ * $Id: fd1ff9b09df6fe00e9653b6a00bb4c7936ef9a87 $
  *
  * Authors: Antoine Cellerier <dionoea -at- videolan -dot- org>
  *
@@ -65,7 +66,7 @@ static int FindShapes( uint32_t *, uint32_t *, int, int, int,
 static void Draw( filter_t *p_filter, uint8_t *p_pix, int i_pix_pitch, int i_pix_size );
 #define NUM_COLORS (5000)
 
-typedef struct
+struct filter_sys_t
 {
     bool is_yuv_planar;
     picture_t *p_old;
@@ -79,7 +80,7 @@ typedef struct
     int color_x_max[NUM_COLORS];
     int color_y_min[NUM_COLORS];
     int color_y_max[NUM_COLORS];
-} filter_sys_t;
+};
 
 /*****************************************************************************
  * Create

@@ -24,7 +24,6 @@
 # include "config.h"
 #endif
 
-#include <stdatomic.h>
 #include <stdlib.h>
 #include <assert.h>
 
@@ -32,6 +31,7 @@
 #include <vlc_plugin.h>
 #include <vlc_filter.h>
 #include <vlc_picture.h>
+#include <vlc_atomic.h>
 
 #define COBJMACROS
 #include <initguid.h>
@@ -50,7 +50,7 @@ struct filter_level
     DXVA2_ValueRange Range;
 };
 
-typedef struct
+struct filter_sys_t
 {
     HINSTANCE                      hdecoder_dll;
     /* keep a reference in case the vout is released first */
@@ -63,7 +63,7 @@ typedef struct
     struct filter_level Contrast;
     struct filter_level Hue;
     struct filter_level Saturation;
-} filter_sys_t;
+};
 
 #define THRES_TEXT N_("Brightness threshold")
 #define THRES_LONGTEXT N_("When this mode is enabled, pixels will be " \
@@ -107,11 +107,7 @@ static picture_t *Filter(filter_t *p_filter, picture_t *p_pic)
     picture_sys_t *p_src_sys = ActivePictureSys(p_pic);
 
     picture_t *p_outpic = filter_NewPicture( p_filter );
-    if( !p_outpic )
-        goto failed;
-
-    picture_sys_t *p_out_sys = p_outpic->p_sys;
-    if( !p_out_sys || !p_out_sys->surface )
+    if( !p_outpic || !p_outpic->p_sys || !p_outpic->p_sys->surface )
         goto failed;
 
     picture_CopyProperties( p_outpic, p_pic );
@@ -153,7 +149,7 @@ static picture_t *Filter(filter_t *p_filter, picture_t *p_pic)
                                                  1, NULL );
     hr = IDirect3DDevice9_StretchRect( p_sys->d3d_dev.dev,
                                        p_sys->hw_surface, NULL,
-                                       p_out_sys->surface, NULL,
+                                       p_outpic->p_sys->surface, NULL,
                                        D3DTEXF_NONE);
     if (FAILED(hr))
         goto failed;
@@ -482,7 +478,7 @@ vlc_module_begin()
         change_safe()
 
     add_submodule()
-    set_description(N_("Direct3D9 deinterlace filter"))
+    set_description("Direct3D9 deinterlace filter")
     set_callbacks(D3D9OpenDeinterlace, D3D9CloseDeinterlace)
     add_shortcut ("deinterlace")
 

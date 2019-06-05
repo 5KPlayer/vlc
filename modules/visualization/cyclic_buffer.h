@@ -28,7 +28,7 @@ class block_holder
 {
 public:
     float data[512]; // data holder
-    vlc_tick_t pts; // machine time when this is to be played
+    mtime_t pts; // machine time when this is to be played
     block_holder()
     {
         pts = 0; // max_int 64-bit
@@ -50,7 +50,7 @@ public:
 
     block_holder* consume()
     {
-        vlc_tick_t cur_machine_time = vlc_tick_now();
+        mtime_t cur_machine_time = mdate();
         size_t steps = 0;
         while (
                (cycl_buffer[consumer_pos].pts < cur_machine_time)

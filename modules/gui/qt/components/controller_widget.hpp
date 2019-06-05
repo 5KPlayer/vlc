@@ -2,6 +2,7 @@
  * controller_widget.hpp : Controller Widget for the controllers
  ****************************************************************************
  * Copyright (C) 2006-2008 the VideoLAN team
+ * $Id: 5709bb651a5b503205eb3e3a7e8c9fa120e99bd5 $
  *
  * Authors: Jean-Baptiste Kempf <jb@videolan.org>
  *
@@ -28,8 +29,8 @@
 #endif
 
 #include "qt.hpp"
-#include "components/player_controller.hpp"
-#include "components/playlist/playlist_controller.hpp"
+#include "input_manager.hpp"
+#include <vlc_vout.h>                       /* vout_thread_t for aspect ratio combobox */
 
 #include <QWidget>
 #include <QToolButton>
@@ -58,46 +59,35 @@ class LoopButton : public QToolButton
 {
     Q_OBJECT
 public slots:
-    void updateButtonIcons( vlc::playlist::PlaylistControllerModel::PlaybackRepeat );
+    void updateButtonIcons( int );
 };
 
 class AtoB_Button : public QToolButton
 {
     Q_OBJECT
-public slots:
-    void updateButtonIcons( PlayerController::ABLoopState state );
+private slots:
+    void updateButtonIcons( bool, bool );
 };
 
 class AspectRatioComboBox : public QComboBox
 {
     Q_OBJECT
 public:
-    AspectRatioComboBox( intf_thread_t* _p_intf, QAbstractListModel* model )
-        : p_intf( _p_intf )
-        , m_aspectRatioModel(model)
+    AspectRatioComboBox( intf_thread_t* _p_intf ) : p_intf( _p_intf )
     {
-        connect( model, &QAbstractListModel::rowsInserted, this, &AspectRatioComboBox::onRowInserted );
-        connect( model, &QAbstractListModel::rowsRemoved, this, &AspectRatioComboBox::onRowRemoved );
-        connect( model, &QAbstractListModel::modelAboutToBeReset, this, &AspectRatioComboBox::onModelAboutToReset);
-        connect( model, &QAbstractListModel::modelReset, this, &AspectRatioComboBox::onModelReset);
-        connect( model, &QAbstractListModel::dataChanged, this, &AspectRatioComboBox::onDataChanged);
-        connect( this,QOverload<int>::of(&AspectRatioComboBox::currentIndexChanged), this, &AspectRatioComboBox::updateAspectRatio );
-
-        onModelReset();
+        CONNECT( THEMIM->getIM(), voutChanged( bool ),
+                 this, updateRatios() );
+        CONNECT( this, currentIndexChanged( int ),
+                 this, updateAspectRatio( int ) );
+        updateRatios();
     }
 
 public slots:
-    void onRowInserted(const QModelIndex &parent, int first, int last);
-    void onRowRemoved(const QModelIndex &parent, int first, int last);
-    void onModelAboutToReset();
-    void onModelReset();
-    void onDataChanged(const QModelIndex &topLeft, const QModelIndex &bottomRight, const QVector<int> &roles);
-
+    void updateRatios();
     void updateAspectRatio( int );
 
 private:
     intf_thread_t* p_intf;
-    QAbstractListModel* m_aspectRatioModel;
 };
 
 class SoundWidget : public QWidget

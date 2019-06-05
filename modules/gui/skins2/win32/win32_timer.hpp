@@ -2,6 +2,7 @@
  * win32_timer.hpp
  *****************************************************************************
  * Copyright (C) 2003 the VideoLAN team
+ * $Id: 9ee1161d2e6c970b8471fcc5f22064c7ff2097c8 $
  *
  * Authors: Cyril Deguet     <asmax@via.ecp.fr>
  *          Olivier Teulière <ipkiss@via.ecp.fr>
@@ -50,7 +51,7 @@ private:
     CmdGeneric &m_rCommand;
 
     /// Delay between two execute
-    int m_interval;
+    mtime_t m_interval;
 
     /// Flag to tell whether the timer must be stopped after the
     /// first execution

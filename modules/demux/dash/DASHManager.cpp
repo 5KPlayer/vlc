@@ -34,7 +34,6 @@
 #include "mpd/IsoffMainParser.h"
 #include "xml/DOMParser.h"
 #include "xml/Node.h"
-#include "../adaptive/SharedResources.hpp"
 #include "../adaptive/tools/Helper.h"
 #include "../adaptive/http/HTTPConnectionManager.h"
 #include <vlc_stream.h>
@@ -51,11 +50,11 @@ using namespace dash::mpd;
 using namespace adaptive::logic;
 
 DASHManager::DASHManager(demux_t *demux_,
-                         SharedResources *res,
+                         AuthStorage *auth,
                          MPD *mpd,
                          AbstractStreamFactory *factory,
                          AbstractAdaptationLogic::LogicType type) :
-             PlaylistManager(demux_, res, mpd, factory, type)
+             PlaylistManager(demux_, auth, mpd, factory, type)
 {
 }
 
@@ -67,12 +66,12 @@ void DASHManager::scheduleNextUpdate()
 {
     time_t now = time(NULL);
 
-    vlc_tick_t minbuffer = 0;
+    mtime_t minbuffer = 0;
     std::vector<AbstractStream *>::const_iterator it;
     for(it=streams.begin(); it!=streams.end(); ++it)
     {
         const AbstractStream *st = *it;
-        const vlc_tick_t m = st->getMinAheadTime();
+        const mtime_t m = st->getMinAheadTime();
         if(m > 0 && (m < minbuffer || minbuffer == 0))
             minbuffer = m;
     }
@@ -81,11 +80,12 @@ void DASHManager::scheduleNextUpdate()
     if(playlist->minUpdatePeriod.Get() > minbuffer)
         minbuffer = playlist->minUpdatePeriod.Get();
 
-    minbuffer = std::max(minbuffer, VLC_TICK_FROM_SEC(5));
+    if(minbuffer < 5 * CLOCK_FREQ)
+        minbuffer = 5 * CLOCK_FREQ;
 
-    nextPlaylistupdate = now + SEC_FROM_VLC_TICK(minbuffer);
+    nextPlaylistupdate = now + minbuffer / CLOCK_FREQ;
 
-    msg_Dbg(p_demux, "Updated MPD, next update in %" PRId64 "s", (int64_t) nextPlaylistupdate - now );
+    msg_Dbg(p_demux, "Updated MPD, next update in %" PRId64 "s", (mtime_t) nextPlaylistupdate - now );
 }
 
 bool DASHManager::needsUpdate() const
@@ -101,10 +101,11 @@ bool DASHManager::updatePlaylist()
     /* do update */
     if(nextPlaylistupdate)
     {
-        std::string url(p_demux->psz_url);
+        std::string url(p_demux->psz_access);
+        url.append("://");
+        url.append(p_demux->psz_location);
 
-        block_t *p_block = Retrieve::HTTP(VLC_OBJECT(p_demux),
-                                          resources->getAuthStorage(), url);
+        block_t *p_block = Retrieve::HTTP(VLC_OBJECT(p_demux), authStorage, url);
         if(!p_block)
             return false;
 
@@ -123,12 +124,21 @@ bool DASHManager::updatePlaylist()
             return false;
         }
 
+        mtime_t minsegmentTime = 0;
+        std::vector<AbstractStream *>::iterator it;
+        for(it=streams.begin(); it!=streams.end(); it++)
+        {
+            mtime_t segmentTime = (*it)->getPlaybackTime();
+            if(!minsegmentTime || segmentTime < minsegmentTime)
+                minsegmentTime = segmentTime;
+        }
+
         IsoffMainParser mpdparser(parser.getRootNode(), VLC_OBJECT(p_demux),
                                   mpdstream, Helper::getDirectoryPath(url).append("/"));
         MPD *newmpd = mpdparser.parse();
         if(newmpd)
         {
-            playlist->updateWith(newmpd);
+            playlist->mergeWith(newmpd, minsegmentTime);
             delete newmpd;
         }
         vlc_stream_Delete(mpdstream);

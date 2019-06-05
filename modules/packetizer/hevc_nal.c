@@ -23,15 +23,11 @@
 
 #include "hevc_nal.h"
 #include "hxxx_nal.h"
-#include "hxxx_ep3b.h"
-#include "iso_color_tables.h"
 
 #include <vlc_common.h>
 #include <vlc_bits.h>
 
 #include <limits.h>
-
-//#define HEVC_POC_DEBUG
 
 typedef uint8_t  nal_u1_t;
 typedef uint8_t  nal_u2_t;
@@ -474,9 +470,9 @@ static bool hevc_parse_vui_parameters_rbsp( bs_t *p_bs, hevc_vui_parameters_t *p
         }
         else
         {
-            p_vui->vs.colour.colour_primaries = ISO_23001_8_CP_UNSPECIFIED;
-            p_vui->vs.colour.transfer_characteristics = ISO_23001_8_TC_UNSPECIFIED;
-            p_vui->vs.colour.matrix_coeffs = ISO_23001_8_MC_UNSPECIFIED;
+            p_vui->vs.colour.colour_primaries = HXXX_PRIMARIES_UNSPECIFIED;
+            p_vui->vs.colour.transfer_characteristics = HXXX_TRANSFER_UNSPECIFIED;
+            p_vui->vs.colour.matrix_coeffs = HXXX_MATRIX_UNSPECIFIED;
         }
     }
 
@@ -701,13 +697,14 @@ void hevc_rbsp_release_vps( hevc_video_parameter_set_t *p_vps )
         if(likely(p_hevctype)) \
         { \
             bs_t bs; \
-            struct hxxx_bsfw_ep3b_ctx_s bsctx; \
+            bs_init( &bs, p_buf, i_buf ); \
+            unsigned i_bitflow = 0; \
             if( b_escaped ) \
             { \
-                hxxx_bsfw_ep3b_ctx_init( &bsctx ); \
-                bs_init_custom( &bs, p_buf, i_buf, &hxxx_bsfw_ep3b_callbacks, &bsctx );\
+                bs.p_fwpriv = &i_bitflow; \
+                bs.pf_forward = hxxx_bsfw_ep3b_to_rbsp;  /* Does the emulated 3bytes conversion to rbsp */ \
             } \
-            else bs_init( &bs, p_buf, i_buf ); \
+            else (void) i_bitflow;\
             bs_skip( &bs, 7 ); /* nal_unit_header */ \
             uint8_t i_nuh_layer_id = bs_read( &bs, 6 ); \
             bs_skip( &bs, 3 ); /* !nal_unit_header */ \
@@ -762,7 +759,7 @@ static bool hevc_parse_st_ref_pic_set( bs_t *p_bs, unsigned stRpsIdx,
     {
         nal_ue_t num_negative_pics = bs_read_ue( p_bs );
         nal_ue_t num_positive_pics = bs_read_ue( p_bs );
-        if( bs_remain( p_bs ) < (num_negative_pics + num_positive_pics) * 2 )
+        if( bs_remain( p_bs ) < ((int64_t)num_negative_pics + num_positive_pics) * 2 )
             return false;
         for(unsigned int i=0; i<num_negative_pics; i++)
         {
@@ -977,8 +974,8 @@ static bool hevc_parse_pic_parameter_set_rbsp( bs_t *p_bs,
         p_pps->uniform_spacing_flag = bs_read1( p_bs );
         if( !p_pps->uniform_spacing_flag )
         {
-            if( bs_remain( p_bs ) < p_pps->num_tile_columns_minus1 +
-                                    p_pps->num_tile_rows_minus1 + 1 )
+            if( bs_remain( p_bs ) < (int64_t) p_pps->num_tile_columns_minus1 +
+                                               p_pps->num_tile_rows_minus1 + 1 )
                 return false;
             for( unsigned i=0; i< p_pps->num_tile_columns_minus1; i++ )
                 (void) bs_read_ue( p_bs );
@@ -1193,17 +1190,17 @@ bool hevc_get_colorimetry( const hevc_sequence_parameter_set_t *p_sps,
                            video_color_primaries_t *p_primaries,
                            video_transfer_func_t *p_transfer,
                            video_color_space_t *p_colorspace,
-                           video_color_range_t *p_full_range )
+                           bool *p_full_range )
 {
     if( !p_sps->vui_parameters_present_flag )
         return false;
     *p_primaries =
-        iso_23001_8_cp_to_vlc_primaries( p_sps->vui.vs.colour.colour_primaries );
+        hxxx_colour_primaries_to_vlc( p_sps->vui.vs.colour.colour_primaries );
     *p_transfer =
-        iso_23001_8_tc_to_vlc_xfer( p_sps->vui.vs.colour.transfer_characteristics );
+        hxxx_transfer_characteristics_to_vlc( p_sps->vui.vs.colour.transfer_characteristics );
     *p_colorspace =
-        iso_23001_8_mc_to_vlc_coeffs( p_sps->vui.vs.colour.matrix_coeffs );
-    *p_full_range = p_sps->vui.vs.video_full_range_flag ? COLOR_RANGE_FULL : COLOR_RANGE_LIMITED;
+        hxxx_matrix_coeffs_to_vlc( p_sps->vui.vs.colour.matrix_coeffs );
+    *p_full_range = p_sps->vui.vs.video_full_range_flag;
     return true;
 }
 
@@ -1266,8 +1263,6 @@ static bool hevc_parse_slice_segment_header_rbsp( bs_t *p_bs,
 
         if( p_pps->output_flag_present_flag )
             p_sl->pic_output_flag = bs_read1( p_bs );
-        else
-            p_sl->pic_output_flag = 1;
     }
 
     if( p_sps->separate_colour_plane_flag )
@@ -1296,13 +1291,14 @@ hevc_slice_segment_header_t * hevc_decode_slice_header( const uint8_t *p_buf, si
     if(likely(p_sh))
     {
         bs_t bs;
-        struct hxxx_bsfw_ep3b_ctx_s bsctx;
+        bs_init( &bs, p_buf, i_buf );
+        unsigned i_bitflow = 0;
         if( b_escaped )
         {
-            hxxx_bsfw_ep3b_ctx_init( &bsctx );
-            bs_init_custom( &bs, p_buf, i_buf, &hxxx_bsfw_ep3b_callbacks, &bsctx );
+            bs.p_fwpriv = &i_bitflow;
+            bs.pf_forward = hxxx_bsfw_ep3b_to_rbsp;  /* Does the emulated 3bytes conversion to rbsp */
         }
-        else bs_init( &bs, p_buf, i_buf );
+        else (void) i_bitflow;
         bs_skip( &bs, 1 );
         p_sh->nal_type = bs_read( &bs, 6 );
         p_sh->nuh_layer_id = bs_read( &bs, 6 );
@@ -1358,9 +1354,10 @@ static void hevc_dcr_params_from_vps( const uint8_t * p_buffer, size_t i_buffer,
         return;
 
     bs_t bs;
-    struct hxxx_bsfw_ep3b_ctx_s bsctx;
-    hxxx_bsfw_ep3b_ctx_init( &bsctx );
-    bs_init_custom( &bs, p_buffer, i_buffer, &hxxx_bsfw_ep3b_callbacks, &bsctx );
+    bs_init( &bs, p_buffer, i_buffer );
+    unsigned i_bitflow = 0;
+    bs.p_fwpriv = &i_bitflow;
+    bs.pf_forward = hxxx_bsfw_ep3b_to_rbsp;  /* Does the emulated 3bytes conversion to rbsp */
 
     /* first two bytes are the NAL header, 3rd and 4th are:
         vps_video_parameter_set_id(4)
@@ -1530,13 +1527,6 @@ int hevc_compute_picture_order_count( const hevc_sequence_parameter_set_t *p_sps
         NoRaslOutputFlag = false;
     }
 
-#ifdef HEVC_POC_DEBUG
-    printf("slice lsb=%"PRIu32" irap=%d norasl=%d tid=%d msb=%d lsb=%d",
-           p_slice->pic_order_cnt_lsb,
-           IsIRAP, NoRaslOutputFlag, p_slice->temporal_id_plus1,
-           p_ctx->prevTid0PicOrderCnt.msb, p_ctx->prevTid0PicOrderCnt.lsb);
-#endif
-
     if( p_slice->nal_type == HEVC_NAL_IDR_N_LP ||
         p_slice->nal_type == HEVC_NAL_IDR_W_RADL )
     {
@@ -1575,10 +1565,6 @@ int hevc_compute_picture_order_count( const hevc_sequence_parameter_set_t *p_sps
     }
 
     p_ctx->first_picture = false;
-
-#ifdef HEVC_POC_DEBUG
-    printf(" POC=%"PRIu32"\n", pocMSB + p_slice->pic_order_cnt_lsb);
-#endif
 
     return pocMSB + p_slice->pic_order_cnt_lsb;
 }
@@ -1621,22 +1607,15 @@ bool hevc_frame_is_progressive( const hevc_sequence_parameter_set_t *p_sps,
         p_sps->vui.field_seq_flag )
         return false;
 
-    const hevc_inner_profile_tier_level_t *p_profile = &p_sps->profile_tier_level.general;
-    /* 1 & 0, 0 & 1, global */
-    if( p_profile->progressive_source_flag != p_profile->interlaced_source_flag )
+    if( p_sps->profile_tier_level.general.interlaced_source_flag &&
+       !p_sps->profile_tier_level.general.progressive_source_flag )
+        return false;
+
+    if( p_timing && p_sps->vui.frame_field_info_present_flag )
     {
-        return p_profile->progressive_source_flag > p_profile->interlaced_source_flag;
+        if( p_timing->source_scan_type < 2 )
+            return p_timing->source_scan_type != 0;
     }
-    /* 1 & 1, defined in SEI */
-    else if( p_profile->progressive_source_flag )
-    {
-        if( p_timing && p_sps->vui.frame_field_info_present_flag )
-        {
-            if( p_timing->source_scan_type < 2 )
-                return p_timing->source_scan_type != 0;
-        }
-    }
-    /* else 0 & 0, unspec */
 
     return true;
 }

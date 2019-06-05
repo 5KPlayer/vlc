@@ -2,6 +2,7 @@
  * cmd_resize.hpp
  *****************************************************************************
  * Copyright (C) 2003 the VideoLAN team
+ * $Id: 6e13eb7c057428bfaa3be85a75af3db7da80d89a $
  *
  * Authors: Cyril Deguet     <asmax@via.ecp.fr>
  *          Olivier Teulière <ipkiss@via.ecp.fr>
@@ -25,11 +26,11 @@
 #define CMD_RESIZE_HPP
 
 #include "cmd_generic.hpp"
+#include <vlc_vout_window.h>
 
 class WindowManager;
 class GenericLayout;
 class CtrlVideo;
-struct vout_window_t;
 
 
 /// Command to resize a layout
@@ -55,14 +56,14 @@ class CmdResizeVout: public CmdGeneric
 {
 public:
     /// Resize the given layout
-    CmdResizeVout( intf_thread_t *pIntf, struct vout_window_t* pWnd,
+    CmdResizeVout( intf_thread_t *pIntf, vout_window_t* pWnd,
                    int width, int height );
     virtual ~CmdResizeVout() { }
     virtual void execute();
     virtual std::string getType() const { return "resize vout"; }
 
 private:
-    struct vout_window_t* m_pWnd;
+    vout_window_t* m_pWnd;
     int m_width, m_height;
 };
 
@@ -72,14 +73,30 @@ class CmdSetFullscreen: public CmdGeneric
 {
 public:
     /// Resize the given layout
-    CmdSetFullscreen( intf_thread_t *pIntf, struct vout_window_t* pWnd,
+    CmdSetFullscreen( intf_thread_t *pIntf, vout_window_t* pWnd,
                       bool fullscreen );
     virtual ~CmdSetFullscreen() { }
     virtual void execute();
     virtual std::string getType() const { return "toggle fullscreen"; }
 
 private:
-    struct vout_window_t* m_pWnd;
+    vout_window_t* m_pWnd;
     bool m_bFullscreen;
+};
+
+
+/// Command to hide mouse
+class CmdHideMouse: public CmdGeneric
+{
+public:
+    /// hide the mouse
+    CmdHideMouse( intf_thread_t *pIntf, vout_window_t* pWnd, bool hide );
+    virtual ~CmdHideMouse() { }
+    virtual void execute();
+    virtual std::string getType() const { return "hide mouse"; }
+
+private:
+    vout_window_t* m_pWnd;
+    bool m_bHide;
 };
 #endif

@@ -2,6 +2,7 @@
  * freetype.c : Put text on the video, using freetype2
  *****************************************************************************
  * Copyright (C) 2002 - 2015 VLC authors and VideoLAN
+ * $Id: 489d67d0fab99f584f249848b2260802c92b9b0f $
  *
  * Authors: Sigmund Augdal Helberg <dnumgis@videolan.org>
  *          Gildas Bazin <gbazin@videolan.org>
@@ -50,7 +51,7 @@ static vlc_mutex_t lock = VLC_STATIC_MUTEX;
 
 int FontConfig_Prepare( filter_t *p_filter )
 {
-    vlc_tick_t ts;
+    mtime_t ts;
 
     vlc_mutex_lock( &lock );
     if( refs++ > 0 )
@@ -60,7 +61,7 @@ int FontConfig_Prepare( filter_t *p_filter )
     }
 
     msg_Dbg( p_filter, "Building font databases.");
-    ts = vlc_tick_now();
+    ts = mdate();
 
 #ifndef _WIN32
     config = FcInitLoadConfigAndFonts();
@@ -89,7 +90,7 @@ int FontConfig_Prepare( filter_t *p_filter )
 #endif
 
     vlc_mutex_unlock( &lock );
-    ts -= vlc_tick_now();
+    ts -= mdate();
     msg_Dbg( p_filter, "Took %ld microseconds", (long)ts );
 
     return (config != NULL) ? VLC_SUCCESS : VLC_EGENERIC;

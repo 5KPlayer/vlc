@@ -34,15 +34,15 @@ namespace adaptive
         public:
             AbstractDemuxer();
             virtual ~AbstractDemuxer();
-            virtual int demux(vlc_tick_t) = 0;
+            virtual int demux(mtime_t) = 0;
             virtual void drain() = 0;
             virtual bool create() = 0;
             virtual void destroy() = 0;
             bool alwaysStartsFromZero() const;
             bool needsRestartOnSeek() const;
-            bool bitstreamSwitchCompatible() const;
+            bool needsRestartOnSwitch() const;
             bool needsRestartOnEachSegment() const;
-            void setBitstreamSwitchCompatible(bool);
+            void setCanDetectSwitches(bool);
             void setRestartsOnEachSegment(bool);
 
         protected:
@@ -58,7 +58,7 @@ namespace adaptive
             MimeDemuxer(demux_t *, const DemuxerFactoryInterface *,
                         es_out_t *, AbstractSourceStream *);
             virtual ~MimeDemuxer();
-            virtual int demux(vlc_tick_t); /* impl */
+            virtual int demux(mtime_t); /* impl */
             virtual void drain(); /* impl */
             virtual bool create(); /* impl */
             virtual void destroy(); /* impl */
@@ -76,7 +76,7 @@ namespace adaptive
         public:
             Demuxer(demux_t *, const std::string &, es_out_t *, AbstractSourceStream *);
             virtual ~Demuxer();
-            virtual int demux(vlc_tick_t); /* impl */
+            virtual int demux(mtime_t); /* impl */
             virtual void drain(); /* impl */
             virtual bool create(); /* impl */
             virtual void destroy(); /* impl */
@@ -96,10 +96,10 @@ namespace adaptive
             SlaveDemuxer(demux_t *, const std::string &, es_out_t *, AbstractSourceStream *);
             virtual ~SlaveDemuxer();
             virtual bool create(); /* reimpl */
-            virtual int demux(vlc_tick_t); /* reimpl */
+            virtual int demux(mtime_t); /* reimpl */
 
         private:
-            vlc_tick_t length;
+            mtime_t length;
     };
 
     class DemuxerFactoryInterface

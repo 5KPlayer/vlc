@@ -2,6 +2,7 @@
  * stream.c: stream functions
  *****************************************************************************
  * Copyright (C) 2007-2008 the VideoLAN team
+ * $Id: c68275983877150b1890ca001094ca2edbc3870a $
  *
  * Authors: Antoine Cellerier <dionoea at videolan tod org>
  *          Pierre d'Herbemont <pdherbemont # videolan.org>
@@ -122,7 +123,7 @@ static int vlclua_stream_read( lua_State *L )
 {
     int i_read;
     stream_t **pp_stream = (stream_t **)luaL_checkudata( L, 1, "stream" );
-    int n = luaL_checkinteger( L, 2 );
+    int n = luaL_checkint( L, 2 );
     uint8_t *p_read = malloc( n );
     if( !p_read ) return vlclua_error( L );
 
@@ -213,7 +214,7 @@ static int vlclua_stream_readdir( lua_State *L )
 
     if( !pp_stream || !*pp_stream )
         return vlclua_error( L );
-    if( (*pp_stream)->pf_readdir == NULL )
+    if ( vlc_stream_Control( *pp_stream, STREAM_IS_DIRECTORY ) != VLC_SUCCESS )
         return vlclua_error( L );
 
     input_item_t *p_input = input_item_New( (*pp_stream)->psz_url, NULL );

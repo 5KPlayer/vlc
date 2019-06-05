@@ -479,9 +479,56 @@ loopclean:
 }
 
 /*****************************************************************************
- * ConfigureDecoder
+ * Stop
  *****************************************************************************/
-static int ConfigureDecoder(mc_api *api, union mc_api_args* p_args)
+static int Stop(mc_api *api)
+{
+    mc_api_sys *p_sys = api->p_sys;
+    JNIEnv *env;
+
+    api->b_direct_rendering = false;
+
+    GET_ENV();
+
+    if (p_sys->input_buffers)
+    {
+        (*env)->DeleteGlobalRef(env, p_sys->input_buffers);
+        p_sys->input_buffers = NULL;
+    }
+    if (p_sys->output_buffers)
+    {
+        (*env)->DeleteGlobalRef(env, p_sys->output_buffers);
+        p_sys->output_buffers = NULL;
+    }
+    if (p_sys->codec)
+    {
+        if (api->b_started)
+        {
+            (*env)->CallVoidMethod(env, p_sys->codec, jfields.stop);
+            if (CHECK_EXCEPTION())
+                msg_Err(api->p_obj, "Exception in MediaCodec.stop");
+            api->b_started = false;
+        }
+
+        (*env)->CallVoidMethod(env, p_sys->codec, jfields.release);
+        if (CHECK_EXCEPTION())
+            msg_Err(api->p_obj, "Exception in MediaCodec.release");
+        (*env)->DeleteGlobalRef(env, p_sys->codec);
+        p_sys->codec = NULL;
+    }
+    if (p_sys->buffer_info)
+    {
+        (*env)->DeleteGlobalRef(env, p_sys->buffer_info);
+        p_sys->buffer_info = NULL;
+    }
+    msg_Dbg(api->p_obj, "MediaCodec via JNI closed");
+    return 0;
+}
+
+/*****************************************************************************
+ * Start
+ *****************************************************************************/
+static int Start(mc_api *api, union mc_api_args *p_args)
 {
     mc_api_sys *p_sys = api->p_sys;
     JNIEnv* env = NULL;
@@ -491,6 +538,9 @@ static int ConfigureDecoder(mc_api *api, union mc_api_args* p_args)
     jstring jcodec_name = NULL;
     jobject jcodec = NULL;
     jobject jformat = NULL;
+    jobject jinput_buffers = NULL;
+    jobject joutput_buffers = NULL;
+    jobject jbuffer_info = NULL;
     jobject jsurface = NULL;
 
     assert(api->psz_mime && api->psz_name);
@@ -549,7 +599,6 @@ static int ConfigureDecoder(mc_api *api, union mc_api_args* p_args)
                                                  p_args->audio.i_sample_rate,
                                                  p_args->audio.i_channel_count);
     }
-
     /* No limits for input size */
     SET_INTEGER(jformat, "max-input-size", 0);
 
@@ -564,8 +613,6 @@ static int ConfigureDecoder(mc_api *api, union mc_api_args* p_args)
                                  "with an output surface.");
             goto error;
         }
-
-        api->b_direct_rendering = b_direct_rendering;
     }
     else
     {
@@ -576,85 +623,7 @@ static int ConfigureDecoder(mc_api *api, union mc_api_args* p_args)
             msg_Warn(api->p_obj, "Exception occurred in MediaCodec.configure");
             goto error;
         }
-        api->b_direct_rendering = false;
     }
-
-    i_ret = 0;
-
-error:
-    if (jmime)
-        (*env)->DeleteLocalRef(env, jmime);
-    if (jcodec_name)
-        (*env)->DeleteLocalRef(env, jcodec_name);
-    if (jcodec)
-        (*env)->DeleteLocalRef(env, jcodec);
-    if (jformat)
-        (*env)->DeleteLocalRef(env, jformat);
-
-    return i_ret;
-}
-
-/*****************************************************************************
- * Stop
- *****************************************************************************/
-static int Stop(mc_api *api)
-{
-    mc_api_sys *p_sys = api->p_sys;
-    JNIEnv *env;
-
-    api->b_direct_rendering = false;
-
-    GET_ENV();
-
-    if (p_sys->input_buffers)
-    {
-        (*env)->DeleteGlobalRef(env, p_sys->input_buffers);
-        p_sys->input_buffers = NULL;
-    }
-    if (p_sys->output_buffers)
-    {
-        (*env)->DeleteGlobalRef(env, p_sys->output_buffers);
-        p_sys->output_buffers = NULL;
-    }
-    if (p_sys->codec)
-    {
-        if (api->b_started)
-        {
-            (*env)->CallVoidMethod(env, p_sys->codec, jfields.stop);
-            if (CHECK_EXCEPTION())
-                msg_Err(api->p_obj, "Exception in MediaCodec.stop");
-            api->b_started = false;
-        }
-
-        (*env)->CallVoidMethod(env, p_sys->codec, jfields.release);
-        if (CHECK_EXCEPTION())
-            msg_Err(api->p_obj, "Exception in MediaCodec.release");
-        (*env)->DeleteGlobalRef(env, p_sys->codec);
-        p_sys->codec = NULL;
-    }
-    if (p_sys->buffer_info)
-    {
-        (*env)->DeleteGlobalRef(env, p_sys->buffer_info);
-        p_sys->buffer_info = NULL;
-    }
-    msg_Dbg(api->p_obj, "MediaCodec via JNI closed");
-    return 0;
-}
-
-/*****************************************************************************
- * Start
- *****************************************************************************/
-static int Start(mc_api *api)
-{
-    mc_api_sys *p_sys = api->p_sys;
-    JNIEnv* env = NULL;
-    jobject jinput_buffers = NULL;
-    jobject joutput_buffers = NULL;
-    jobject jbuffer_info = NULL;
-
-    GET_ENV();
-
-    int i_ret = MC_API_ERROR;
 
     (*env)->CallVoidMethod(env, p_sys->codec, jfields.start);
     if (CHECK_EXCEPTION())
@@ -666,6 +635,7 @@ static int Start(mc_api *api)
 
     if (jfields.get_input_buffers && jfields.get_output_buffers)
     {
+
         jinput_buffers = (*env)->CallObjectMethod(env, p_sys->codec,
                                                   jfields.get_input_buffers);
         if (CHECK_EXCEPTION())
@@ -688,10 +658,19 @@ static int Start(mc_api *api)
                                      jfields.buffer_info_ctor);
     p_sys->buffer_info = (*env)->NewGlobalRef(env, jbuffer_info);
 
+    api->b_direct_rendering = b_direct_rendering;
     i_ret = 0;
     msg_Dbg(api->p_obj, "MediaCodec via JNI opened");
 
 error:
+    if (jmime)
+        (*env)->DeleteLocalRef(env, jmime);
+    if (jcodec_name)
+        (*env)->DeleteLocalRef(env, jcodec_name);
+    if (jcodec)
+        (*env)->DeleteLocalRef(env, jcodec);
+    if (jformat)
+        (*env)->DeleteLocalRef(env, jformat);
     if (jinput_buffers)
         (*env)->DeleteLocalRef(env, jinput_buffers);
     if (joutput_buffers)
@@ -726,7 +705,7 @@ static int Flush(mc_api *api)
 /*****************************************************************************
  * DequeueInput
  *****************************************************************************/
-static int DequeueInput(mc_api *api, vlc_tick_t i_timeout)
+static int DequeueInput(mc_api *api, mtime_t i_timeout)
 {
     mc_api_sys *p_sys = api->p_sys;
     JNIEnv *env;
@@ -752,7 +731,7 @@ static int DequeueInput(mc_api *api, vlc_tick_t i_timeout)
  * QueueInput
  *****************************************************************************/
 static int QueueInput(mc_api *api, int i_index, const void *p_buf,
-                      size_t i_size, vlc_tick_t i_ts, bool b_config)
+                      size_t i_size, mtime_t i_ts, bool b_config)
 {
     mc_api_sys *p_sys = api->p_sys;
     JNIEnv *env;
@@ -806,7 +785,7 @@ static int QueueInput(mc_api *api, int i_index, const void *p_buf,
 /*****************************************************************************
  * DequeueOutput
  *****************************************************************************/
-static int DequeueOutput(mc_api *api, vlc_tick_t i_timeout)
+static int DequeueOutput(mc_api *api, mtime_t i_timeout)
 {
     mc_api_sys *p_sys = api->p_sys;
     JNIEnv *env;
@@ -1004,9 +983,9 @@ static void Clean(mc_api *api)
 }
 
 /*****************************************************************************
- * Prepare
+ * Configure
  *****************************************************************************/
-static int Prepare(mc_api *api, int i_profile)
+static int Configure(mc_api *api, int i_profile)
 {
     free(api->psz_name);
     bool b_adaptive;
@@ -1042,8 +1021,7 @@ int MediaCodecJni_Init(mc_api *api)
         return MC_API_ERROR;
 
     api->clean = Clean;
-    api->prepare = Prepare;
-    api->configure_decoder = ConfigureDecoder;
+    api->configure = Configure;
     api->start = Start;
     api->stop = Stop;
     api->flush = Flush;

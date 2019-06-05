@@ -2,6 +2,7 @@
  * cmd_playlist.cpp
  *****************************************************************************
  * Copyright (C) 2003 the VideoLAN team
+ * $Id: ab5d94c1194f5d3be337b6887a141ec95c83c343 $
  *
  * Authors: Cyril Deguet     <asmax@via.ecp.fr>
  *          Olivier Teulière <ipkiss@via.ecp.fr>
@@ -22,7 +23,7 @@
  *****************************************************************************/
 
 #include "cmd_playlist.hpp"
-#include <vlc_playlist_legacy.h>
+#include <vlc_playlist.h>
 #include <vlc_url.h>
 #include "../src/vlcproc.hpp"
 #include "../utils/var_bool.hpp"
@@ -90,7 +91,7 @@ void CmdPlaylistSave::execute()
         return;
     }
 
-    playlist_Export( getPL(), m_file.c_str(), psz_module );
+    playlist_Export( getPL(), m_file.c_str(), true, psz_module );
 }
 
 void CmdPlaylistFirst::execute()

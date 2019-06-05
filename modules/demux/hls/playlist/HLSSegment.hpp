@@ -21,15 +21,30 @@
 #define HLSSEGMENT_HPP
 
 #include "../adaptive/playlist/Segment.h"
-#include "../adaptive/encryption/CommonEncryption.hpp"
+#include <vector>
+#ifdef HAVE_GCRYPT
+ #include <gcrypt.h>
+#endif
 
 namespace hls
 {
     namespace playlist
     {
-        using namespace adaptive;
         using namespace adaptive::playlist;
-        using namespace adaptive::encryption;
+
+        class SegmentEncryption
+        {
+            public:
+                SegmentEncryption();
+                enum
+                {
+                    NONE,
+                    AES_128,
+                    AES_SAMPLE,
+                } method;
+                std::vector<uint8_t> key;
+                std::vector<uint8_t> iv;
+        };
 
         class HLSSegment : public Segment
         {
@@ -38,13 +53,18 @@ namespace hls
             public:
                 HLSSegment( ICanonicalUrl *parent, uint64_t sequence );
                 virtual ~HLSSegment();
-                vlc_tick_t getUTCTime() const;
+                void setEncryption(SegmentEncryption &);
+                mtime_t getUTCTime() const;
                 virtual int compare(ISegment *) const; /* reimpl */
 
             protected:
-                vlc_tick_t utcTime;
-                virtual bool prepareChunk(SharedResources *, SegmentChunk *,
-                                          BaseRepresentation *); /* reimpl */
+                mtime_t utcTime;
+                virtual void onChunkDownload(block_t **, SegmentChunk *, BaseRepresentation *); /* reimpl */
+
+                SegmentEncryption encryption;
+#ifdef HAVE_GCRYPT
+                gcry_cipher_hd_t ctx;
+#endif
         };
     }
 }

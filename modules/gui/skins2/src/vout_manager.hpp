@@ -2,6 +2,7 @@
  * vout_manager.hpp
  *****************************************************************************
  * Copyright (C) 2009 the VideoLAN team
+ * $Id: 4cf3522b40d5af6a8fa5b6ded943ddc277ed649f $
  *
  * Authors: Erwan Tulou < brezhoneg1 at yahoo.fr r>
  *
@@ -26,6 +27,7 @@
 #include <vector>
 
 #include <vlc_vout.h>
+#include <vlc_vout_window.h>
 #include <vlc_actions.h>
 #include "../utils/position.hpp"
 #include "../commands/cmd_generic.hpp"
@@ -37,20 +39,19 @@
 class VarBool;
 class GenericWindow;
 class FscWindow;
-struct vout_window_t;
 
 #include <stdio.h>
 
 class SavedWnd
 {
 public:
-    SavedWnd( struct vout_window_t* pWnd, VoutWindow* pVoutWindow = NULL,
+    SavedWnd( vout_window_t* pWnd, VoutWindow* pVoutWindow = NULL,
                CtrlVideo* pCtrlVideo = NULL, int height = -1, int width = -1 )
             : pWnd( pWnd ), pVoutWindow( pVoutWindow ),
               pCtrlVideo( pCtrlVideo ), height( height ), width( width ) { }
     ~SavedWnd() { }
 
-    struct vout_window_t* pWnd;
+    vout_window_t* pWnd;
     VoutWindow *pVoutWindow;
     CtrlVideo *pCtrlVideo;
     int height;
@@ -106,19 +107,19 @@ public:
     static void destroy( intf_thread_t *pIntf );
 
     /// accept window request (vout window provider)
-    void acceptWnd( struct vout_window_t *pWnd, int width, int height );
+    void acceptWnd( vout_window_t *pWnd, int width, int height );
 
     // release window (vout window provider)
-    void releaseWnd( struct vout_window_t *pWnd );
+    void releaseWnd( vout_window_t *pWnd );
 
     /// set window size (vout window provider)
-    void setSizeWnd( struct vout_window_t* pWnd, int width, int height );
+    void setSizeWnd( vout_window_t* pWnd, int width, int height );
 
     /// set fullscreen mode (vout window provider)
-    void setFullscreenWnd( struct vout_window_t* pWnd, bool b_fullscreen );
+    void setFullscreenWnd( vout_window_t* pWnd, bool b_fullscreen );
 
     /// hide mouse (vout window provider)
-    void hideMouseWnd( struct vout_window_t* pWnd, bool hide );
+    void hideMouseWnd( vout_window_t* pWnd, bool hide );
 
     // Register Video Controls (when building theme)
     void registerCtrlVideo( CtrlVideo* p_CtrlVideo );

@@ -22,7 +22,7 @@
 # include <config.h>
 #endif
 
-#include <string.h>
+#include <stddef.h>
 
 /**
  * Copy a string to a sized buffer. The result is always nul-terminated
@@ -37,13 +37,16 @@
  */
 size_t strlcpy (char *tgt, const char *src, size_t bufsize)
 {
-    size_t length = strlen(src);
+    size_t length;
 
-    if (bufsize > length)
-        memcpy(tgt, src, length + 1);
-    else
-    if (bufsize > 0)
-        memcpy(tgt, src, bufsize - 1), tgt[bufsize - 1] = '\0';
+    for (length = 1; (length < bufsize) && *src; length++)
+        *tgt++ = *src++;
 
-    return length;
+    if (bufsize)
+        *tgt = '\0';
+
+    while (*src++)
+        length++;
+
+    return length - 1;
 }

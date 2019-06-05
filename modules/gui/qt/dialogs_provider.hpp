@@ -2,6 +2,7 @@
  * dialogs_provider.hpp : Dialogs provider
  ****************************************************************************
  * Copyright (C) 2006-2008 the VideoLAN team
+ * $Id: 6476dbe124ff690b0d6e72d76be963ec85136452 $
  *
  * Authors: Clément Stenac <zorglub@videolan.org>
  *          Jean-Baptiste Kempf <jb@videolan.org>
@@ -90,7 +91,11 @@ public:
                                 const QUrl& path = QUrl() );
     bool isDying() { return b_isDying; }
     static QString getDirectoryDialog( intf_thread_t *p_intf);
-
+    static QStringList getOpenURL(QWidget *parent = NULL,
+                                  const QString &caption = QString(),
+                                  const QUrl &dir = QUrl(),
+                                  const QString &filter = QString(),
+                                  QString *selectedFilter = NULL );
     static QString getSaveFileName(QWidget *parent = NULL,
                                     const QString &caption = QString(),
                                     const QUrl &dir = QUrl(),
@@ -98,6 +103,8 @@ public:
                                     QString *selectedFilter = NULL );
 
 protected:
+    QSignalMapper *menusMapper;
+    QSignalMapper *menusUpdateMapper;
     void customEvent( QEvent *);
 
 private:
@@ -116,8 +123,10 @@ private:
     bool b_isDying;
 
     void openDialog( int );
+    void addFromSimple( bool, bool );
 
 public slots:
+    void playlistDialog();
     void bookmarksDialog();
     void mediaInfoDialog();
     void mediaCodecDialog();
@@ -154,6 +163,7 @@ public slots:
     void openCaptureDialog();
 
     void PLAppendDialog( int tab = OPEN_FILE_TAB );
+    void MLAppendDialog( int tab = OPEN_FILE_TAB );
 
     void PLOpenDir();
     void PLAppendDir();
@@ -163,12 +173,15 @@ public slots:
     void openAndStreamingDialogs();
     void openAndTranscodingDialogs();
 
+    void openAPlaylist();
     void savePlayingToPlaylist();
 
     void loadSubtitlesFile();
 
     void quit();
-
+private slots:
+    void menuAction( QObject *);
+    void menuUpdateAction( QObject * );
 signals:
     void  toolBarConfUpdated();
     void releaseMouseEvents();

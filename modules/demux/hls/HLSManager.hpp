@@ -32,7 +32,7 @@ namespace hls
     {
         public:
             HLSManager( demux_t *,
-                        SharedResources *,
+                        AuthStorage *,
                         playlist::M3U8 *,
                         AbstractStreamFactory *,
                         logic::AbstractAdaptationLogic::LogicType type );
@@ -40,7 +40,7 @@ namespace hls
             static bool isHTTPLiveStreaming(stream_t *);
 
         protected:
-            virtual vlc_tick_t getFirstPlaybackTime() const;
+            virtual mtime_t getFirstPlaybackTime() const;
     };
 
 }

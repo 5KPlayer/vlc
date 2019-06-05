@@ -36,13 +36,14 @@
 using namespace adaptive::logic;
 using namespace adaptive;
 
-RateBasedAdaptationLogic::RateBasedAdaptationLogic  (vlc_object_t *obj) :
-                          AbstractAdaptationLogic   (obj),
+RateBasedAdaptationLogic::RateBasedAdaptationLogic  (vlc_object_t *p_obj_) :
+                          AbstractAdaptationLogic   (),
                           bpsAvg(0),
                           currentBps(0)
 {
     usedBps = 0;
     dllength = 0;
+    p_obj = p_obj_;
     dlsize = 0;
     vlc_mutex_init(&lock);
 }
@@ -57,9 +58,9 @@ BaseRepresentation *RateBasedAdaptationLogic::getNextRepresentation(BaseAdaptati
     if(adaptSet == NULL)
         return NULL;
 
-    vlc_mutex_lock(&lock);
+    vlc_mutex_lock(const_cast<vlc_mutex_t *>(&lock));
     size_t availBps = currentBps + ((currep) ? currep->getBandwidth() : 0);
-    vlc_mutex_unlock(&lock);
+    vlc_mutex_unlock(const_cast<vlc_mutex_t *>(&lock));
     if(availBps > usedBps)
         availBps -= usedBps;
     else
@@ -77,7 +78,7 @@ BaseRepresentation *RateBasedAdaptationLogic::getNextRepresentation(BaseAdaptati
     return rep;
 }
 
-void RateBasedAdaptationLogic::updateDownloadRate(const ID &, size_t size, vlc_tick_t time)
+void RateBasedAdaptationLogic::updateDownloadRate(const ID &, size_t size, mtime_t time)
 {
     if(unlikely(time == 0))
         return;
@@ -85,7 +86,7 @@ void RateBasedAdaptationLogic::updateDownloadRate(const ID &, size_t size, vlc_t
     dllength += time;
     dlsize += size;
 
-    if(dllength < VLC_TICK_FROM_MS(250))
+    if(dllength < CLOCK_FREQ / 4)
         return;
 
     const size_t bps = CLOCK_FREQ * dlsize * 8 / dllength;
@@ -122,8 +123,8 @@ void RateBasedAdaptationLogic::trackerEvent(const SegmentTrackerEvent &event)
     }
 }
 
-FixedRateAdaptationLogic::FixedRateAdaptationLogic(vlc_object_t *obj, size_t bps) :
-    AbstractAdaptationLogic(obj)
+FixedRateAdaptationLogic::FixedRateAdaptationLogic(size_t bps) :
+    AbstractAdaptationLogic()
 {
     currentBps = bps;
 }

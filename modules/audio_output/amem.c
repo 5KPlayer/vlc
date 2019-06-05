@@ -43,7 +43,7 @@ vlc_module_begin ()
         change_private()
     add_integer ("amem-rate", 44100,
                  N_("Sample rate"), N_("Sample rate"), false)
-        change_integer_range (1, 384000)
+        change_integer_range (1, 352800)
         change_private()
     add_integer ("amem-channels", 2,
                  N_("Channels count"), N_("Channels count"), false)
@@ -52,7 +52,7 @@ vlc_module_begin ()
 
 vlc_module_end ()
 
-typedef struct
+struct aout_sys_t
 {
     void *opaque;
     int (*setup) (void **, char *, unsigned *, unsigned *);
@@ -78,85 +78,53 @@ typedef struct
     float volume;
     bool mute;
     bool ready;
-    vlc_mutex_t lock;
-} aout_sys_t;
+};
 
-static void Play(audio_output_t *aout, block_t *block, vlc_tick_t date)
+static void Play (audio_output_t *aout, block_t *block)
 {
     aout_sys_t *sys = aout->sys;
 
-    vlc_mutex_lock(&sys->lock);
-    sys->play(sys->opaque, block->p_buffer, block->i_nb_samples, date);
-    vlc_mutex_unlock(&sys->lock);
+    sys->play (sys->opaque, block->p_buffer, block->i_nb_samples,
+               block->i_pts);
     block_Release (block);
 }
 
-static void Pause (audio_output_t *aout, bool paused, vlc_tick_t date)
+static void Pause (audio_output_t *aout, bool paused, mtime_t date)
 {
     aout_sys_t *sys = aout->sys;
     void (*cb) (void *, int64_t) = paused ? sys->pause : sys->resume;
 
     if (cb != NULL)
-    {
-        vlc_mutex_lock(&sys->lock);
         cb (sys->opaque, date);
-        vlc_mutex_unlock(&sys->lock);
-    }
 }
 
-static void Flush (audio_output_t *aout)
+static void Flush (audio_output_t *aout, bool wait)
 {
     aout_sys_t *sys = aout->sys;
+    void (*cb) (void *) = wait ? sys->drain : sys->flush;
 
-    if (sys->flush != NULL)
-    {
-        vlc_mutex_lock(&sys->lock);
-        sys->flush (sys->opaque);
-        vlc_mutex_unlock(&sys->lock);
-    }
-}
-
-static void Drain (audio_output_t *aout)
-{
-    aout_sys_t *sys = aout->sys;
-
-    vlc_mutex_lock(&sys->lock);
-    sys->drain (sys->opaque);
-    vlc_mutex_unlock(&sys->lock);
+    if (cb != NULL)
+        cb (sys->opaque);
 }
 
 static int VolumeSet (audio_output_t *aout, float vol)
 {
     aout_sys_t *sys = aout->sys;
-    int val;
 
     sys->volume = vol;
-
-    vlc_mutex_lock(&sys->lock);
-    if (sys->ready)
-        val = sys->set_volume(sys->opaque, vol, sys->mute);
-    else
-        val = 0; /* sys->opaque is not yet defined... */
-    vlc_mutex_unlock(&sys->lock);
-
-    return val ? -1 : 0;
+    if (!sys->ready)
+        return 0; /* sys->opaque is not yet defined... */
+    return sys->set_volume (sys->opaque, vol, sys->mute) ? -1 : 0;
 }
 
 static int MuteSet (audio_output_t *aout, bool mute)
 {
     aout_sys_t *sys = aout->sys;
-    int val;
 
     sys->mute = mute;
-
-    vlc_mutex_lock(&sys->lock);
-    if (sys->ready)
-        val = sys->set_volume(sys->opaque, sys->volume, mute);
-    else
-        val = 0; /* sys->opaque is not yet defined... */
-    vlc_mutex_unlock(&sys->lock);
-
-    return val ? -1 : 0;
+    if (!sys->ready)
+        return 0; /* sys->opaque is not yet defined... */
+    return sys->set_volume (sys->opaque, sys->volume, mute) ? -1 : 0;
 }
 
 static int SoftVolumeSet (audio_output_t *aout, float vol)
@@ -184,12 +152,9 @@ static void Stop (audio_output_t *aout)
 {
     aout_sys_t *sys = aout->sys;
 
-    vlc_mutex_lock(&sys->lock);
     if (sys->cleanup != NULL)
         sys->cleanup (sys->opaque);
-
     sys->ready = false;
-    vlc_mutex_unlock(&sys->lock);
 }
 
 static int Start (audio_output_t *aout, audio_sample_format_t *fmt)
@@ -201,17 +166,13 @@ static int Start (audio_output_t *aout, audio_sample_format_t *fmt)
     if (aout_FormatNbChannels(fmt) == 0)
         return VLC_EGENERIC;
 
-    vlc_mutex_lock(&sys->lock);
     if (sys->setup != NULL)
     {
         channels = aout_FormatNbChannels(fmt);
 
         sys->opaque = sys->setup_opaque;
         if (sys->setup (&sys->opaque, format, &fmt->i_rate, &channels))
-        {
-            vlc_mutex_unlock(&sys->lock);
             return VLC_EGENERIC;
-        }
     }
     else
     {
@@ -223,7 +184,6 @@ static int Start (audio_output_t *aout, audio_sample_format_t *fmt)
     sys->ready = true;
     if (sys->set_volume != NULL)
         sys->set_volume(sys->opaque, sys->volume, sys->mute);
-    vlc_mutex_unlock(&sys->lock);
 
     /* Ensure that format is supported */
     if (fmt->i_rate == 0 || fmt->i_rate > 192000
@@ -296,7 +256,6 @@ static int Open (vlc_object_t *obj)
         sys->rate = var_InheritInteger (obj, "amem-rate");
         sys->channels = var_InheritInteger (obj, "amem-channels");
     }
-
     sys->play = var_InheritAddress (obj, "amem-play");
     sys->pause = var_InheritAddress (obj, "amem-pause");
     sys->resume = var_InheritAddress (obj, "amem-resume");
@@ -306,8 +265,6 @@ static int Open (vlc_object_t *obj)
     sys->volume = 1.;
     sys->mute = false;
     sys->ready = false;
-    vlc_mutex_init(&sys->lock);
-
     if (sys->play == NULL)
     {
         free (sys);
@@ -317,11 +274,10 @@ static int Open (vlc_object_t *obj)
     aout->sys = sys;
     aout->start = Start;
     aout->stop = Stop;
-    aout->time_get = aout_TimeGetDefault;
+    aout->time_get = NULL;
     aout->play = Play;
     aout->pause = Pause;
     aout->flush = Flush;
-    aout->drain = sys->drain ? Drain : NULL;
     if (sys->set_volume != NULL)
     {
         aout->volume_set = VolumeSet;
@@ -340,6 +296,5 @@ static void Close (vlc_object_t *obj)
     audio_output_t *aout = (audio_output_t *)obj;
     aout_sys_t *sys = aout->sys;
 
-    vlc_mutex_destroy(&sys->lock);
     free (sys);
 }

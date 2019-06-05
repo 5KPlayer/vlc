@@ -27,8 +27,8 @@
 using namespace adaptive::logic;
 using namespace adaptive::playlist;
 
-AlwaysLowestAdaptationLogic::AlwaysLowestAdaptationLogic(vlc_object_t *obj):
-    AbstractAdaptationLogic(obj)
+AlwaysLowestAdaptationLogic::AlwaysLowestAdaptationLogic():
+    AbstractAdaptationLogic()
 {
 }
 

@@ -2,6 +2,7 @@
  * skin_common.hpp
  *****************************************************************************
  * Copyright (C) 2003 the VideoLAN team
+ * $Id: d748e51283a4e3e9c136bc334a868fbb2b7f80c9 $
  *
  * Authors: Cyril Deguet     <asmax@via.ecp.fr>
  *          Olivier Teulière <ipkiss@via.ecp.fr>
@@ -57,6 +58,12 @@ class ThemeRepository;
 #pragma warning ( disable:4355 )
 // turn off 'identifier was truncated to '255' characters in the debug info'
 #pragma warning ( disable:4786 )
+#endif
+
+#ifdef X11_SKINS
+typedef uint32_t vlc_wnd_type;
+#else
+typedef void* vlc_wnd_type;
 #endif
 
 /// Wrapper around FromLocale, to avoid the need to call LocaleFree()

@@ -140,7 +140,7 @@ static void event_wait(const char *error)
 {
     int ret;
     struct timespec ts;
-#define VLC_THUMBNAIL_TIMEOUT   5 /* 5 secs */
+#define VLC_THUMBNAIL_TIMEOUT   5.0 /* 5 secs */
 
     clock_gettime(CLOCK_MONOTONIC, &ts);
     ts.tv_sec += VLC_THUMBNAIL_TIMEOUT;
@@ -152,7 +152,7 @@ static void event_wait(const char *error)
 
     if (ret) {
         fprintf(stderr,
-                "%s (timeout after %d secs!\n", error, VLC_THUMBNAIL_TIMEOUT);
+                "%s (timeout after %.2f secs!\n", error, VLC_THUMBNAIL_TIMEOUT);
         exit(1);
     }
 }
@@ -217,7 +217,7 @@ int main(int argc, const char **argv)
     set_position(mp);
     snapshot(mp, width, out_with_ext);
 
-    libvlc_media_player_stop_async(mp);
+    libvlc_media_player_stop(mp);
 
     /* clean up */
     if (out != out_with_ext) {

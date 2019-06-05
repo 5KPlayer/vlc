@@ -2,6 +2,7 @@
  * snapshot.h : vout internal snapshot
  *****************************************************************************
  * Copyright (C) 2009 Laurent Aimar
+ * $Id: 3085d5038b04e5a4a601b25676157976dbd2898b $
  *
  * Authors: Laurent Aimar <fenrir _AT_ videolan _DOT_ org>
  *
@@ -25,16 +26,24 @@
 
 #include <vlc_picture.h>
 
-typedef struct vout_snapshot vout_snapshot_t;
+typedef struct {
+    vlc_mutex_t lock;
+    vlc_cond_t  wait;
+
+    bool        is_available;
+    int         request_count;
+    picture_t   *picture;
+
+} vout_snapshot_t;
 
 /* */
-vout_snapshot_t *vout_snapshot_New(void);
-void vout_snapshot_Destroy(vout_snapshot_t *);
+void vout_snapshot_Init(vout_snapshot_t *);
+void vout_snapshot_Clean(vout_snapshot_t *);
 
 void vout_snapshot_End(vout_snapshot_t *);
 
 /* */
-picture_t *vout_snapshot_Get(vout_snapshot_t *, vlc_tick_t timeout);
+picture_t *vout_snapshot_Get(vout_snapshot_t *, mtime_t timeout);
 
 /**
  * It tells if they are pending snapshot request

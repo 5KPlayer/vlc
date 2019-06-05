@@ -2,6 +2,7 @@
  * normvol.c: volume normalizer
  *****************************************************************************
  * Copyright (C) 2001, 2006 VLC authors and VideoLAN
+ * $Id: 428529f146f5d1aa88cc40fc167d8a77eec49ef9 $
  *
  * Authors: Clément Stenac <zorglub@videolan.org>
  *
@@ -51,12 +52,12 @@ static int  Open     ( vlc_object_t * );
 static void Close    ( vlc_object_t * );
 static block_t *DoWork( filter_t *, block_t * );
 
-typedef struct
+struct filter_sys_t
 {
     int i_nb;
     float *p_last;
     float f_max;
-} filter_sys_t;
+};
 
 /*****************************************************************************
  * Module descriptor
@@ -101,15 +102,15 @@ static int Open( vlc_object_t *p_this )
     p_sys = p_filter->p_sys = malloc( sizeof( *p_sys ) );
     if( !p_sys )
         return VLC_ENOMEM;
-    p_sys->i_nb = var_CreateGetInteger( vlc_object_parent(p_filter),
+    p_sys->i_nb = var_CreateGetInteger( p_filter->obj.parent,
                                         "norm-buff-size" );
-    p_sys->f_max = var_CreateGetFloat( vlc_object_parent(p_filter),
+    p_sys->f_max = var_CreateGetFloat( p_filter->obj.parent,
                                        "norm-max-level" );
 
     if( p_sys->f_max <= 0 ) p_sys->f_max = 0.01;
 
     /* We need to store (nb_buffers+1)*nb_channels floats */
-    p_sys->p_last = calloc( i_channels * (p_sys->i_nb + 2), sizeof(float) );
+    p_sys->p_last = calloc( i_channels * (p_filter->p_sys->i_nb + 2), sizeof(float) );
     if( !p_sys->p_last )
     {
         free( p_sys );
@@ -139,7 +140,7 @@ static block_t *DoWork( filter_t *p_filter, block_t *p_in_buf )
     float *p_out = (float*)p_in_buf->p_buffer;
     float *p_in =  (float*)p_in_buf->p_buffer;
 
-    filter_sys_t *p_sys = p_filter->p_sys;
+    struct filter_sys_t *p_sys = p_filter->p_sys;
 
     pf_sum = calloc( i_channels, sizeof(float) );
     if( !pf_sum )
@@ -186,7 +187,7 @@ static block_t *DoWork( filter_t *p_filter, block_t *p_in_buf )
         f_average = f_average / p_sys->i_nb;
 
         /* Seuil arbitraire */
-        p_sys->f_max = var_GetFloat( vlc_object_parent(p_filter),
+        p_sys->f_max = var_GetFloat( p_filter->obj.parent,
                                      "norm-max-level" );
 
         //fprintf(stderr,"Average %f, max %f\n", f_average, p_sys->f_max );

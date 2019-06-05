@@ -5,6 +5,9 @@ AM_CPPFLAGS += -I$(srcdir)/access
 
 ### Files ###
 
+libattachment_plugin_la_SOURCES = access/attachment.c
+access_LTLIBRARIES += libattachment_plugin.la
+
 libdcp_plugin_la_SOURCES = access/dcp/dcpparser.h access/dcp/dcp.cpp access/dcp/dcpparser.cpp access/dcp/dcpdecrypt.cpp
 if HAVE_ASDCP
 libdcp_plugin_la_CPPFLAGS = $(AM_CPPFLAGS) $(ASDCP_CFLAGS)
@@ -71,12 +74,10 @@ if HAVE_PULSE
 access_LTLIBRARIES += libpulsesrc_plugin.la
 endif
 
-libavaudiocapture_plugin_la_SOURCES = access/avaudiocapture.m
-libavaudiocapture_plugin_la_OBJCFLAGS = $(AM_OBJCFLAGS) -fobjc-arc
-libavaudiocapture_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(accessdir)' -Wl,-framework,Foundation -Wl,-framework,AVFoundation -Wl,-framework,CoreMedia
-if HAVE_AVFOUNDATION
-access_LTLIBRARIES += libavaudiocapture_plugin.la
-endif
+libaccess_qtsound_plugin_la_SOURCES = access/qtsound.m
+libaccess_qtsound_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(accessdir)' -Wl,-framework,Foundation -Wl,-framework,QTKit -Wl,-framework,AVFoundation -Wl,-framework,CoreAudio
+access_LTLIBRARIES += $(LTLIBaccess_qtsound)
+EXTRA_LTLIBRARIES += libaccess_qtsound_plugin.la
 
 libaccess_wasapi_plugin_la_SOURCES = access/wasapi.c
 libaccess_wasapi_plugin_la_LIBADD = $(LIBCOM) -lksuser
@@ -105,7 +106,7 @@ EXTRA_LTLIBRARIES += libdc1394_plugin.la
 
 libdv1394_plugin_la_SOURCES = access/dv.c
 libdv1394_plugin_la_CFLAGS = $(AM_CFLAGS) $(DV1394_CFLAGS)
-libdv1394_plugin_la_LIBADD = $(DV1394_LIBS)
+libdv1394_plugin_la_LIBADD = $(DV1394_LIBS) $(LIBPTHREAD)
 libdv1394_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(accessdir)'
 access_LTLIBRARIES += $(LTLIBdv1394)
 EXTRA_LTLIBRARIES += libdv1394_plugin.la
@@ -115,6 +116,7 @@ liblinsys_hdsdi_plugin_la_SOURCES = \
 	access/linsys/linsys_sdivideo.h \
 	access/linsys/linsys_hdsdi.c
 liblinsys_hdsdi_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(accessdir)'
+liblinsys_hdsdi_plugin_la_LIBADD = $(LIBPTHREAD)
 liblinsys_sdi_plugin_la_SOURCES = access/linsys/linsys_sdi.c access/linsys/linsys_sdi.h
 liblinsys_sdi_plugin_la_CFLAGS = $(AM_CFLAGS) $(LINSYS_SDI_CFLAGS)
 liblinsys_sdi_plugin_la_LIBADD = $(LINSYS_SDI_LIBS)
@@ -148,14 +150,13 @@ libv4l2_plugin_la_SOURCES = \
 	access/v4l2/v4l2.h
 libv4l2_plugin_la_CPPFLAGS = $(AM_CPPFLAGS) -I$(srcdir)/access/v4l2
 libv4l2_plugin_la_CFLAGS = $(AM_CFLAGS) $(ZVBI_CFLAGS)
-libv4l2_plugin_la_LIBADD = $(LIBDL) $(LIBM) $(ZVBI_LIBS)
+libv4l2_plugin_la_LIBADD = $(LIBDL) $(LIBM) $(ZVBI_LIBS) $(LIBPTHREAD)
 if HAVE_V4L2
 access_LTLIBRARIES += libv4l2_plugin.la
 endif
 
 libdshow_plugin_la_SOURCES = access/dshow/vlc_dshow.h access/dshow/dshow.cpp access/dshow/access.h \
 	access/dshow/filter.cpp access/dshow/filter.h access/dshow/crossbar.cpp ../src/win32/mta_holder.h
-libdshow_plugin_la_CPPFLAGS = $(AM_CPPFLAGS) -DSTRSAFE_NO_DEPRECATE
 libdshow_plugin_la_LIBADD = $(LIBCOM) -loleaut32 -luuid -lstrmiids -lksuser
 if HAVE_WIN32_DESKTOP
 access_LTLIBRARIES += libdshow_plugin.la
@@ -170,20 +171,6 @@ libxcb_screen_plugin_la_CFLAGS = $(AM_CFLAGS) \
 libxcb_screen_plugin_la_LIBADD = $(XCB_LIBS) $(XCB_COMPOSITE_LIBS) $(XCB_SHM_LIBS)
 if HAVE_XCB
 access_LTLIBRARIES += libxcb_screen_plugin.la
-endif
-
-libwl_screenshooter_plugin_la_SOURCES = \
-	access/screen/wayland.c
-nodist_libwl_screenshooter_plugin_la_SOURCES = \
-	access/screen/screenshooter-protocol.c
-libwl_screenshooter_plugin_la_CPPFLAGS = $(AM_CPPFLAGS) -Iaccess/screen
-libwl_screenshooter_plugin_la_CFLAGS = $(WAYLAND_CLIENT_CFLAGS)
-libwl_screenshooter_plugin_la_LIBADD = $(WAYLAND_CLIENT_LIBS) $(LIBM)
-EXTRA_DIST += access/screen/screenshooter.xml
-CLEANFILES += $(nodist_libwl_screenshooter_plugin_la_SOURCES)
-if HAVE_WAYLAND
-BUILT_SOURCES += access/screen/screenshooter-client-protocol.h
-access_LTLIBRARIES += libwl_screenshooter_plugin.la
 endif
 
 libscreen_plugin_la_SOURCES = access/screen/screen.c access/screen/screen.h
@@ -216,19 +203,13 @@ EXTRA_LTLIBRARIES += libvnc_plugin.la
 
 ### Optical media ###
 
-libcdda_plugin_la_SOURCES = access/cdda.c access/vcd/cdrom.c access/vcd/cdrom.h access/vcd/cdrom_internals.h \
-                            misc/webservices/json.c misc/webservices/json.h misc/webservices/json_helper.h \
-                            misc/webservices/musicbrainz.c misc/webservices/musicbrainz.h
+libcdda_plugin_la_SOURCES = access/cdda.c access/vcd/cdrom.c access/vcd/cdrom.h access/vcd/cdrom_internals.h
 libcdda_plugin_la_CFLAGS = $(AM_CFLAGS) $(LIBCDDB_CFLAGS)
 libcdda_plugin_la_LIBADD = $(LIBCDDB_LIBS) $(LIBM)
 libcdda_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(accessdir)'
 if HAVE_DARWIN
 libcdda_plugin_la_LIBADD += -liconv
 libcdda_plugin_la_LDFLAGS += -Wl,-framework,IOKit,-framework,CoreFoundation
-endif
-if HAVE_GCRYPT
-libcdda_plugin_la_CFLAGS += $(GCRYPT_CFLAGS)
-libcdda_plugin_la_LIBADD += $(GCRYPT_LIBS)
 endif
 EXTRA_LTLIBRARIES += libcdda_plugin.la
 access_LTLIBRARIES += $(LTLIBcdda)
@@ -263,7 +244,7 @@ endif
 access_LTLIBRARIES += $(LTLIBdvdread)
 EXTRA_LTLIBRARIES += libdvdread_plugin.la
 
-liblibbluray_plugin_la_SOURCES = access/bluray.c demux/mpeg/timestamps.h
+liblibbluray_plugin_la_SOURCES = access/bluray.c
 liblibbluray_plugin_la_CFLAGS = $(AM_CFLAGS) $(BLURAY_CFLAGS)
 liblibbluray_plugin_la_LIBADD = $(BLURAY_LIBS)
 liblibbluray_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(accessdir)'
@@ -346,12 +327,15 @@ libaccess_mms_plugin_la_CFLAGS = $(AM_CFLAGS)
 libaccess_mms_plugin_la_LIBADD = $(SOCKET_LIBS)
 access_LTLIBRARIES += libaccess_mms_plugin.la
 
-libsmbc_plugin_la_SOURCES = access/samba.c access/smb_common.h
-libsmbc_plugin_la_CFLAGS = $(AM_CFLAGS) $(SMBCLIENT_CFLAGS)
-libsmbc_plugin_la_LIBADD = $(SMBCLIENT_LIBS)
-libsmbc_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(accessdir)'
-access_LTLIBRARIES += $(LTLIBsmbc)
-EXTRA_LTLIBRARIES += libsmbc_plugin.la
+libsmb_plugin_la_SOURCES = access/smb.c access/smb_common.h
+libsmb_plugin_la_CFLAGS = $(AM_CFLAGS) $(SMBCLIENT_CFLAGS)
+libsmb_plugin_la_LIBADD = $(SMBCLIENT_LIBS)
+if HAVE_WIN32
+libsmb_plugin_la_LIBADD += -lmpr -lnetapi32
+endif
+libsmb_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(accessdir)'
+access_LTLIBRARIES += $(LTLIBsmb)
+EXTRA_LTLIBRARIES += libsmb_plugin.la
 
 libdsm_plugin_la_SOURCES = access/dsm/access.c access/dsm/sd.c access/smb_common.h
 libdsm_plugin_la_CFLAGS = $(AM_CFLAGS) $(DSM_CFLAGS)
@@ -360,32 +344,13 @@ libdsm_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(accessdir)'
 access_LTLIBRARIES += $(LTLIBdsm)
 EXTRA_LTLIBRARIES += libdsm_plugin.la
 
-libsmb2_plugin_la_SOURCES = access/smb2.c
-libsmb2_plugin_la_CFLAGS = $(AM_CFLAGS) $(SMB2_CFLAGS)
-libsmb2_plugin_la_LIBADD = $(SMB2_LIBS) $(SOCKET_LIBS)
-libsmb2_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(accessdir)'
-if HAVE_DSM
-libsmb2_plugin_la_CFLAGS += $(DSM_CFLAGS) -DHAVE_DSM
-libsmb2_plugin_la_LIBADD += $(DSM_LIBS)
-endif
-access_LTLIBRARIES += $(LTLIBsmb2)
-EXTRA_LTLIBRARIES += libsmb2_plugin.la
-
 libtcp_plugin_la_SOURCES = access/tcp.c
 libtcp_plugin_la_LIBADD = $(SOCKET_LIBS)
 access_LTLIBRARIES += libtcp_plugin.la
 
 libudp_plugin_la_SOURCES = access/udp.c
-libudp_plugin_la_LIBADD = $(SOCKET_LIBS)
+libudp_plugin_la_LIBADD = $(SOCKET_LIBS) $(LIBPTHREAD)
 access_LTLIBRARIES += libudp_plugin.la
-
-libunc_plugin_la_SOURCES = access/unc.c access/smb_common.h
-libunc_plugin_la_LIBADD = -lmpr -lnetapi32
-if HAVE_WIN32
-if !HAVE_WINSTORE
-access_LTLIBRARIES += libunc_plugin.la
-endif
-endif
 
 libsftp_plugin_la_SOURCES = access/sftp.c
 libsftp_plugin_la_CFLAGS = $(AM_CFLAGS) $(SFTP_CFLAGS)
@@ -401,6 +366,19 @@ libnfs_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(accessdir)'
 access_LTLIBRARIES += $(LTLIBnfs)
 EXTRA_LTLIBRARIES += libnfs_plugin.la
 
+libaccess_realrtsp_plugin_la_SOURCES = \
+	access/rtsp/access.c \
+	access/rtsp/rtsp.c access/rtsp/rtsp.h \
+	access/rtsp/real.c access/rtsp/real.h \
+	access/rtsp/real_rmff.c access/rtsp/real_rmff.h \
+	access/rtsp/real_sdpplin.c access/rtsp/real_sdpplin.h \
+	access/rtsp/real_asmrp.c
+libaccess_realrtsp_plugin_la_CPPFLAGS = $(AM_CPPFLAGS)
+libaccess_realrtsp_plugin_la_LIBADD = $(SOCKET_LIBS)
+libaccess_realrtsp_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(accessdir)'
+access_LTLIBRARIES += $(LTLIBaccess_realrtsp)
+EXTRA_LTLIBRARIES += libaccess_realrtsp_plugin.la
+
 libavio_plugin_la_SOURCES = access/avio.c access/avio.h
 libavio_plugin_la_CFLAGS = $(AM_CFLAGS) $(AVFORMAT_CFLAGS) $(AVUTIL_CFLAGS)
 libavio_plugin_la_LDFLAGS = $(AM_LDFLAGS) $(SYMBOLIC_LDFLAGS)
@@ -412,7 +390,7 @@ endif
 endif
 
 libsatip_plugin_la_SOURCES = access/satip.c
-libsatip_plugin_la_LIBADD = $(SOCKET_LIBS)
+libsatip_plugin_la_LIBADD = $(SOCKET_LIBS) $(LIBPTHREAD)
 access_LTLIBRARIES += libsatip_plugin.la
 
 ### Misc ###
@@ -429,19 +407,10 @@ EXTRA_LTLIBRARIES += libaccess_mtp_plugin.la
 
 ### SRT ###
 
-libaccess_srt_plugin_la_SOURCES = access/srt.c access/srt_common.c access/srt_common.h dummy.cpp
+libaccess_srt_plugin_la_SOURCES = access/srt.c
 libaccess_srt_plugin_la_CFLAGS = $(AM_CFLAGS) $(SRT_CFLAGS)
 libaccess_srt_plugin_la_CPPFLAGS = $(AM_CPPFLAGS) $(SRT_CPPFLAGS)
 libaccess_srt_plugin_la_LIBADD = $(SRT_LIBS)
 libaccess_srt_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(accessdir)'
 access_LTLIBRARIES += $(LTLIBaccess_srt)
 EXTRA_LTLIBRARIES += libaccess_srt_plugin.la
-
-### RIST ###
-
-librist_plugin_la_SOURCES = access/rist.c access/rist.h
-librist_plugin_la_CFLAGS = $(AM_CFLAGS) $(BITSTREAM_CFLAGS)
-librist_plugin_la_LIBADD = $(SOCKET_LIBS)
-if HAVE_BITSTREAM
-access_LTLIBRARIES += librist_plugin.la
-endif

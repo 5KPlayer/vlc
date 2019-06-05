@@ -2,6 +2,7 @@
  * imem.c : Memory input for VLC
  *****************************************************************************
  * Copyright (C) 2009-2010 Laurent Aimar
+ * $Id: ba7c1ea1e06f515b0e474b18c6330a44f0c6ded4 $
  *
  * Author: Laurent Aimar <fenrir _AT_ videolan _DOT org>
  *
@@ -171,7 +172,7 @@ vlc_module_begin()
         change_safe()
 
     add_shortcut("imem")
-    set_capability("access", 1)
+    set_capability("access_demux", 0)
     set_callbacks(OpenDemux, CloseDemux)
 
     add_submodule()
@@ -216,9 +217,9 @@ typedef struct {
 
     es_out_id_t  *es;
 
-    vlc_tick_t   dts;
+    mtime_t      dts;
 
-    vlc_tick_t   deadline;
+    mtime_t      deadline;
 } imem_sys_t;
 
 static void ParseMRL(vlc_object_t *, const char *);
@@ -278,7 +279,7 @@ static int OpenCommon(vlc_object_t *object, imem_sys_t **sys_ptr, const char *ps
 
     /* */
     sys->dts       = 0;
-    sys->deadline  = VLC_TICK_INVALID;
+    sys->deadline  = VLC_TS_INVALID;
 
     *sys_ptr = sys;
     return VLC_SUCCESS;
@@ -305,7 +306,7 @@ static int OpenAccess(vlc_object_t *object)
     access->pf_read    = NULL;
     access->pf_block   = Block;
     access->pf_seek    = NULL;
-    access->p_sys      = sys;
+    access->p_sys      = (access_sys_t*)sys;
 
     return VLC_SUCCESS;
 }
@@ -345,10 +346,11 @@ static int ControlAccess(stream_t *access, int i_query, va_list args)
         *s = var_InheritInteger(access, "imem-size");
         return *s ? VLC_SUCCESS : VLC_EGENERIC;
     }
-    case STREAM_GET_PTS_DELAY:
-        *va_arg(args, vlc_tick_t *) = DEFAULT_PTS_DELAY; /* FIXME? */
+    case STREAM_GET_PTS_DELAY: {
+        int64_t *delay = va_arg(args, int64_t *);
+        *delay = DEFAULT_PTS_DELAY; /* FIXME? */
         return VLC_SUCCESS;
-
+    }
     case STREAM_SET_PAUSE_STATE:
         return VLC_SUCCESS;
 
@@ -413,9 +415,6 @@ static int OpenDemux(vlc_object_t *object)
 {
     demux_t    *demux = (demux_t *)object;
     imem_sys_t *sys;
-
-    if (demux->out == NULL)
-        return VLC_EGENERIC;
 
     if (OpenCommon(object, &sys, demux->psz_location))
         return VLC_EGENERIC;
@@ -493,8 +492,11 @@ static int OpenDemux(vlc_object_t *object)
     /* */
     demux->pf_control = ControlDemux;
     demux->pf_demux   = Demux;
-    demux->p_sys      = sys;
+    demux->p_sys      = (demux_sys_t*)sys;
 
+    demux->info.i_update = 0;
+    demux->info.i_title = 0;
+    demux->info.i_seekpoint = 0;
     return VLC_SUCCESS;
 }
 
@@ -527,7 +529,8 @@ static int ControlDemux(demux_t *demux, int i_query, va_list args)
         return VLC_SUCCESS;
 
     case DEMUX_GET_PTS_DELAY: {
-        *va_arg(args, vlc_tick_t *) = DEFAULT_PTS_DELAY; /* FIXME? */
+        int64_t *delay = va_arg(args, int64_t *);
+        *delay = DEFAULT_PTS_DELAY; /* FIXME? */
         return VLC_SUCCESS;
     }
     case DEMUX_GET_POSITION: {
@@ -536,15 +539,17 @@ static int ControlDemux(demux_t *demux, int i_query, va_list args)
         return VLC_SUCCESS;
     }
     case DEMUX_GET_TIME: {
-        *va_arg(args, vlc_tick_t *) = sys->dts;
+        int64_t *t = va_arg(args, int64_t *);
+        *t = sys->dts;
         return VLC_SUCCESS;
     }
     case DEMUX_GET_LENGTH: {
-        *va_arg(args, vlc_tick_t *) = 0;
+        int64_t *l = va_arg(args, int64_t *);
+        *l = 0;
         return VLC_SUCCESS;
     }
     case DEMUX_SET_NEXT_DEMUX_TIME:
-        sys->deadline = va_arg(args, vlc_tick_t);
+        sys->deadline = va_arg(args, int64_t);
         return VLC_SUCCESS;
 
     /* */
@@ -566,7 +571,7 @@ static int Demux(demux_t *demux)
 {
     imem_sys_t *sys = (imem_sys_t*)demux->p_sys;
 
-    if (sys->deadline == VLC_TICK_INVALID)
+    if (sys->deadline == VLC_TS_INVALID)
         sys->deadline = sys->dts + 1;
 
     for (;;) {
@@ -589,8 +594,8 @@ static int Demux(demux_t *demux)
         if (buffer_size > 0) {
             block_t *block = block_Alloc(buffer_size);
             if (block) {
-                block->i_dts = dts >= 0 ? (1 + dts) : VLC_TICK_INVALID;
-                block->i_pts = pts >= 0 ? (1 + pts) : VLC_TICK_INVALID;
+                block->i_dts = dts >= 0 ? (1 + dts) : VLC_TS_INVALID;
+                block->i_pts = pts >= 0 ? (1 + pts) : VLC_TS_INVALID;
                 memcpy(block->p_buffer, buffer, buffer_size);
 
                 es_out_SetPCR(demux->out, block->i_dts);
@@ -603,7 +608,7 @@ static int Demux(demux_t *demux)
         sys->source.release(sys->source.data, sys->source.cookie,
                             buffer_size, buffer);
     }
-    sys->deadline = VLC_TICK_INVALID;
+    sys->deadline = VLC_TS_INVALID;
     return 1;
 }
 

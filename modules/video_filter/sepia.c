@@ -2,6 +2,7 @@
  * sepia.c : Sepia video plugin for vlc
  *****************************************************************************
  * Copyright (C) 2010 VLC authors and VideoLAN
+ * $Id: 2a00130fbfe19beefd163fd8c86ca584ac0d561c $
  *
  * Authors: Branko Kokanovic <branko.kokanovic@gmail.com>
  *
@@ -33,8 +34,8 @@
 #include <vlc_filter.h>
 #include <vlc_picture.h>
 #include <vlc_cpu.h>
+#include <vlc_atomic.h>
 
-#include <stdatomic.h>
 #include <assert.h>
 #include "filter_picture.h"
 
@@ -99,11 +100,11 @@ static const struct
 /*****************************************************************************
  * filter_sys_t: adjust filter method descriptor
  *****************************************************************************/
-typedef struct
+struct filter_sys_t
 {
     SepiaFunction pf_sepia;
     atomic_int i_intensity;
-} filter_sys_t;
+};
 
 /*****************************************************************************
  * Create: allocates Sepia video thread output method
@@ -201,22 +202,24 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
  *****************************************************************************/
 VLC_SSE
 static inline void Sepia8ySSE2(uint8_t * dst, const uint8_t * src,
-                         int i_intensity_shifted_pair)
+                         int i_intensity_spread)
 {
     __asm__ volatile (
         // y = y - y / 4 + i_intensity / 4
         "movq            (%1), %%xmm1\n"
-        "punpcklbw     %%xmm7, %%xmm1\n" // zero-extend bytes to words
-        "movdqa        %%xmm1, %%xmm2\n" // copy it
+        "punpcklbw     %%xmm7, %%xmm1\n"
+        "movq            (%1), %%xmm2\n" // store bytes as words with 0s in between
+        "punpcklbw     %%xmm7, %%xmm2\n"
         "movd              %2, %%xmm3\n"
         "pshufd    $0, %%xmm3, %%xmm3\n"
-        "psrlw             $2, %%xmm2\n" // get 1/4 of it
-        "psubusb       %%xmm2, %%xmm1\n"
-        "paddusb       %%xmm3, %%xmm1\n"
-        "packuswb      %%xmm1, %%xmm1\n" // pack back to bytes
-        "movq          %%xmm1, (%0)  \n"
+        "psrlw             $2, %%xmm2\n"    // rotate right 2
+        "psubusb       %%xmm1, %%xmm2\n"    // subtract
+        "psrlw             $2, %%xmm3\n"
+        "paddsb        %%xmm1, %%xmm3\n"    // add
+        "packuswb      %%xmm2, %%xmm1\n"    // pack back to bytes
+        "movq          %%xmm1, (%0)  \n"    // load to dest
         :
-        :"r" (dst), "r"(src), "r"(i_intensity_shifted_pair)
+        :"r" (dst), "r"(src), "r"(i_intensity_spread)
         :"memory", "xmm1", "xmm2", "xmm3");
 }
 
@@ -228,9 +231,11 @@ static void PlanarI420SepiaSSE( picture_t *p_pic, picture_t *p_outpic,
     const uint8_t filling_const_8u = 128 - i_intensity / 6;
     const uint8_t filling_const_8v = 128 + i_intensity / 14;
     /* prepared value for faster broadcasting in xmm register */
-    int i_intensity_shifted_pair = 0x10001 * (((uint8_t) i_intensity) >> 2);
+    int i_intensity_spread = 0x10001 * (uint8_t) i_intensity;
 
-    __asm__ volatile("pxor %%xmm7, %%xmm7\n" ::: "xmm7");
+    __asm__ volatile(
+        "pxor      %%xmm7, %%xmm7\n"
+        ::: "xmm7");
 
     /* iterate for every two visible line in the frame */
     for (int y = 0; y < p_pic->p[Y_PLANE].i_visible_lines - 1; y += 2)
@@ -246,16 +251,16 @@ static void PlanarI420SepiaSSE( picture_t *p_pic, picture_t *p_outpic,
             /* Compute yellow channel values with asm function */
             Sepia8ySSE2(&p_outpic->p[Y_PLANE].p_pixels[i_dy_line1_start + x],
                         &p_pic->p[Y_PLANE].p_pixels[i_dy_line1_start + x],
-                        i_intensity_shifted_pair );
+                        i_intensity_spread );
             Sepia8ySSE2(&p_outpic->p[Y_PLANE].p_pixels[i_dy_line2_start + x],
                         &p_pic->p[Y_PLANE].p_pixels[i_dy_line2_start + x],
-                        i_intensity_shifted_pair );
+                        i_intensity_spread );
             Sepia8ySSE2(&p_outpic->p[Y_PLANE].p_pixels[i_dy_line1_start + x + 8],
                         &p_pic->p[Y_PLANE].p_pixels[i_dy_line1_start + x + 8],
-                        i_intensity_shifted_pair );
+                        i_intensity_spread );
             Sepia8ySSE2(&p_outpic->p[Y_PLANE].p_pixels[i_dy_line2_start + x + 8],
                         &p_pic->p[Y_PLANE].p_pixels[i_dy_line2_start + x + 8],
-                        i_intensity_shifted_pair );
+                        i_intensity_spread );
             /* Copy precomputed values to destination memory location */
             memset(&p_outpic->p[U_PLANE].p_pixels[i_du_line_start + (x / 2)],
                    filling_const_8u, 8 );
@@ -359,7 +364,7 @@ static void PlanarI420Sepia( picture_t *p_pic, picture_t *p_outpic,
 /*****************************************************************************
  * PackedYUVSepia: Applies sepia to one frame of the packed YUV video
  *****************************************************************************
- * This function applies sepia effect to one frame of the video by iterating
+ * This function applies sepia effext to one frame of the video by iterating
  * through video lines. In every pass, we calculate new values for pixels
  * (UYVY, VYUY, YUYV and YVYU formats are supported)
  *****************************************************************************/

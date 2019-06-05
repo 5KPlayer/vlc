@@ -1,6 +1,6 @@
 # matroska
 
-MATROSKA_VERSION := 1.5.1
+MATROSKA_VERSION := 1.4.9
 MATROSKA_URL := http://dl.matroska.org/downloads/libmatroska/libmatroska-$(MATROSKA_VERSION).tar.xz
 
 PKGS += matroska
@@ -21,7 +21,10 @@ libmatroska: libmatroska-$(MATROSKA_VERSION).tar.xz .sum-matroska
 	$(call pkg_static,"libmatroska.pc.in")
 	$(MOVE)
 
-MATROSKA_CXXFLAGS := $(CXXFLAGS) $(PIC) -fvisibility=hidden -O2
+MATROSKA_CXXFLAGS := $(CXXFLAGS) $(PIC) -fvisibility=hidden
+ifdef HAVE_IOS
+MATROSKA_CXXFLAGS +=  -O2
+endif
 
 .matroska: libmatroska toolchain.cmake
 	cd $< && $(HOSTVARS_PIC) CXXFLAGS="$(MATROSKA_CXXFLAGS)" $(CMAKE) -DBUILD_SHARED_LIBS=OFF

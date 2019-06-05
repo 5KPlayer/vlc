@@ -25,7 +25,9 @@ OPTIONS="
         --enable-shout
         --enable-ncurses
         --enable-twolame
+        --enable-realrtsp
         --enable-libass
+        --enable-macosx-qtkit
         --enable-macosx-avfoundation
         --disable-skins2
         --disable-xcb
@@ -33,10 +35,10 @@ OPTIONS="
         --disable-pulse
         --disable-sdl-image
         --disable-vnc
-        --with-macosx-version-min=10.11
+        --with-macosx-version-min=10.7
 "
 
 export CFLAGS
 export LDFLAGS
 
-sh "$(dirname $0)"/../../../configure ${OPTIONS} "$@"
+sh "$(dirname $0)"/../../../configure ${OPTIONS} $*

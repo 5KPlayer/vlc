@@ -2,6 +2,7 @@
  * bluescreen.c : Bluescreen (weather channel like) video filter for vlc
  *****************************************************************************
  * Copyright (C) 2005-2007 VLC authors and VideoLAN
+ * $Id: 8fe5d86dcb691c006b7eee0b57a3737606499856 $
  *
  * Authors: Antoine Cellerier <dionoea at videolan tod org>
  *
@@ -99,12 +100,12 @@ static const char *const ppsz_filter_options[] = {
     "u", "v", "ut", "vt", NULL
 };
 
-typedef struct
+struct filter_sys_t
 {
     vlc_mutex_t lock;
     int i_u, i_v, i_ut, i_vt;
     uint8_t *p_at;
-} filter_sys_t;
+};
 
 static int Create( vlc_object_t *p_this )
 {

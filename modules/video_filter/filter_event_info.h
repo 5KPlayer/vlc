@@ -2,6 +2,7 @@
  * filter_event_info.h:
  *****************************************************************************
  * Copyright (C) 2004-2005 VLC authors and VideoLAN
+ * $Id: ???
  *
  * Authors: Dugal Harris
  *

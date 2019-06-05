@@ -2,6 +2,7 @@
  * preferences_widgets.hpp : Widgets for preferences panels
  ****************************************************************************
  * Copyright (C) 2006-2011 the VideoLAN team
+ * $Id: 5f516fbd5db57e9cec39be98458a27c64c46ca91 $
  *
  * Authors: Clément Stenac <zorglub@videolan.org>
  *          Antoine Cellerier <dionoea@videolan.org>
@@ -80,6 +81,7 @@ class ConfigControl : public QObject
 public:
     virtual int getType() const = 0;
     const char * getName() const { return  p_item->psz_name; }
+    bool isAdvanced() const { return p_item->b_advanced; }
     void hide() { changeVisibility( false ); }
     void show() { changeVisibility( true ); }
     /* ConfigControl factory */
@@ -456,7 +458,8 @@ private slots:
     void comboIndexChanged( int );
 };
 
-void setfillVLCConfigCombo(const char *configname, QComboBox *combo );
+void setfillVLCConfigCombo(const char *configname, intf_thread_t *p_intf,
+                        QComboBox *combo );
 
 #if 0
 struct ModuleCheckBox {

@@ -27,10 +27,7 @@ ifdef HAVE_WIN32
 endif
 	$(MOVE)
 
-DEPS_cddb = regex $(DEPS_regex) 
-ifndef HAVE_WINSTORE
-DEPS_cddb += gettext $(DEPS_gettext)
-endif
+DEPS_cddb = regex $(DEPS_regex) gettext $(DEPS_gettext)
 
 .cddb: cddb
 	$(RECONF)

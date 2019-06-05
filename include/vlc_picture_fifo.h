@@ -2,6 +2,7 @@
  * vlc_picture_fifo.h: picture fifo definitions
  *****************************************************************************
  * Copyright (C) 2009 VLC authors and VideoLAN
+ * $Id: 73d1b20c279f628cf94bc7cfc83b2548878bcc07 $
  *
  * Authors: Laurent Aimar <fenrir _AT_ videolan _DOT_ org>
  *
@@ -73,16 +74,15 @@ VLC_API void picture_fifo_Push( picture_fifo_t *, picture_t * );
 /**
  * It release all picture inside the fifo that have a lower or equal date
  * if flush_before or higher or equal to if not flush_before than the given one.
- * Passing VLC_TICK_INVALID on the date releases all the pictures.
  *
  * All pictures inside the fifo will be released by picture_Release.
  */
-VLC_API void picture_fifo_Flush( picture_fifo_t *, vlc_tick_t date, bool flush_before );
+VLC_API void picture_fifo_Flush( picture_fifo_t *, mtime_t date, bool flush_before );
 
 /**
  * It applies a delta on all the picture timestamp.
  */
-VLC_API void picture_fifo_OffsetDate( picture_fifo_t *, vlc_tick_t delta );
+VLC_API void picture_fifo_OffsetDate( picture_fifo_t *, mtime_t delta );
 
 
 #endif /* VLC_PICTURE_FIFO_H */

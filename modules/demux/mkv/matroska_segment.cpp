@@ -2,6 +2,7 @@
  * matroska_segment.cpp : matroska demuxer
  *****************************************************************************
  * Copyright (C) 2003-2010 VLC authors and VideoLAN
+ * $Id: 29e63a2459889d9aa94b363e429b9f00d898d30b $
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *          Steve Lhomme <steve.lhomme@free.fr>
@@ -30,8 +31,6 @@
 
 #include <new>
 #include <iterator>
-
-namespace mkv {
 
 matroska_segment_c::matroska_segment_c( demux_sys_t & demuxer, EbmlStream & estream, KaxSegment *p_seg )
     :segment(p_seg)
@@ -107,7 +106,7 @@ void matroska_segment_c::LoadCues( KaxCues *cues )
         if( MKV_IS_ID( el, KaxCuePoint ) )
         {
             uint64_t cue_position = -1;
-            vlc_tick_t  cue_mk_time = -1;
+            mtime_t  cue_mk_time = -1;
 
             unsigned int track_id = 0;
             bool b_invalid_cue = false;
@@ -133,7 +132,7 @@ void matroska_segment_c::LoadCues( KaxCues *cues )
                         b_invalid_cue = true;
                         break;
                     }
-                    cue_mk_time = VLC_TICK_FROM_NS(static_cast<uint64>( *kct_ptr ) * i_timescale);
+                    cue_mk_time = static_cast<uint64>( *kct_ptr ) * i_timescale / INT64_C(1000);
                 }
                 else if( MKV_IS_ID( el, KaxCueTrackPositions ) )
                 {
@@ -271,53 +270,68 @@ static const struct {
 
 bool matroska_segment_c::ParseSimpleTags( SimpleTag* pout_simple, KaxTagSimple *tag, int target_type )
 {
-    msg_Dbg( &sys.demuxer, "|   + Simple Tag ");
-    struct SimpleTagHandlerPayload
-    {
-        matroska_segment_c * const obj;
-        EbmlParser         * const ep;
-        demux_sys_t        & sys;
-        SimpleTag          & out;
-        int                target_type;
-    } payload = { this, &ep, sys, *pout_simple, 50 };
-    MKV_SWITCH_CREATE( EbmlTypeDispatcher, SimpleTagHandler, SimpleTagHandlerPayload )
-    {
-        MKV_SWITCH_INIT();
-        E_CASE( KaxTagName, entry )
-        {
-            vars.out.tag_name = UTFstring( entry ).GetUTF8().c_str();
-        }
-        E_CASE( KaxTagString, entry )
-        {
-            vars.out.value = UTFstring( entry ).GetUTF8().c_str();
-        }
-        E_CASE( KaxTagLangue, entry )
-        {
-            vars.out.lang = entry;
-        }
-        E_CASE( KaxTagDefault, unused )
-        {
-            VLC_UNUSED(unused);
-            VLC_UNUSED(vars);
-        }
-        E_CASE( KaxTagSimple, simple )
-        {
-            SimpleTag st; // ParseSimpleTags will write to this variable
-                          // the SimpleTag is valid if ParseSimpleTags returns `true`
+    EbmlParser eparser ( &es, tag, &sys.demuxer );
+    EbmlElement *el;
+    size_t max_size = tag->GetSize();
+    size_t size = 0;
 
-            if (vars.obj->ParseSimpleTags( &st, &simple, vars.target_type ))
-              vars.out.sub_tags.push_back( st );
+    if( !sys.meta )
+        sys.meta = vlc_meta_New();
+
+    msg_Dbg( &sys.demuxer, "|   + Simple Tag ");
+    try
+    {
+        while( ( el = eparser.Get() ) != NULL && size < max_size)
+        {
+            if( unlikely( !el->ValidateSize() ) )
+            {
+                msg_Err( &sys.demuxer, "Error %s too big ignoring the tag", typeid(*el).name() );
+                return false;
+            }
+            if( MKV_CHECKED_PTR_DECL ( ktn_ptr, KaxTagName, el ) )
+            {
+                ktn_ptr->ReadData( es.I_O(), SCOPE_ALL_DATA );
+                pout_simple->tag_name = UTFstring( *ktn_ptr ).GetUTF8().c_str();
+            }
+            else if( MKV_CHECKED_PTR_DECL ( kts_ptr, KaxTagString, el ) )
+            {
+                kts_ptr->ReadData( es.I_O(), SCOPE_ALL_DATA );
+                pout_simple->value = UTFstring( *kts_ptr ).GetUTF8().c_str();
+            }
+            else if(  MKV_CHECKED_PTR_DECL ( ktl_ptr, KaxTagLangue, el ) )
+            {
+                ktl_ptr->ReadData( es.I_O(), SCOPE_ALL_DATA );
+                pout_simple->lang = *ktl_ptr;
+            }
+            else if(  MKV_CHECKED_PTR_DECL ( ktd_ptr, KaxTagDefault, el ) )
+            {
+                VLC_UNUSED(ktd_ptr); // TODO: we do not care about this value, but maybe we should?
+            }
+            /*Tags can be nested*/
+            else if( MKV_CHECKED_PTR_DECL ( kts_ptr, KaxTagSimple, el) )
+            {
+                SimpleTag st; // ParseSimpleTags will write to this variable
+                              // the SimpleTag is valid if ParseSimpleTags returns `true`
+
+                if (ParseSimpleTags( &st, kts_ptr, target_type )) {
+                  pout_simple->sub_tags.push_back( st );
+                }
+            }
+            /*TODO Handle binary tags*/
+            size += el->HeadSize() + el->GetSize();
         }
-    };
-    SimpleTagHandler::Dispatcher().iterate( tag->begin(), tag->end(), &payload );
+    }
+    catch(...)
+    {
+        msg_Err( &sys.demuxer, "Error while reading Tag ");
+        return false;
+    }
 
     if( pout_simple->tag_name.empty() )
     {
         msg_Warn( &sys.demuxer, "Invalid MKV SimpleTag found.");
         return false;
     }
-    if( !sys.meta )
-        sys.meta = vlc_meta_New();
     for( int i = 0; metadata_map[i].key; i++ )
     {
         if( pout_simple->tag_name == metadata_map[i].key &&
@@ -337,119 +351,110 @@ done:
 void matroska_segment_c::LoadTags( KaxTags *tags )
 {
     /* Master elements */
-    if( unlikely( tags->IsFiniteSize() && tags->GetSize() >= SIZE_MAX ) )
-    {
-        msg_Err( &sys.demuxer, "Tags too big, aborting" );
-        return;
-    }
-    try
-    {
-        EbmlElement *el;
-        int i_upper_level = 0;
-        tags->Read( es, EBML_CONTEXT(tags), i_upper_level, el, true );
-    }
-    catch(...)
-    {
-        msg_Err( &sys.demuxer, "Couldn't read tags" );
-        return;
-    }
+    EbmlParser eparser = EbmlParser( &es, tags, &sys.demuxer );
+    EbmlElement *el;
 
-    struct TagsHandlerPayload
+    while( ( el = eparser.Get() ) != NULL )
     {
-        matroska_segment_c * const obj;
-        EbmlParser         * const ep;
-        demux_sys_t        & sys;
-        int                target_type;
-    } payload = { this, &ep, sys, 50 };
-    MKV_SWITCH_CREATE( EbmlTypeDispatcher, KaxTagsHandler, TagsHandlerPayload )
-    {
-        MKV_SWITCH_INIT();
-        E_CASE( KaxTag, entry )
+        if( MKV_IS_ID( el, KaxTag ) )
         {
-            msg_Dbg( &vars.sys.demuxer, "+ Tag" );
             Tag tag;
-            struct TagHandlerPayload
+
+            msg_Dbg( &sys.demuxer, "+ Tag" );
+            eparser.Down();
+            int target_type = 50;
+            while( ( el = eparser.Get() ) != NULL )
             {
-                matroska_segment_c * const obj;
-                EbmlParser         * const ep;
-                demux_sys_t        & sys;
-                Tag                & tag;
-                int                target_type;
-            } payload = { vars.obj, vars.ep, vars.sys, tag, 50 };
-            MKV_SWITCH_CREATE( EbmlTypeDispatcher, TagHandler, TagHandlerPayload )
-            {
-                MKV_SWITCH_INIT();
-                E_CASE( KaxTagTargets, targets )
+                if( MKV_IS_ID( el, KaxTagTargets ) )
                 {
-                    msg_Dbg( &vars.sys.demuxer, "|   + Targets" );
-
-                    MKV_SWITCH_CREATE( EbmlTypeDispatcher, TargetsHandler, TagHandlerPayload )
+                    msg_Dbg( &sys.demuxer, "|   + Targets" );
+                    eparser.Down();
+                    while( ( el = eparser.Get() ) != NULL )
                     {
-                        MKV_SWITCH_INIT();
-                        E_CASE( KaxTagTargetTypeValue, entry )
+                        try
                         {
-                            vars.target_type = static_cast<uint32>( entry );
-                            msg_Dbg( &vars.sys.demuxer, "|   |   + TargetTypeValue: %u", vars.target_type);
-                        }
-                        E_CASE( KaxTagTrackUID, entry )
-                        {
-                            vars.tag.i_tag_type = TRACK_UID;
-                            vars.tag.i_uid = static_cast<uint64>( entry );
-                            msg_Dbg( &vars.sys.demuxer, "|   |   + TrackUID: %" PRIu64, vars.tag.i_uid);
-                        }
-                        E_CASE( KaxTagEditionUID, entry )
-                        {
-                            vars.tag.i_tag_type = EDITION_UID;
-                            vars.tag.i_uid = static_cast<uint64>( entry );
-                            msg_Dbg( &vars.sys.demuxer, "|   |   + EditionUID: %" PRIu64, vars.tag.i_uid);
-                        }
-                        E_CASE( KaxTagChapterUID, entry )
-                        {
-                            vars.tag.i_tag_type = CHAPTER_UID;
-                            vars.tag.i_uid = static_cast<uint64>( entry );
-                            msg_Dbg( &vars.sys.demuxer, "|   |   + ChapterUID: %" PRIu64, vars.tag.i_uid);
-                        }
-                        E_CASE( KaxTagAttachmentUID, entry )
-                        {
-                            vars.tag.i_tag_type = ATTACHMENT_UID;
-                            vars.tag.i_uid = static_cast<uint64>( entry );
-                            msg_Dbg( &vars.sys.demuxer, "|   |   + AttachmentUID: %" PRIu64, vars.tag.i_uid);
-                        }
-                        E_CASE( KaxTagTargetType, entry )
-                        {
-                            msg_Dbg( &vars.sys.demuxer, "|   |   + TargetType: %s", entry.GetValue().c_str());
-                        }
-                        E_CASE_DEFAULT( el )
-                        {
-                            msg_Dbg( &vars.sys.demuxer, "|   |   + Unknown (%s)", typeid(el).name() );
-                        }
-                    };
+                            if( unlikely( !el->ValidateSize() ) )
+                            {
+                                msg_Err( &sys.demuxer, "Invalid size while reading tag");
+                                break;
+                            }
+                            if( MKV_CHECKED_PTR_DECL ( ktttv_ptr, KaxTagTargetTypeValue, el ) )
+                            {
+                                ktttv_ptr->ReadData( es.I_O() );
 
-                    TargetsHandler::Dispatcher().iterate( targets.begin(), targets.end(), &vars );
+                                msg_Dbg( &sys.demuxer, "|   |   + TargetTypeValue: %u", uint32(*ktttv_ptr));
+                                target_type = static_cast<uint32>( *ktttv_ptr );
+                            }
+                            else if( MKV_CHECKED_PTR_DECL ( kttu_ptr, KaxTagTrackUID, el ) )
+                            {
+                                tag.i_tag_type = TRACK_UID;
+                                kttu_ptr->ReadData( es.I_O() );
+                                tag.i_uid = static_cast<uint64>( *kttu_ptr );
+                                msg_Dbg( &sys.demuxer, "|   |   + TrackUID: %" PRIu64, tag.i_uid);
+
+                            }
+                            else if( MKV_CHECKED_PTR_DECL ( kteu_ptr, KaxTagEditionUID, el ) )
+                            {
+                                tag.i_tag_type = EDITION_UID;
+                                kteu_ptr->ReadData( es.I_O() );
+                                tag.i_uid = static_cast<uint64>( *kteu_ptr );
+                                msg_Dbg( &sys.demuxer, "|   |   + EditionUID: %" PRIu64, tag.i_uid);
+                            }
+                            else if( MKV_CHECKED_PTR_DECL ( ktcu_ptr, KaxTagChapterUID, el ) )
+                            {
+                                tag.i_tag_type = CHAPTER_UID;
+                                ktcu_ptr->ReadData( es.I_O() );
+                                tag.i_uid = static_cast<uint64>( *ktcu_ptr );
+                                msg_Dbg( &sys.demuxer, "|   |   + ChapterUID: %" PRIu64, tag.i_uid);
+                            }
+                            else if( MKV_CHECKED_PTR_DECL ( ktau_ptr, KaxTagAttachmentUID, el ) )
+                            {
+                                tag.i_tag_type = ATTACHMENT_UID;
+                                ktau_ptr->ReadData( es.I_O() );
+                                tag.i_uid = static_cast<uint64>( *ktau_ptr );
+                                msg_Dbg( &sys.demuxer, "|   |   + AttachmentUID: %" PRIu64, tag.i_uid);
+                            }
+                            if( MKV_CHECKED_PTR_DECL ( ktttv_ptr, KaxTagTargetType, el ) )
+                            {
+                                ktttv_ptr->ReadData( es.I_O() );
+
+                                msg_Dbg( &sys.demuxer, "|   |   + TargetType: %s", ktttv_ptr->GetValue().c_str());
+                            }
+                            else
+                            {
+                                msg_Dbg( &sys.demuxer, "|   |   + LoadTag Unknown (%s)", typeid( *el ).name() );
+                            }
+                        }
+                        catch(...)
+                        {
+                            msg_Err( &sys.demuxer, "Error while reading tag");
+                            break;
+                        }
+                    }
+                    eparser.Up();
                 }
-                E_CASE( KaxTagSimple, entry )
+                else if( MKV_CHECKED_PTR_DECL ( kts_ptr, KaxTagSimple, el ) )
                 {
                     SimpleTag simple;
 
-                    if (vars.obj->ParseSimpleTags( &simple, &entry, vars.target_type ))
-                        vars.tag.simple_tags.push_back( simple );
+                    if (ParseSimpleTags(&simple, kts_ptr, target_type )) {
+                      tag.simple_tags.push_back( simple );
+                    }
                 }
-                E_CASE_DEFAULT( el )
+                else
                 {
-                    msg_Dbg( &vars.sys.demuxer, "|   |   + Unknown (%s)", typeid(el).name() );
+                    msg_Dbg( &sys.demuxer, "|   + LoadTag Unknown (%s)", typeid( *el ).name() );
                 }
-            };
-
-            TagHandler::Dispatcher().iterate( entry.begin(), entry.end(), &payload );
-            vars.obj->tags.push_back(tag);
+            }
+            eparser.Up();
+            this->tags.push_back(tag);
         }
-        E_CASE_DEFAULT( el )
+        else
         {
-            msg_Dbg( &vars.sys.demuxer, "|   + LoadTag Unknown (%s)", typeid(el).name() );
+            msg_Dbg( &sys.demuxer, "+ Unknown (%s)", typeid( *el ).name() );
         }
-    };
+    }
 
-    KaxTagsHandler::Dispatcher().iterate( tags->begin(), tags->end(), &payload );
     msg_Dbg( &sys.demuxer, "loading tags done." );
 }
 
@@ -472,6 +477,11 @@ void matroska_segment_c::InformationCreate( )
  * Misc
  *****************************************************************************/
 
+void matroska_segment_c::IndexAppendCluster( KaxCluster *cluster )
+{
+    _seeker.add_cluster( cluster );
+}
+
 bool matroska_segment_c::PreloadClusters(uint64 i_cluster_pos)
 {
     struct ClusterHandlerPayload
@@ -487,7 +497,8 @@ bool matroska_segment_c::PreloadClusters(uint64 i_cluster_pos)
 
         E_CASE( KaxCluster, kcluster )
         {
-            vars.obj->ParseCluster( &kcluster, false );
+            if( vars.obj->ParseCluster( &kcluster, false ) )
+                vars.obj->IndexAppendCluster( &kcluster );
         }
 
         E_CASE_DEFAULT( el )
@@ -626,26 +637,28 @@ bool matroska_segment_c::Preload( )
         }
         else if( MKV_CHECKED_PTR_DECL ( kc_ptr, KaxCluster, el ) )
         {
-            if( sys.b_seekable &&
-                var_InheritBool( &sys.demuxer, "mkv-preload-clusters" ) )
+            if( var_InheritBool( &sys.demuxer, "mkv-preload-clusters" ) )
             {
                 PreloadClusters        ( kc_ptr->GetElementPosition() );
                 es.I_O().setFilePointer( kc_ptr->GetElementPosition() );
             }
             msg_Dbg( &sys.demuxer, "|   + Cluster" );
 
+            if( !ParseCluster( kc_ptr ) )
+                break;
 
             cluster = kc_ptr;
+            IndexAppendCluster( cluster );
 
             // add first cluster as trusted seekpoint for all tracks
             for( tracks_map_t::const_iterator it = tracks.begin();
                  it != tracks.end(); ++it )
             {
                 _seeker.add_seekpoint( it->first,
-                SegmentSeeker::Seekpoint( cluster->GetElementPosition(), -1,
-                                          SegmentSeeker::Seekpoint::TrustLevel::QUESTIONABLE ) );
+                    SegmentSeeker::Seekpoint( cluster->GetElementPosition(), 0 ) );
             }
 
+            ep.Down();
             /* stop pre-parsing the stream */
             break;
         }
@@ -790,13 +803,13 @@ bool matroska_segment_c::LoadSeekHeadItem( const EbmlCallbacks & ClassInfos, int
     return true;
 }
 
-bool matroska_segment_c::Seek( demux_t &demuxer, vlc_tick_t i_absolute_mk_date, vlc_tick_t i_mk_time_offset, bool b_accurate )
+bool matroska_segment_c::Seek( demux_t &demuxer, mtime_t i_absolute_mk_date, mtime_t i_mk_time_offset, bool b_accurate )
 {
     SegmentSeeker::tracks_seekpoint_t seekpoints;
 
     SegmentSeeker::fptr_t i_seek_position = std::numeric_limits<SegmentSeeker::fptr_t>::max();
-    vlc_tick_t i_mk_seek_time = -1;
-    vlc_tick_t i_mk_date = i_absolute_mk_date - i_mk_time_offset;
+    mtime_t i_mk_seek_time = -1;
+    mtime_t i_mk_date = i_absolute_mk_date - i_mk_time_offset;
     SegmentSeeker::track_ids_t selected_tracks;
     SegmentSeeker::track_ids_t priority;
 
@@ -807,9 +820,9 @@ bool matroska_segment_c::Seek( demux_t &demuxer, vlc_tick_t i_absolute_mk_date, 
         mkv_track_t &track = *it->second;
 
         track.i_skip_until_fpos = std::numeric_limits<uint64_t>::max();
-        if( track.i_last_dts != VLC_TICK_INVALID )
+        if( track.i_last_dts > VLC_TS_INVALID )
             track.b_discontinuity = true;
-        track.i_last_dts        = VLC_TICK_INVALID;
+        track.i_last_dts        = VLC_TS_INVALID;
 
         bool selected;
         if (track.p_es == NULL)
@@ -875,10 +888,10 @@ bool matroska_segment_c::Seek( demux_t &demuxer, vlc_tick_t i_absolute_mk_date, 
 
     // propogate seek information //
 
-    sys.i_pcr           = VLC_TICK_INVALID;
-    sys.i_pts           = VLC_TICK_0 + i_mk_seek_time + i_mk_time_offset;
+    sys.i_pcr           = VLC_TS_INVALID;
+    sys.i_pts           = VLC_TS_0 + i_mk_seek_time + i_mk_time_offset;
     if (b_accurate)
-        sys.i_start_pts = VLC_TICK_0 + i_absolute_mk_date;
+        sys.i_start_pts = VLC_TS_0 + i_absolute_mk_date;
     else
         sys.i_start_pts = sys.i_pts;
 
@@ -982,11 +995,8 @@ void matroska_segment_c::ComputeTrackPriority()
             switch( it->second->fmt.i_cat )
             {
                 case VIDEO_ES: ++track_score;
-                /* fallthrough */
                 case AUDIO_ES: ++track_score;
-                /* fallthrough */
                 case   SPU_ES: ++track_score;
-                /* fallthrough */
                 default:
                   if( score < track_score )
                   {
@@ -1011,7 +1021,10 @@ void matroska_segment_c::EnsureDuration()
 
     i_duration = -1;
 
-    if( !sys.b_fastseekable )
+    bool b_seekable;
+
+    if( vlc_stream_Control( sys.demuxer.s, STREAM_CAN_FASTSEEK, &b_seekable ) ||
+        !b_seekable )
     {
         msg_Warn( &sys.demuxer, "could not look for the segment duration" );
         return;
@@ -1093,8 +1106,8 @@ void matroska_segment_c::EnsureDuration()
             }
         }
 
-        i_duration = VLC_TICK_FROM_NS( i_last_timecode - cluster->GlobalTimecode() );
-        msg_Dbg( &sys.demuxer, " extracted Duration=%" PRId64, SEC_FROM_VLC_TICK(i_duration) );
+        i_duration = ( i_last_timecode - cluster->GlobalTimecode() ) / INT64_C(1000000);
+        msg_Dbg( &sys.demuxer, " extracted Duration=%" PRId64, i_duration );
     }
 
     // get back to the reading position we were at before looking for a duration
@@ -1105,6 +1118,8 @@ bool matroska_segment_c::ESCreate()
 {
     /* add all es */
     msg_Dbg( &sys.demuxer, "found %d es", static_cast<int>( tracks.size() ) );
+    es_out_Control( sys.demuxer.out, ES_OUT_SET_ES_CAT_POLICY, VIDEO_ES,
+                    ES_OUT_ES_POLICY_EXCLUSIVE );
 
     mkv_track_t *default_tracks[ES_CATEGORY_COUNT] = {};
     for( tracks_map_t::iterator it = tracks.begin(); it != tracks.end(); ++it )
@@ -1120,18 +1135,7 @@ bool matroska_segment_c::ESCreate()
         }
 
         if( !track.p_es )
-        {
             track.p_es = es_out_Add( sys.demuxer.out, &track.fmt );
-
-            if( track.p_es )
-            {
-                if (!sys.ev.AddES( track.p_es, track.fmt.i_cat ))
-                {
-                    es_out_Del( sys.demuxer.out, track.p_es );
-                    track.p_es = NULL;
-                }
-            }
-        }
 
         /* Turn on a subtitles track if it has been flagged as default -
          * but only do this if no subtitles track has already been engaged,
@@ -1144,6 +1148,7 @@ bool matroska_segment_c::ESCreate()
             if( !default_track || track.b_default )
                 default_track = &track;
         }
+
     }
 
     for( mkv_track_t *track : default_tracks )
@@ -1157,7 +1162,7 @@ bool matroska_segment_c::ESCreate()
 
 void matroska_segment_c::ESDestroy( )
 {
-    sys.ev.ResetPci();
+    sys.p_ev->ResetPci();
 
     for( tracks_map_t::iterator it = tracks.begin(); it != tracks.end(); ++it )
     {
@@ -1166,7 +1171,6 @@ void matroska_segment_c::ESDestroy( )
         if( track.p_es != NULL )
         {
             es_out_Del( sys.demuxer.out, track.p_es );
-            sys.ev.DelES( track.p_es );
             track.p_es = NULL;
         }
     }
@@ -1227,7 +1231,7 @@ int matroska_segment_c::BlockGet( KaxBlock * & pp_block, KaxSimpleBlock * & pp_s
         {
             ktimecode.ReadData( vars.obj->es.I_O(), SCOPE_ALL_DATA );
             vars.obj->cluster->InitTimecode( static_cast<uint64>( ktimecode ), vars.obj->i_timescale );
-            vars.obj->_seeker.add_cluster( vars.obj->cluster );
+            vars.obj->IndexAppendCluster( vars.obj->cluster );
             vars.b_cluster_timecode = true;
         }
         E_CASE( KaxClusterSilentTracks, ksilent )
@@ -1258,7 +1262,7 @@ int matroska_segment_c::BlockGet( KaxBlock * & pp_block, KaxSimpleBlock * & pp_s
                 bool const b_valid_track = vars.obj->FindTrackByBlock( NULL, &ksblock ) != NULL;
                 if (b_valid_track)
                     vars.obj->_seeker.add_seekpoint( ksblock.TrackNum(),
-                        SegmentSeeker::Seekpoint( ksblock.GetElementPosition(), VLC_TICK_FROM_NS(ksblock.GlobalTimecode()) ) );
+                        SegmentSeeker::Seekpoint( ksblock.GetElementPosition(), ksblock.GlobalTimecode() / 1000 ) );
             }
         }
     };
@@ -1277,7 +1281,7 @@ int matroska_segment_c::BlockGet( KaxBlock * & pp_block, KaxSimpleBlock * & pp_s
             if( p_track != NULL && p_track->fmt.i_cat == SPU_ES )
             {
                 vars.obj->_seeker.add_seekpoint( kblock.TrackNum(),
-                    SegmentSeeker::Seekpoint( kblock.GetElementPosition(), VLC_TICK_FROM_NS(kblock.GlobalTimecode()) ) );
+                    SegmentSeeker::Seekpoint( kblock.GetElementPosition(), kblock.GlobalTimecode() / 1000 ) );
             }
 
             vars.ep->Keep ();
@@ -1404,7 +1408,6 @@ int matroska_segment_c::BlockGet( KaxBlock * & pp_block, KaxSimpleBlock * & pp_s
             switch( i_level )
             {
                 case 2:
-                /* fallthrough */
                 case 3:
                     if( unlikely( !el->ValidateSize() || ( el->IsFiniteSize() && el->GetSize() >= SIZE_MAX ) ) )
                     {
@@ -1420,7 +1423,6 @@ int matroska_segment_c::BlockGet( KaxBlock * & pp_block, KaxSimpleBlock * & pp_s
 
                         break;
                     }
-                    /* fallthrough */
                 case 1:
                     {
                         EbmlTypeDispatcher const * dispatcher = dispatchers[i_level - 1];
@@ -1447,5 +1449,3 @@ int matroska_segment_c::BlockGet( KaxBlock * & pp_block, KaxSimpleBlock * & pp_s
         }
     }
 }
-
-} // namespace

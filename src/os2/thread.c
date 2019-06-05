@@ -40,9 +40,7 @@
 #include <time.h>
 
 #include <sys/types.h>
-#ifdef HAVE_SYS_SOCKET_H
 #include <sys/socket.h>
-#endif
 
 #include <sys/time.h>
 #include <sys/select.h>
@@ -155,6 +153,7 @@ unsigned long _System _DLL_InitTerm(unsigned long hmod, unsigned long flag)
             vlc_cond_init (&super_variable);
             vlc_threadvar_create (&thread_key, NULL);
             vlc_rwlock_init (&config_lock);
+            vlc_CPU_init ();
 
             return 1;
 
@@ -212,19 +211,18 @@ void vlc_mutex_lock (vlc_mutex_t *p_mutex)
         p_mutex->locked = true;
         vlc_mutex_unlock (&super_mutex);
         vlc_restorecancel (canc);
+        return;
     }
-    else
-        DosRequestMutexSem(p_mutex->hmtx, SEM_INDEFINITE_WAIT);
 
-    vlc_mutex_mark(p_mutex);
+    DosRequestMutexSem(p_mutex->hmtx, SEM_INDEFINITE_WAIT);
 }
 
 int vlc_mutex_trylock (vlc_mutex_t *p_mutex)
 {
-    int ret;
-
     if (!p_mutex->dynamic)
     {   /* static mutexes */
+        int ret = EBUSY;
+
         assert (p_mutex != &super_mutex); /* this one cannot be static */
         vlc_mutex_lock (&super_mutex);
         if (!p_mutex->locked)
@@ -232,17 +230,11 @@ int vlc_mutex_trylock (vlc_mutex_t *p_mutex)
             p_mutex->locked = true;
             ret = 0;
         }
-        else
-            ret = EBUSY;
         vlc_mutex_unlock (&super_mutex);
+        return ret;
     }
-    else
-        ret = DosRequestMutexSem( p_mutex->hmtx, 0 ) ? EBUSY : 0;
 
-    if (ret == 0)
-        vlc_mutex_mark(p_mutex);
-
-    return ret;
+    return DosRequestMutexSem( p_mutex->hmtx, 0 ) ? EBUSY : 0;
 }
 
 void vlc_mutex_unlock (vlc_mutex_t *p_mutex)
@@ -257,11 +249,10 @@ void vlc_mutex_unlock (vlc_mutex_t *p_mutex)
         if (p_mutex->contention)
             vlc_cond_broadcast (&super_variable);
         vlc_mutex_unlock (&super_mutex);
+        return;
     }
-    else
-        DosReleaseMutexSem( p_mutex->hmtx );
 
-    vlc_mutex_unmark(p_mutex);
+    DosReleaseMutexSem( p_mutex->hmtx );
 }
 
 /*** Condition variables ***/
@@ -403,11 +394,11 @@ void vlc_cond_wait (vlc_cond_t *p_condvar, vlc_mutex_t *p_mutex)
 }
 
 int vlc_cond_timedwait (vlc_cond_t *p_condvar, vlc_mutex_t *p_mutex,
-                        vlc_tick_t deadline)
+                        mtime_t deadline)
 {
     ULONG ulTimeout;
 
-    vlc_tick_t total = vlc_tick_now();
+    mtime_t total = mdate();
     total = (deadline - total) / 1000;
     if( total < 0 )
         total = 0;
@@ -421,12 +412,13 @@ int vlc_cond_timedwait_daytime (vlc_cond_t *p_condvar, vlc_mutex_t *p_mutex,
                                 time_t deadline)
 {
     ULONG ulTimeout;
-    vlc_tick_t total;
+    mtime_t total;
     struct timeval tv;
 
     gettimeofday (&tv, NULL);
 
-    total = vlc_tick_from_timeval( &tv );
+    total = CLOCK_FREQ * tv.tv_sec +
+            CLOCK_FREQ * tv.tv_usec / 1000000L;
     total = (deadline - total) / 1000;
     if( total < 0 )
         total = 0;
@@ -434,34 +426,6 @@ int vlc_cond_timedwait_daytime (vlc_cond_t *p_condvar, vlc_mutex_t *p_mutex,
     ulTimeout = ( total > 0x7fffffff ) ? 0x7fffffff : total;
 
     return vlc_cond_wait_common (p_condvar, p_mutex, ulTimeout);
-}
-
-void vlc_once(vlc_once_t *once, void (*cb)(void))
-{
-    unsigned done;
-
-    /* load once->done */
-    __atomic_xchg( &done, once->done );
-
-    /* not initialized ? */
-    if( done == 0 )
-    {
-        vlc_mutex_lock( &once->mutex );
-
-        /* load once->done */
-        __atomic_xchg( &done, once->done );
-
-        /* still not initialized ? */
-        if( done == 0 )
-        {
-            cb();
-
-            /* set once->done to 1 */
-            __atomic_xchg( &once->done, 1 );
-        }
-
-        vlc_mutex_unlock( &once->mutex );
-    }
 }
 
 /*** Thread-specific variables (TLS) ***/
@@ -905,7 +869,7 @@ int vlc_poll_os2( struct pollfd *fds, unsigned nfds, int timeout )
 #define Q2LL( q )   ( *( long long * )&( q ))
 
 /*** Clock ***/
-vlc_tick_t vlc_tick_now (void)
+mtime_t mdate (void)
 {
     /* We don't need the real date, just the value of a high precision timer */
     QWORD counter;
@@ -917,16 +881,16 @@ vlc_tick_t vlc_tick_now (void)
     /* We need to split the division to avoid 63-bits overflow */
     lldiv_t d = lldiv (Q2LL(counter), freq);
 
-    return vlc_tick_from_sec( d.quot ) + vlc_tick_from_samples(d.rem, freq);
+    return (d.quot * 1000000) + ((d.rem * 1000000) / freq);
 }
 
-#undef vlc_tick_wait
-void vlc_tick_wait (vlc_tick_t deadline)
+#undef mwait
+void mwait (mtime_t deadline)
 {
-    vlc_tick_t delay;
+    mtime_t delay;
 
     vlc_testcancel();
-    while ((delay = (deadline - vlc_tick_now())) > 0)
+    while ((delay = (deadline - mdate())) > 0)
     {
         delay /= 1000;
         if (unlikely(delay > 0x7fffffff))
@@ -936,10 +900,10 @@ void vlc_tick_wait (vlc_tick_t deadline)
     }
 }
 
-#undef vlc_tick_sleep
-void vlc_tick_sleep (vlc_tick_t delay)
+#undef msleep
+void msleep (mtime_t delay)
 {
-    vlc_tick_wait (vlc_tick_now () + delay);
+    mwait (mdate () + delay);
 }
 
 /*** Timers ***/
@@ -1009,7 +973,7 @@ void vlc_timer_destroy (vlc_timer_t timer)
 }
 
 void vlc_timer_schedule (vlc_timer_t timer, bool absolute,
-                         vlc_tick_t value, vlc_tick_t interval)
+                         mtime_t value, mtime_t interval)
 {
     if (timer->htimer != NULLHANDLE)
     {
@@ -1018,16 +982,16 @@ void vlc_timer_schedule (vlc_timer_t timer, bool absolute,
         timer->interval = 0;
     }
 
-    if (value == VLC_TIMER_DISARM)
+    if (value == 0)
         return; /* Disarm */
 
     if (absolute)
-        value -= vlc_tick_now ();
+        value -= mdate ();
     value = (value + 999) / 1000;
     interval = (interval + 999) / 1000;
 
-    timer->interval = MS_FROM_VLC_TICK(interval);
-    if (DosAsyncTimer (MS_FROM_VLC_TICK(value), (HSEM)timer->hev, &timer->htimer))
+    timer->interval = interval;
+    if (DosAsyncTimer (value, (HSEM)timer->hev, &timer->htimer))
         abort ();
 }
 

@@ -35,8 +35,7 @@
 #include <vlc_common.h>
 #include "conn.h"
 
-static char dummy;
-static char *const CTX = &dummy;
+#define CTX ((void *)(uintptr_t)0x44556677)
 
 static unsigned settings;
 
@@ -106,12 +105,13 @@ static int vlc_h2_ping(void *ctx, uint_fast64_t opaque)
     return 0;
 }
 
+static uint_fast32_t local_error;
 static uint_fast32_t remote_error;
 
 static void vlc_h2_error(void *ctx, uint_fast32_t code)
 {
     assert(ctx == CTX);
-    (void) code;
+    local_error = code;
 }
 
 static int vlc_h2_reset(void *ctx, uint_fast32_t last_seq, uint_fast32_t code)
@@ -332,7 +332,7 @@ static unsigned test_seq(void *ctx, ...)
 
     settings = settings_acked = 0;
     pings = 0;
-    remote_error = -1;
+    local_error = remote_error = -1;
     stream_header_tables = stream_blocks = stream_ends = 0;
 
     p = vlc_h2_parse_init(ctx, &vlc_h2_frame_test_callbacks);

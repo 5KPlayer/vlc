@@ -23,7 +23,6 @@
 #include <vlc_common.h>
 #include <vlc_demux.h>
 
-#include "timestamps.h"
 #include "ts_pid.h"
 #include "ts.h"
 

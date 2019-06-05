@@ -3,13 +3,7 @@ PROJECTM_VERSION := 2.0.1
 PROJECTM_URL := $(SF)/projectm/$(PROJECTM_VERSION)/projectM-$(PROJECTM_VERSION)-Source.tar.gz
 
 ifdef HAVE_WIN32
-ifneq ($(ARCH),arm)
-ifneq ($(ARCH),aarch64)
-ifndef HAVE_WINSTORE
 PKGS += projectM
-endif
-endif
-endif
 endif
 ifeq ($(call need_pkg,"libprojectM"),)
 PKGS_FOUND += projectM
@@ -29,7 +23,6 @@ ifdef HAVE_WIN32
 	$(APPLY) $(SRC)/projectM/win32.patch
 endif
 	$(APPLY) $(SRC)/projectM/gcc6.patch
-	$(APPLY) $(SRC)/projectM/clang6.patch
 	$(MOVE)
 
 DEPS_projectM = glew $(DEPS_glew)
@@ -42,6 +35,7 @@ DEPS_projectM = glew $(DEPS_glew)
 		-DUSE_FTGL:BOOL=OFF \
 		-DINCLUDE-PROJECTM-PULSEAUDIO:BOOL=OFF \
 		-DINCLUDE-PROJECTM-QT:BOOL=OFF \
+		-DCMAKE_CXX_STANDARD=98 \
 		-DBUILD_PROJECTM_STATIC:BOOL=ON .
 	cd $< && $(MAKE) install
 	-cd $<; cp Renderer/libRenderer.a MilkdropPresetFactory/libMilkdropPresetFactory.a $(PREFIX)/lib

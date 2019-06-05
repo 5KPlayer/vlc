@@ -2,6 +2,7 @@
  * input_slider.cpp : VolumeSlider and SeekSlider
  ****************************************************************************
  * Copyright (C) 2006-2011 the VideoLAN team
+ * $Id: 54b476d7b4a3abc9bae6c3f67bb05a4d089e16a0 $
  *
  * Authors: Clément Stenac <zorglub@videolan.org>
  *          Jean-Baptiste Kempf <jb@videolan.org>
@@ -30,9 +31,9 @@
 
 #include "util/input_slider.hpp"
 #include "util/timetooltip.hpp"
-#include "components/player_controller.hpp"
+#include "adapters/seekpoints.hpp"
+#include "input_manager.hpp"
 #include "imagehelper.hpp"
-#include "input_models.hpp"
 
 #include <QPaintEvent>
 #include <QPainter>
@@ -52,8 +53,6 @@
 #include <QScreen>
 #include <QSequentialAnimationGroup>
 
-#include <vlc_aout.h>
-
 namespace {
     int const MIN_SLIDER_VALUE = 0;
     int const MAX_SLIDER_VALUE = 10000;
@@ -72,7 +71,7 @@ SeekSlider::SeekSlider( intf_thread_t *p_intf, Qt::Orientation q, QWidget *_pare
     f_buffering = 0.0;
     mHandleOpacity = 1.0;
     mLoading = 0.0;
-    chapters = THEMIM->getChapters();
+    chapters = NULL;
     mHandleLength = -1;
     b_seekable = true;
     alternativeStyle = NULL;
@@ -164,7 +163,7 @@ SeekSlider::SeekSlider( intf_thread_t *p_intf, Qt::Orientation q, QWidget *_pare
     startAnimLoadingTimer->setSingleShot( true );
     startAnimLoadingTimer->setInterval( 500 );
 
-    connect( THEMIM, &PlayerController::inputChanged, this , &SeekSlider::inputUpdated );
+    CONNECT( MainInputManager::getInstance(), inputChanged( bool ), this , inputUpdated( bool ) );
     CONNECT( this, sliderMoved( int ), this, startSeekTimer() );
     CONNECT( seekLimitTimer, timeout(), this, updatePos() );
     CONNECT( hideHandleTimer, timeout(), this, hideHandle() );
@@ -174,9 +173,22 @@ SeekSlider::SeekSlider( intf_thread_t *p_intf, Qt::Orientation q, QWidget *_pare
 
 SeekSlider::~SeekSlider()
 {
+    delete chapters;
     if ( alternativeStyle )
         delete alternativeStyle;
     delete mTimeTooltip;
+}
+
+/***
+ * \brief Sets the chapters seekpoints adapter
+ *
+ * \params SeekPoints initilized with current intf thread
+***/
+void SeekSlider::setChapters( SeekPoints *chapters_ )
+{
+    delete chapters;
+    chapters = chapters_;
+    chapters->setParent( this );
 }
 
 /***
@@ -186,7 +198,7 @@ SeekSlider::~SeekSlider()
  * \param time Elapsed time. Unused
  * \param legnth Duration time.
  ***/
-void SeekSlider::setPosition( float pos, vlc_tick_t time, int length )
+void SeekSlider::setPosition( float pos, int64_t time, int length )
 {
     VLC_UNUSED(time);
     if( pos == -1.0  || ! b_seekable )
@@ -292,7 +304,7 @@ void SeekSlider::mousePressEvent( QMouseEvent* event )
     isJumping = false;
     /* handle chapter clicks */
     int i_width = size().width();
-    if ( chapters->rowCount() != 0 && inputLength && i_width)
+    if ( chapters && inputLength && i_width)
     {
         if ( orientation() == Qt::Horizontal ) /* TODO: vertical */
         {
@@ -300,14 +312,15 @@ void SeekSlider::mousePressEvent( QMouseEvent* event )
             if ( event->y() < CHAPTER_SPOT_SIZE ||
                  event->y() > ( size().height() - CHAPTER_SPOT_SIZE ) )
             {
+                QList<SeekPoint> points = chapters->getPoints();
                 int i_selected = -1;
-                vlc_tick_t first_chapter = chapters->data(chapters->index(0), ChapterListModel::TimeRole).value<vlc_tick_t>();
-                bool b_startsnonzero = first_chapter > 0; /* as we always starts at 1 */
+                bool b_startsnonzero = false; /* as we always starts at 1 */
+                if ( points.count() > 0 ) /* do we need an extra offset ? */
+                    b_startsnonzero = ( points.at(0).time > 0 );
                 int i_min_diff = i_width + 1;
-                for( int i = 0 ; i < chapters->rowCount() ; i++ )
+                for( int i = 0 ; i < points.count() ; i++ )
                 {
-                    vlc_tick_t chaptertime = chapters->data(chapters->index(i), ChapterListModel::TimeRole).value<vlc_tick_t>();
-                    int x = chaptertime / (double)CLOCK_FREQ / inputLength * i_width;
+                    int x = points.at(i).time / 1000000.0 / inputLength * i_width;
                     int diff_x = abs( x - event->x() );
                     if ( diff_x < i_min_diff )
                     {
@@ -317,7 +330,7 @@ void SeekSlider::mousePressEvent( QMouseEvent* event )
                 }
                 if ( i_selected && i_min_diff < 4 ) // max 4px around mark
                 {
-                    chapters->setData(chapters->index(i_selected) , true, ChapterListModel::TimeRole);
+                    chapters->jumpTo( i_selected );
                     event->accept();
                     isJumping = true;
                     return;
@@ -359,17 +372,17 @@ void SeekSlider::mouseMoveEvent( QMouseEvent *event )
 
         if ( orientation() == Qt::Horizontal ) /* TODO: vertical */
         {
+            QList<SeekPoint> points = chapters->getPoints();
             int i_selected = -1;
-            for( int i = 0 ; i < chapters->rowCount() ; i++ )
+            for( int i = 0 ; i < points.count() ; i++ )
             {
-                vlc_tick_t chaptertime = chapters->data(  chapters->index(i), ChapterListModel::TimeRole ).value<vlc_tick_t>();
-                int x = margin + chaptertime / (double)CLOCK_FREQ / inputLength * (size().width() - 2*margin);
+                int x = margin + points.at(i).time / 1000000.0 / inputLength * (size().width() - 2*margin);
                 if ( event->x() >= x )
                     i_selected = i;
             }
-            if ( i_selected >= 0 && i_selected < chapters->rowCount() )
+            if ( i_selected >= 0 && i_selected < points.size() )
             {
-                chapterLabel = chapters->data(chapters->index(i_selected), Qt::DisplayRole ).toString();
+                chapterLabel = points.at( i_selected ).name;
             }
         }
 
@@ -388,8 +401,8 @@ void SeekSlider::wheelEvent( QWheelEvent *event )
     /* Don't do anything if we are for somehow reason sliding */
     if( !isSliding && isEnabled() )
     {
-        int64_t i_size = var_InheritInteger( vlc_object_instance(p_intf), "short-jump-size" );
-        int i_mode = var_InheritInteger( vlc_object_instance(p_intf), "hotkeys-x-wheel-mode" );
+        mtime_t i_size = var_InheritInteger( p_intf->obj.libvlc, "short-jump-size" );
+        int i_mode = var_InheritInteger( p_intf->obj.libvlc, "hotkeys-x-wheel-mode" );
         if ( ( event->delta() < 0 && i_mode != 3 ) || ( event->delta() > 0 && i_mode == 3 ) )
             i_size = - i_size;
         float posOffset = static_cast<float>( i_size ) / static_cast<float>( inputLength );
@@ -450,8 +463,8 @@ void SeekSlider::paintEvent( QPaintEvent *ev )
         option.sliderValue = value();
         option.maximum = maximum();
         option.minimum = minimum();
-        for (int i = 0; i < chapters->rowCount(); i++)
-            option.points << chapters->data(chapters->index(i), ChapterListModel::TimeRole).value<vlc_tick_t>();
+        if ( chapters ) foreach( const SeekPoint &point, chapters->getPoints() )
+            option.points << point.time;
         QPainter painter( this );
         style()->drawComplexControl( QStyle::CC_Slider, &option, &painter, this );
     }

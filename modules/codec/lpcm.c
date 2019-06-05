@@ -2,6 +2,7 @@
  * lpcm.c: lpcm decoder/packetizer module
  *****************************************************************************
  * Copyright (C) 1999-2008 VLC authors and VideoLAN
+ * $Id: 69e27270ac8008889ae269667b457b37467ace57 $
  *
  * Authors: Samuel Hocevar <sam@zoy.org>
  *          Henri Fallon <henri@videolan.org>
@@ -79,7 +80,7 @@ vlc_module_end ()
 /*****************************************************************************
  * decoder_sys_t : lpcm decoder descriptor
  *****************************************************************************/
-typedef struct
+struct decoder_sys_t
 {
     /* Module mode */
     bool b_packetizer;
@@ -94,10 +95,10 @@ typedef struct
     int      i_type;
     uint8_t  i_chans_to_reorder;
     uint8_t  pi_chan_table[AOUT_CHAN_MAX];
-} decoder_sys_t;
+};
 
 #ifdef ENABLE_SOUT
-typedef struct
+struct encoder_sys_t
 {
     int     i_channels;
     int     i_rate;
@@ -106,7 +107,7 @@ typedef struct
     uint8_t *p_buffer;
     int     i_buffer_used;
     int     i_frame_num;
-} encoder_sys_t;
+};
 #endif
 
 /*
@@ -251,7 +252,7 @@ static int OpenCommon( decoder_t *p_dec, bool b_packetizer )
 
     /* Misc init */
     p_sys->b_packetizer = b_packetizer;
-    date_Set( &p_sys->end_date, VLC_TICK_INVALID );
+    date_Set( &p_sys->end_date, 0 );
     p_sys->i_type = i_type;
     p_sys->i_header_size = i_header_size;
     p_sys->i_chans_to_reorder = 0;
@@ -294,10 +295,8 @@ static int OpenCommon( decoder_t *p_dec, bool b_packetizer )
     }
 
     /* Set callback */
-    if( !b_packetizer )
-        p_dec->pf_decode    = DecodeFrame;
-    else
-        p_dec->pf_packetize = Packetize;
+    p_dec->pf_decode    = DecodeFrame;
+    p_dec->pf_packetize = Packetize;
     p_dec->pf_flush     = Flush;
 
     return VLC_SUCCESS;
@@ -318,7 +317,7 @@ static void Flush( decoder_t *p_dec )
 {
     decoder_sys_t *p_sys = p_dec->p_sys;
 
-    date_Set( &p_sys->end_date, VLC_TICK_INVALID );
+    date_Set( &p_sys->end_date, 0 );
 }
 
 /*****************************************************************************
@@ -350,13 +349,13 @@ static block_t *Packetize( decoder_t *p_dec, block_t **pp_block )
     }
 
     /* Date management */
-    if( p_block->i_pts != VLC_TICK_INVALID &&
+    if( p_block->i_pts > VLC_TS_INVALID &&
         p_block->i_pts != date_Get( &p_sys->end_date ) )
     {
         date_Set( &p_sys->end_date, p_block->i_pts );
     }
 
-    if( date_Get( &p_sys->end_date ) == VLC_TICK_INVALID )
+    if( !date_Get( &p_sys->end_date ) )
     {
         /* We've just started the stream, wait for the first PTS. */
         block_Release( p_block );
@@ -660,10 +659,10 @@ static block_t *EncodeFrames( encoder_t *p_enc, block_t *p_aout_buf )
         i_bytes_consumed += i_consume_bytes;
 
         /* We need to find i_length by means of next_pts due to possible roundoff errors. */
-        vlc_tick_t this_pts = p_aout_buf->i_pts +
-            vlc_tick_from_samples(i * p_sys->i_frame_samples + i_start_offset, p_sys->i_rate);
-        vlc_tick_t next_pts = p_aout_buf->i_pts +
-            vlc_tick_from_samples((i + 1) * p_sys->i_frame_samples + i_start_offset, p_sys->i_rate);
+        mtime_t this_pts = p_aout_buf->i_pts +
+            (i * p_sys->i_frame_samples + i_start_offset) * CLOCK_FREQ / p_sys->i_rate;
+        mtime_t next_pts = p_aout_buf->i_pts +
+            ((i + 1) * p_sys->i_frame_samples + i_start_offset) * CLOCK_FREQ / p_sys->i_rate;
 
         p_block->i_pts = p_block->i_dts = this_pts;
         p_block->i_length = next_pts - this_pts;
@@ -1206,7 +1205,7 @@ static void AobExtract( block_t *p_aout_buffer,
                                  | (p_block->p_buffer[2*i_src+1] << 16)
                                  | (p_block->p_buffer[4*g->i_channels+i_src] <<  8);
 #ifdef WORDS_BIGENDIAN
-                        *p_out32 = vlc_bswap32(*p_out32);
+                        *p_out32 = bswap32(*p_out32);
 #endif
                         i_aout_written += 4;
                     }
@@ -1217,7 +1216,7 @@ static void AobExtract( block_t *p_aout_buffer,
                                  | (p_block->p_buffer[2*i_src+1] << 16)
                                  | (((p_block->p_buffer[4*g->i_channels+i_src] << ((!n)?0:4) ) & 0xf0) <<  8);
 #ifdef WORDS_BIGENDIAN
-                        *p_out32 = vlc_bswap32(*p_out32);
+                        *p_out32 = bswap32(*p_out32);
 #endif
                         i_aout_written += 4;
                     }
@@ -1240,7 +1239,7 @@ static void AobExtract( block_t *p_aout_buffer,
                             *p_out32 = (p_block->p_buffer[2*i_src+0] << 24)
                                      | (p_block->p_buffer[2*i_src+1] << 16);
 #ifdef WORDS_BIGENDIAN
-                            *p_out32 = vlc_bswap32(*p_out32);
+                            *p_out32 = bswap32(*p_out32);
 #endif
                             i_aout_written += 4;
                         }

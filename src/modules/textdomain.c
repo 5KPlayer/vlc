@@ -34,19 +34,30 @@ int vlc_bindtextdomain (const char *domain)
 {
 #if defined (ENABLE_NLS)
     /* Specify where to find the locales for current domain */
-    char *upath = config_GetSysPath(VLC_LOCALE_DIR, NULL);
-    if (unlikely(upath == NULL))
+    char *datadir = config_GetDataDir();
+    if (unlikely(datadir == NULL))
         return -1;
 
-    char *lpath = ToLocale(upath);
+# if !defined (__APPLE__) && !defined (_WIN32) && !defined(__OS2__)
+    const char *fmt = "%s/../locale";
+# else
+    const char *fmt = "%s"DIR_SEP"locale";
+# endif
+    char *upath;
+    int ret = asprintf(&upath, fmt, datadir);
+    free (datadir);
+    if (unlikely(ret == -1))
+        return -1;
+
+    char *lpath = ToLocaleDup (upath);
     if (lpath == NULL || bindtextdomain (domain, lpath) == NULL)
     {
-        LocaleFree(lpath);
+        free (lpath);
         fprintf (stderr, "%s: text domain not found in %s\n", domain, upath);
         free (upath);
         return -1;
     }
-    LocaleFree(lpath);
+    free (lpath);
     free (upath);
 
     /* LibVLC wants all messages in UTF-8.
@@ -76,21 +87,20 @@ int vlc_bindtextdomain (const char *domain)
 /**
  * In-tree plugins share their gettext domain with LibVLC.
  */
-const char *vlc_gettext(const char *msgid)
+char *vlc_gettext (const char *msgid)
 {
 #ifdef ENABLE_NLS
     if (likely(*msgid))
         return dgettext (PACKAGE_NAME, msgid);
 #endif
-    return msgid;
+    return (char *)msgid;
 }
 
-const char *vlc_ngettext(const char *msgid, const char *plural,
-                         unsigned long n)
+char *vlc_ngettext (const char *msgid, const char *plural, unsigned long n)
 {
 #ifdef ENABLE_NLS
     if (likely(*msgid))
         return dngettext (PACKAGE_NAME, msgid, plural, n);
 #endif
-    return ((n == 1) ? msgid : plural);
+    return (char *)((n == 1) ? msgid : plural);
 }

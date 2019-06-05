@@ -2,6 +2,7 @@
  * omxil.h: helper functions
  *****************************************************************************
  * Copyright (C) 2010 VLC authors and VideoLAN
+ * $Id: 66b75a41d3f2f67d4c738822c657b1b2bf7c28d2 $
  *
  * Authors: Gildas Bazin <gbazin@videolan.org>
  *
@@ -35,6 +36,10 @@
 #include "omxil_utils.h"
 #include "omxil_core.h"
 
+#if defined(USE_IOMX)
+#include "../../video_output/android/utils.h"
+#endif
+
 enum
 {
     BUF_STATE_NOT_OWNED = 0,
@@ -55,6 +60,27 @@ typedef struct OmxFifo
     int offset;
 
 } OmxFifo;
+
+typedef struct HwBuffer
+{
+    vlc_thread_t    dequeue_thread;
+    bool            b_run;
+    vlc_mutex_t     lock;
+    vlc_cond_t      wait;
+    picture_sys_t** inflight_picture; /**< stores the inflight picture for each output buffer or NULL */
+
+    unsigned int    i_buffers;
+    void            **pp_handles;
+    int             *i_states;
+    unsigned int    i_max_owned;
+    unsigned int    i_owned;
+
+#if defined(USE_IOMX)
+    native_window_priv_api_t anwpriv;
+    native_window_priv *window_priv;
+#endif
+
+} HwBuffer;
 
 typedef struct OmxPort
 {
@@ -79,9 +105,12 @@ typedef struct OmxPort
     OMX_BOOL b_update_def;
     OMX_BOOL b_direct;
     OMX_BOOL b_flushed;
+
+    HwBuffer *p_hwbuf;
+
 } OmxPort;
 
-typedef struct
+struct decoder_sys_t
 {
     OMX_HANDLETYPE omx_handle;
 
@@ -108,4 +137,4 @@ typedef struct
     uint8_t i_nal_size_length; /* Length of the NAL size field for H264 */
     int b_use_pts;
 
-} decoder_sys_t;
+};

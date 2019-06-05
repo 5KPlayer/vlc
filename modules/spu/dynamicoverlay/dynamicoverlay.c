@@ -2,6 +2,7 @@
  * dynamicoverlay.c : dynamic overlay plugin for vlc
  *****************************************************************************
  * Copyright (C) 2007 VLC authors and VideoLAN
+ * $Id: 817ff80d5f577f086c57fd5de7da545cc49caf31 $
  *
  * Author: Søren Bøg <avacore@videolan.org>
  *
@@ -46,7 +47,7 @@
  *****************************************************************************/
 static int Create( vlc_object_t * );
 static void Destroy( vlc_object_t * );
-static subpicture_t *Filter( filter_t *, vlc_tick_t );
+static subpicture_t *Filter( filter_t *, mtime_t );
 
 static int AdjustCallback( vlc_object_t *p_this, char const *psz_var,
                            vlc_value_t oldval, vlc_value_t newval,
@@ -69,9 +70,11 @@ vlc_module_begin ()
     set_subcategory( SUBCAT_VIDEO_VFILTER )
     set_capability( "sub source", 0 )
 
-    add_loadfile("overlay-input", NULL, INPUT_TEXT, INPUT_LONGTEXT)
+    add_loadfile( "overlay-input", NULL, INPUT_TEXT, INPUT_LONGTEXT,
+                  false )
     /* Note: add_loadfile as O_WRONLY w/o O_CREAT, i.e. FIFO must exist */
-    add_loadfile("overlay-output", NULL, OUTPUT_TEXT, OUTPUT_LONGTEXT)
+    add_loadfile( "overlay-output", NULL, OUTPUT_TEXT, OUTPUT_LONGTEXT,
+                  false )
 
     add_shortcut( "overlay" )
     set_callbacks( Create, Destroy )
@@ -161,7 +164,7 @@ static void Destroy( vlc_object_t *p_this )
  * waits until it is displayed and switch the two rendering buffers, preparing
  * next frame.
  *****************************************************************************/
-static subpicture_t *Filter( filter_t *p_filter, vlc_tick_t date )
+static subpicture_t *Filter( filter_t *p_filter, mtime_t date )
 {
     filter_sys_t *p_sys = p_filter->p_sys;
 

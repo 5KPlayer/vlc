@@ -2,6 +2,7 @@
  * demux.c: demuxer using libavformat
  *****************************************************************************
  * Copyright (C) 2004-2009 VLC authors and VideoLAN
+ * $Id: 867b4fe0374b9efd7488d031f826faa7e6dbd2a9 $
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *          Gildas Bazin <gbazin@videolan.org>
@@ -54,13 +55,13 @@
 struct avformat_track_s
 {
     es_out_id_t *p_es;
-    vlc_tick_t i_pcr;
+    mtime_t i_pcr;
 };
 
 /*****************************************************************************
  * demux_sys_t: demux descriptor
  *****************************************************************************/
-typedef struct
+struct demux_sys_t
 {
     AVInputFormat  *fmt;
     AVFormatContext *ic;
@@ -68,7 +69,7 @@ typedef struct
     struct avformat_track_s *tracks;
     unsigned i_tracks;
 
-    vlc_tick_t      i_pcr;
+    int64_t         i_pcr;
 
     unsigned    i_ssa_order;
 
@@ -77,9 +78,7 @@ typedef struct
 
     /* Only one title with seekpoints possible atm. */
     input_title_t *p_title;
-    int i_seekpoint;
-    unsigned i_update;
-} demux_sys_t;
+};
 
 #define AVFORMAT_IOBUFFER_SIZE 32768  /* FIXME */
 
@@ -93,14 +92,14 @@ static int IORead( void *opaque, uint8_t *buf, int buf_size );
 static int64_t IOSeek( void *opaque, int64_t offset, int whence );
 
 static block_t *BuildSsaFrame( const AVPacket *p_pkt, unsigned i_order );
-static void UpdateSeekPoint( demux_t *p_demux, vlc_tick_t i_time );
+static void UpdateSeekPoint( demux_t *p_demux, int64_t i_time );
 static void ResetTime( demux_t *p_demux, int64_t i_time );
 
 static vlc_fourcc_t CodecTagToFourcc( uint32_t codec_tag )
 {
     // convert from little-endian avcodec codec_tag to VLC native-endian fourcc
 #ifdef WORDS_BIGENDIAN
-    return vlc_bswap32(codec_tag);
+    return bswap32(codec_tag);
 #else
     return codec_tag;
 #endif
@@ -116,41 +115,8 @@ static void get_rotation(es_format_t *fmt, AVStream *s)
     AVDictionaryEntry *rotation = av_dict_get(s->metadata, kRotateKey, NULL, 0);
     long angle = 0;
 
-    int32_t *matrix = (int32_t *)av_stream_get_side_data(s, AV_PKT_DATA_DISPLAYMATRIX, NULL);
-    if( matrix ) {
-        int64_t det = (int64_t)matrix[0] * matrix[4] - (int64_t)matrix[1] * matrix[3];
-        if (det < 0) {
-            /* Flip the matrix to decouple flip and rotation operations.
-             * Always assume an horizontal flip for simplicity,
-             * it can be changed later if rotation is 180º. */
-            av_display_matrix_flip(matrix, 1, 0);
-        }
-        angle = lround(av_display_rotation_get(matrix));
-
-        if (angle > 45 && angle < 135)
-            fmt->video.orientation = ORIENT_ROTATED_270;
-
-        else if (angle > 135 || angle < -135) {
-            if (det < 0)
-                fmt->video.orientation = ORIENT_VFLIPPED;
-            else
-                fmt->video.orientation = ORIENT_ROTATED_180;
-        }
-        else if (angle < -45 && angle > -135)
-            fmt->video.orientation = ORIENT_ROTATED_90;
-
-        else
-            fmt->video.orientation = ORIENT_NORMAL;
-
-        /* Flip is already applied to the 180º case. */
-        if (det < 0 && !(angle > 135 || angle < -135)) {
-            video_transform_t transform = (video_transform_t)fmt->video.orientation;
-            /* Flip first then rotate */
-            fmt->video.orientation = ORIENT_HFLIPPED;
-            video_format_TransformBy(&fmt->video, transform);
-        }
-
-    } else if( rotation ) {
+    if( rotation )
+    {
         angle = strtol(rotation->value, NULL, 10);
 
         if (angle > 45 && angle < 135)
@@ -165,14 +131,35 @@ static void get_rotation(es_format_t *fmt, AVStream *s)
         else
             fmt->video.orientation = ORIENT_NORMAL;
     }
+    int32_t *matrix = (int32_t *)av_stream_get_side_data(s, AV_PKT_DATA_DISPLAYMATRIX, NULL);
+    if( matrix ) {
+        angle = lround(av_display_rotation_get(matrix));
+
+        if (angle > 45 && angle < 135)
+            fmt->video.orientation = ORIENT_ROTATED_270;
+
+        else if (angle > 135 || angle < -135)
+            fmt->video.orientation = ORIENT_ROTATED_180;
+
+        else if (angle < -45 && angle > -135)
+            fmt->video.orientation = ORIENT_ROTATED_90;
+
+        else
+            fmt->video.orientation = ORIENT_NORMAL;
+    }
 }
 
-static int avformat_ProbeDemux( vlc_object_t *p_this,
-                                AVInputFormat **pp_fmt, const char *psz_url )
+int avformat_OpenDemux( vlc_object_t *p_this )
 {
     demux_t       *p_demux = (demux_t*)p_this;
-    AVProbeData   pd = { 0 };
+    demux_sys_t   *p_sys;
+    AVProbeData   pd = { };
+    AVInputFormat *fmt = NULL;
+    int64_t       i_start_time = -1;
+    bool          b_can_seek;
+    char         *psz_url;
     const uint8_t *peek;
+    int           error;
 
     /* Init Probe data */
     pd.buf_size = vlc_stream_Peek( p_demux->s, &peek, 2048 + 213 );
@@ -189,10 +176,21 @@ static int avformat_ProbeDemux( vlc_object_t *p_this,
     memcpy( pd.buf, peek, pd.buf_size );
     memset( pd.buf + pd.buf_size, 0, AVPROBE_PADDING_SIZE );
 
+    if( p_demux->psz_file )
+        psz_url = strdup( p_demux->psz_file );
+    else
+    {
+        if( asprintf( &psz_url, "%s://%s", p_demux->psz_access,
+                      p_demux->psz_location ) == -1)
+            psz_url = NULL;
+    }
+
     if( psz_url != NULL )
         msg_Dbg( p_demux, "trying url: %s", psz_url );
 
     pd.filename = psz_url;
+
+    vlc_stream_Control( p_demux->s, STREAM_CAN_SEEK, &b_can_seek );
 
     vlc_init_avformat(p_this);
 
@@ -200,19 +198,20 @@ static int avformat_ProbeDemux( vlc_object_t *p_this,
     char *psz_format = var_InheritString( p_this, "avformat-format" );
     if( psz_format )
     {
-        if( (*pp_fmt = av_find_input_format(psz_format)) )
-            msg_Dbg( p_demux, "forcing format: %s", (*pp_fmt)->name );
+        if( (fmt = av_find_input_format(psz_format)) )
+            msg_Dbg( p_demux, "forcing format: %s", fmt->name );
         free( psz_format );
     }
 
-    if( *pp_fmt == NULL )
-        *pp_fmt = av_probe_input_format( &pd, 1 );
+    if( fmt == NULL )
+        fmt = av_probe_input_format( &pd, 1 );
 
     free( pd.buf );
 
-    if( *pp_fmt == NULL )
+    if( fmt == NULL )
     {
         msg_Dbg( p_demux, "couldn't guess format" );
+        free( psz_url );
         return VLC_EGENERIC;
     }
 
@@ -232,76 +231,64 @@ static int avformat_ProbeDemux( vlc_object_t *p_this,
 
         for( int i = 0; *ppsz_blacklist[i]; i++ )
         {
-            if( !strcmp( (*pp_fmt)->name, ppsz_blacklist[i] ) )
+            if( !strcmp( fmt->name, ppsz_blacklist[i] ) )
+            {
+                free( psz_url );
                 return VLC_EGENERIC;
+            }
         }
     }
 
     /* Don't trigger false alarms on bin files */
-    if( !p_demux->obj.force && !strcmp( (*pp_fmt)->name, "psxstr" ) )
+    if( !p_demux->obj.force && !strcmp( fmt->name, "psxstr" ) )
     {
         int i_len;
 
-        if( !p_demux->psz_filepath )
-            return VLC_EGENERIC;
-
-        i_len = strlen( p_demux->psz_filepath );
-        if( i_len < 4 )
-            return VLC_EGENERIC;
-
-        if( strcasecmp( &p_demux->psz_filepath[i_len - 4], ".str" ) &&
-            strcasecmp( &p_demux->psz_filepath[i_len - 4], ".xai" ) &&
-            strcasecmp( &p_demux->psz_filepath[i_len - 3], ".xa" ) )
+        if( !p_demux->psz_file )
         {
+            free( psz_url );
+            return VLC_EGENERIC;
+        }
+
+        i_len = strlen( p_demux->psz_file );
+        if( i_len < 4 )
+        {
+            free( psz_url );
+            return VLC_EGENERIC;
+        }
+
+        if( strcasecmp( &p_demux->psz_file[i_len - 4], ".str" ) &&
+            strcasecmp( &p_demux->psz_file[i_len - 4], ".xai" ) &&
+            strcasecmp( &p_demux->psz_file[i_len - 3], ".xa" ) )
+        {
+            free( psz_url );
             return VLC_EGENERIC;
         }
     }
 
-    msg_Dbg( p_demux, "detected format: %s", (*pp_fmt)->name );
-
-    return VLC_SUCCESS;
-}
-
-int avformat_OpenDemux( vlc_object_t *p_this )
-{
-    demux_t       *p_demux = (demux_t*)p_this;
-    demux_sys_t   *p_sys;
-    AVInputFormat *fmt = NULL;
-    vlc_tick_t    i_start_time = VLC_TICK_INVALID;
-    bool          b_can_seek;
-    const char    *psz_url;
-    int           error;
-
-    if( p_demux->psz_filepath )
-        psz_url = p_demux->psz_filepath;
-    else
-        psz_url = p_demux->psz_url;
-
-    if( avformat_ProbeDemux( p_this, &fmt, psz_url ) != VLC_SUCCESS )
-        return VLC_EGENERIC;
-
-    vlc_stream_Control( p_demux->s, STREAM_CAN_SEEK, &b_can_seek );
+    msg_Dbg( p_demux, "detected format: %s", fmt->name );
 
     /* Fill p_demux fields */
     p_demux->pf_demux = Demux;
     p_demux->pf_control = Control;
     p_demux->p_sys = p_sys = malloc( sizeof( demux_sys_t ) );
     if( !p_sys )
+    {
+        free( psz_url );
         return VLC_ENOMEM;
-
+    }
     p_sys->ic = 0;
     p_sys->fmt = fmt;
     p_sys->tracks = NULL;
     p_sys->i_ssa_order = 0;
     TAB_INIT( p_sys->i_attachments, p_sys->attachments);
     p_sys->p_title = NULL;
-    p_sys->i_seekpoint = 0;
-    p_sys->i_update = 0;
 
     /* Create I/O wrapper */
     unsigned char * p_io_buffer = av_malloc( AVFORMAT_IOBUFFER_SIZE );
     if( !p_io_buffer )
     {
+        free( psz_url );
         avformat_CloseDemux( p_this );
         return VLC_ENOMEM;
     }
@@ -310,6 +297,7 @@ int avformat_OpenDemux( vlc_object_t *p_this )
     if( !p_sys->ic )
     {
         av_free( p_io_buffer );
+        free( psz_url );
         avformat_CloseDemux( p_this );
         return VLC_ENOMEM;
     }
@@ -319,6 +307,7 @@ int avformat_OpenDemux( vlc_object_t *p_this )
     if( !pb )
     {
         av_free( p_io_buffer );
+        free( psz_url );
         avformat_CloseDemux( p_this );
         return VLC_ENOMEM;
     }
@@ -333,9 +322,11 @@ int avformat_OpenDemux( vlc_object_t *p_this )
         av_free( pb->buffer );
         av_free( pb );
         p_sys->ic = NULL;
+        free( psz_url );
         avformat_CloseDemux( p_this );
         return VLC_EGENERIC;
     }
+    free( psz_url );
 
     char *psz_opts = var_InheritString( p_demux, "avformat-options" );
     unsigned nb_streams = p_sys->ic->nb_streams;
@@ -472,18 +463,11 @@ int avformat_OpenDemux( vlc_object_t *p_this )
                 es_fmt.video.i_frame_rate_base = rate.den;
             }
 
-            AVRational ar;
-#if (LIBAVUTIL_VERSION_MICRO < 100) /* libav */
-            ar.num = s->sample_aspect_ratio.num;
-            ar.den = s->sample_aspect_ratio.den;
-#else
-            ar = av_guess_sample_aspect_ratio( p_sys->ic, s, NULL );
-#endif
-            if( ar.num && ar.den )
-            {
-                es_fmt.video.i_sar_den = ar.den;
-                es_fmt.video.i_sar_num = ar.num;
-            }
+            es_fmt.video.i_sar_num = s->sample_aspect_ratio.num;
+            if (s->sample_aspect_ratio.num > 0)
+                es_fmt.video.i_sar_den = s->sample_aspect_ratio.den;
+            else
+                es_fmt.video.i_sar_den = 0;
             break;
 
         case AVMEDIA_TYPE_SUBTITLE:
@@ -536,14 +520,7 @@ int avformat_OpenDemux( vlc_object_t *p_this )
                 es_fmt.subs.dvb.i_id = GetWBE( cp->extradata ) |
                                       (GetWBE( cp->extradata + 2 ) << 16);
             }
-            else if( cp->codec_id == AV_CODEC_ID_MOV_TEXT )
-            {
-                if( cp->extradata_size && (es_fmt.p_extra = malloc(cp->extradata_size)) )
-                {
-                    memcpy( es_fmt.p_extra, cp->extradata, cp->extradata_size );
-                    es_fmt.i_extra = cp->extradata_size;
-                }
-            }
+
             psz_type = "subtitle";
             break;
 
@@ -670,7 +647,7 @@ int avformat_OpenDemux( vlc_object_t *p_this )
                     es_fmt.p_extra = NULL;
                 }
             }
-            else if( cp->extradata_size > 0 && !es_fmt.i_extra )
+            else if( cp->extradata_size > 0 )
             {
                 es_fmt.p_extra = malloc( i_extra );
                 if( es_fmt.p_extra )
@@ -691,7 +668,7 @@ int avformat_OpenDemux( vlc_object_t *p_this )
     }
 
     if( p_sys->ic->start_time != (int64_t)AV_NOPTS_VALUE )
-        i_start_time = FROM_AV_TS(p_sys->ic->start_time);
+        i_start_time = p_sys->ic->start_time * 1000000 / AV_TIME_BASE;
 
     msg_Dbg( p_demux, "AVFormat(%s %s) supported stream", AVPROVIDER(LIBAVFORMAT), LIBAVFORMAT_IDENT );
     msg_Dbg( p_demux, "    - format = %s (%s)",
@@ -699,12 +676,12 @@ int avformat_OpenDemux( vlc_object_t *p_this )
     msg_Dbg( p_demux, "    - start time = %"PRId64, i_start_time );
     msg_Dbg( p_demux, "    - duration = %"PRId64,
              ( p_sys->ic->duration != (int64_t)AV_NOPTS_VALUE ) ?
-             FROM_AV_TS(p_sys->ic->duration) : -1 );
+             p_sys->ic->duration * 1000000 / AV_TIME_BASE : -1 );
 
     if( p_sys->ic->nb_chapters > 0 )
     {
         p_sys->p_title = vlc_input_title_New();
-        p_sys->p_title->i_length = FROM_AV_TS(p_sys->ic->duration);
+        p_sys->p_title->i_length = p_sys->ic->duration * 1000000 / AV_TIME_BASE;
     }
 
     for( unsigned i = 0; i < p_sys->ic->nb_chapters; i++ )
@@ -718,10 +695,10 @@ int avformat_OpenDemux( vlc_object_t *p_this )
             EnsureUTF8( s->psz_name );
             msg_Dbg( p_demux, "    - chapter %d: %s", i, s->psz_name );
         }
-        s->i_time_offset = vlc_tick_from_samples( p_sys->ic->chapters[i]->start *
-            p_sys->ic->chapters[i]->time_base.num,
-            p_sys->ic->chapters[i]->time_base.den ) -
-            (i_start_time != VLC_TICK_INVALID ? i_start_time : 0 );
+        s->i_time_offset = p_sys->ic->chapters[i]->start * 1000000 *
+            p_sys->ic->chapters[i]->time_base.num /
+            p_sys->ic->chapters[i]->time_base.den -
+            (i_start_time != -1 ? i_start_time : 0 );
         TAB_APPEND( p_sys->p_title->i_seekpoint, p_sys->p_title->seekpoint, s );
     }
 
@@ -767,7 +744,7 @@ static int Demux( demux_t *p_demux )
     demux_sys_t *p_sys = p_demux->p_sys;
     AVPacket    pkt;
     block_t     *p_frame;
-    vlc_tick_t  i_start_time;
+    int64_t     i_start_time;
 
     /* Read a frame */
     int i_av_ret = av_read_frame( p_sys->ic, &pkt );
@@ -827,32 +804,40 @@ static int Demux( demux_t *p_demux )
         p_frame->i_flags |= BLOCK_FLAG_TYPE_I;
 
     /* Used to avoid timestamps overlow */
+    lldiv_t q;
     if( p_sys->ic->start_time != (int64_t)AV_NOPTS_VALUE )
     {
-        i_start_time = vlc_tick_from_frac(p_sys->ic->start_time, AV_TIME_BASE);
+        q = lldiv( p_sys->ic->start_time, AV_TIME_BASE);
+        i_start_time = q.quot * CLOCK_FREQ + q.rem * CLOCK_FREQ / AV_TIME_BASE;
     }
     else
         i_start_time = 0;
 
     if( pkt.dts == (int64_t)AV_NOPTS_VALUE )
-        p_frame->i_dts = VLC_TICK_INVALID;
+        p_frame->i_dts = VLC_TS_INVALID;
     else
     {
-        p_frame->i_dts = vlc_tick_from_frac( pkt.dts * p_stream->time_base.num, p_stream->time_base.den )
-                - i_start_time + VLC_TICK_0;
+        q = lldiv( pkt.dts, p_stream->time_base.den );
+        p_frame->i_dts = q.quot * CLOCK_FREQ *
+            p_stream->time_base.num + q.rem * CLOCK_FREQ *
+            p_stream->time_base.num /
+            p_stream->time_base.den - i_start_time + VLC_TS_0;
     }
 
     if( pkt.pts == (int64_t)AV_NOPTS_VALUE )
-        p_frame->i_pts = VLC_TICK_INVALID;
+        p_frame->i_pts = VLC_TS_INVALID;
     else
     {
-        p_frame->i_pts = vlc_tick_from_frac( pkt.pts * p_stream->time_base.num, p_stream->time_base.den )
-                - i_start_time + VLC_TICK_0;
+        q = lldiv( pkt.pts, p_stream->time_base.den );
+        p_frame->i_pts = q.quot * CLOCK_FREQ *
+            p_stream->time_base.num + q.rem * CLOCK_FREQ *
+            p_stream->time_base.num /
+            p_stream->time_base.den - i_start_time + VLC_TS_0;
     }
     if( pkt.duration > 0 && p_frame->i_length <= 0 )
-        p_frame->i_length = vlc_tick_from_samples(pkt.duration *
-            p_stream->time_base.num,
-            p_stream->time_base.den );
+        p_frame->i_length = pkt.duration * CLOCK_FREQ *
+            p_stream->time_base.num /
+            p_stream->time_base.den;
 
     /* Add here notoriously bugged file formats/samples */
     if( !strcmp( p_sys->fmt->name, "flv" ) )
@@ -860,14 +845,14 @@ static int Demux( demux_t *p_demux )
         /* FLV and video PTS */
         if( p_stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO &&
             pkt.dts != (int64_t)AV_NOPTS_VALUE && pkt.dts == pkt.pts )
-                p_frame->i_pts = VLC_TICK_INVALID;
+                p_frame->i_pts = VLC_TS_INVALID;
 
         /* Handle broken dts/pts increase with AAC. Duration is correct.
          * sky_the80s_aacplus.flv #8195 */
         if( p_stream->codecpar->codec_type == AVMEDIA_TYPE_AUDIO &&
             p_stream->codecpar->codec_id == AV_CODEC_ID_AAC )
         {
-            if( p_track->i_pcr != VLC_TICK_INVALID &&
+            if( p_track->i_pcr != VLC_TS_INVALID &&
                 p_track->i_pcr + p_frame->i_length > p_frame->i_dts )
             {
                 p_frame->i_dts = p_frame->i_pts = p_track->i_pcr + p_frame->i_length;
@@ -878,22 +863,22 @@ static int Demux( demux_t *p_demux )
     msg_Dbg( p_demux, "tk[%d] dts=%"PRId64" pts=%"PRId64,
              pkt.stream_index, p_frame->i_dts, p_frame->i_pts );
 #endif
-    if( p_frame->i_dts != VLC_TICK_INVALID && p_track->p_es != NULL )
+    if( p_frame->i_dts > VLC_TS_INVALID && p_track->p_es != NULL )
         p_track->i_pcr = p_frame->i_dts;
 
-    vlc_tick_t i_ts_max = INT64_MIN;
+    int64_t i_ts_max = INT64_MIN;
     for( unsigned i = 0; i < p_sys->i_tracks; i++ )
     {
         if( p_sys->tracks[i].p_es != NULL )
             i_ts_max = __MAX( i_ts_max, p_sys->tracks[i].i_pcr );
     }
 
-    vlc_tick_t i_ts_min = INT64_MAX;
+    int64_t i_ts_min = INT64_MAX;
     for( unsigned i = 0; i < p_sys->i_tracks; i++ )
     {
         if( p_sys->tracks[i].p_es != NULL &&
-                p_sys->tracks[i].i_pcr != VLC_TICK_INVALID &&
-                p_sys->tracks[i].i_pcr + VLC_TICK_FROM_SEC(10)>= i_ts_max )
+                p_sys->tracks[i].i_pcr > VLC_TS_INVALID &&
+                p_sys->tracks[i].i_pcr + 10 * CLOCK_FREQ >= i_ts_max )
             i_ts_min = __MIN( i_ts_min, p_sys->tracks[i].i_pcr );
     }
     if( i_ts_min >= p_sys->i_pcr && likely(i_ts_min != INT64_MAX) )
@@ -912,7 +897,7 @@ static int Demux( demux_t *p_demux )
     return 1;
 }
 
-static void UpdateSeekPoint( demux_t *p_demux, vlc_tick_t i_time )
+static void UpdateSeekPoint( demux_t *p_demux, int64_t i_time )
 {
     demux_sys_t *p_sys = p_demux->p_sys;
     int i;
@@ -927,43 +912,30 @@ static void UpdateSeekPoint( demux_t *p_demux, vlc_tick_t i_time )
     }
     i--;
 
-    if( i != p_sys->i_seekpoint && i >= 0 )
+    if( i != p_demux->info.i_seekpoint && i >= 0 )
     {
-        p_sys->i_seekpoint = i;
-        p_sys->i_update |= INPUT_UPDATE_SEEKPOINT;
+        p_demux->info.i_seekpoint = i;
+        p_demux->info.i_update |= INPUT_UPDATE_SEEKPOINT;
     }
 }
 
 static void ResetTime( demux_t *p_demux, int64_t i_time )
 {
     demux_sys_t *p_sys = p_demux->p_sys;
-    vlc_tick_t t;
 
     if( p_sys->ic->start_time == (int64_t)AV_NOPTS_VALUE || i_time < 0 )
-    {
-        t = VLC_TICK_INVALID;
-    }
-    else
-    {
-#if CLOCK_FREQ == AV_TIME_BASE
-        t = FROM_AV_TS(i_time);
-#else
-        lldiv_t q = lldiv( i_time, AV_TIME_BASE );
-        t = vlc_tick_from_sec(q.quot) + FROM_AV_TS(q.rem);
-#endif
+        i_time = VLC_TS_INVALID;
+    else if( i_time == 0 )
+        i_time = 1;
 
-        if( t == VLC_TICK_INVALID )
-            t = VLC_TICK_0;
-    }
-
-    p_sys->i_pcr = t;
+    p_sys->i_pcr = i_time;
     for( unsigned i = 0; i < p_sys->i_tracks; i++ )
-        p_sys->tracks[i].i_pcr = VLC_TICK_INVALID;
+        p_sys->tracks[i].i_pcr = VLC_TS_INVALID;
 
-    if( t != VLC_TICK_INVALID )
+    if( i_time > VLC_TS_INVALID )
     {
-        es_out_Control( p_demux->out, ES_OUT_SET_NEXT_DISPLAY_TIME, t );
-        UpdateSeekPoint( p_demux, t );
+        es_out_Control( p_demux->out, ES_OUT_SET_NEXT_DISPLAY_TIME, i_time );
+        UpdateSeekPoint( p_demux, i_time );
     }
 }
 
@@ -994,10 +966,10 @@ static block_t *BuildSsaFrame( const AVPacket *p_pkt, unsigned i_order )
 
     block_t *p_frame = block_heap_Alloc( p, strlen(p) + 1 );
     if( p_frame )
-        p_frame->i_length = vlc_tick_from_sec((h1-h0) * 3600 +
-                                         (m1-m0) * 60 +
-                                         (s1-s0) * 1) +
-                             VLC_TICK_FROM_MS (c1-c0) / 100;
+        p_frame->i_length = CLOCK_FREQ * ((h1-h0) * 3600 +
+                                          (m1-m0) * 60 +
+                                          (s1-s0) * 1) +
+                            CLOCK_FREQ * (c1-c0) / 100;
     return p_frame;
 }
 
@@ -1007,9 +979,9 @@ static block_t *BuildSsaFrame( const AVPacket *p_pkt, unsigned i_order )
 static int Control( demux_t *p_demux, int i_query, va_list args )
 {
     demux_sys_t *p_sys = p_demux->p_sys;
-    const int64_t i_start_time = p_sys->ic->start_time != AV_NOPTS_VALUE ? p_sys->ic->start_time : 0;
+    const int64_t i_start_time = p_sys->ic->start_time != (int64_t)AV_NOPTS_VALUE ? p_sys->ic->start_time : 0;
     double f, *pf;
-    int64_t i64;
+    int64_t i64, *pi64;
 
     switch( i_query )
     {
@@ -1034,9 +1006,7 @@ static int Control( demux_t *p_demux, int i_query, va_list args )
             return VLC_SUCCESS;
 
         case DEMUX_SET_POSITION:
-        {
             f = va_arg( args, double );
-            bool precise = va_arg( args, int );
             i64 = p_sys->ic->duration * f + i_start_time;
 
             msg_Warn( p_demux, "DEMUX_SET_POSITION: %"PRId64, i64 );
@@ -1057,40 +1027,35 @@ static int Control( demux_t *p_demux, int i_query, va_list args )
             }
             else
             {
-                if( precise )
-                    ResetTime( p_demux, i64 - i_start_time );
-                else
-                    ResetTime( p_demux, -1 );
+                ResetTime( p_demux, i64 - i_start_time );
             }
             return VLC_SUCCESS;
-        }
 
         case DEMUX_GET_LENGTH:
+            pi64 = va_arg( args, int64_t * );
             if( p_sys->ic->duration != (int64_t)AV_NOPTS_VALUE )
-                *va_arg( args, vlc_tick_t * ) = FROM_AV_TS(p_sys->ic->duration);
+                *pi64 = p_sys->ic->duration * 1000000 / AV_TIME_BASE;
             else
-                *va_arg( args, vlc_tick_t * ) = 0;
+                *pi64 = 0;
             return VLC_SUCCESS;
 
         case DEMUX_GET_TIME:
-            *va_arg( args, vlc_tick_t * ) = p_sys->i_pcr;
+            pi64 = va_arg( args, int64_t * );
+            *pi64 = p_sys->i_pcr;
             return VLC_SUCCESS;
 
         case DEMUX_SET_TIME:
         {
-            i64 = TO_AV_TS(va_arg( args, vlc_tick_t ));
-            bool precise = va_arg( args, int );
+            i64 = va_arg( args, int64_t );
+            i64 = i64 *AV_TIME_BASE / 1000000 + i_start_time;
 
             msg_Warn( p_demux, "DEMUX_SET_TIME: %"PRId64, i64 );
 
-            if( av_seek_frame( p_sys->ic, -1, i64 + i_start_time, AVSEEK_FLAG_BACKWARD ) < 0 )
+            if( av_seek_frame( p_sys->ic, -1, i64, AVSEEK_FLAG_BACKWARD ) < 0 )
             {
                 return VLC_EGENERIC;
             }
-            if( precise )
-                ResetTime( p_demux, i64 - i_start_time );
-            else
-                ResetTime( p_demux, -1 );
+            ResetTime( p_demux, i64 - i_start_time );
             return VLC_SUCCESS;
         }
 
@@ -1195,8 +1160,8 @@ static int Control( demux_t *p_demux, int i_query, va_list args )
             if( !p_sys->p_title )
                 return VLC_EGENERIC;
 
-            i64 = TO_AV_TS(p_sys->p_title->seekpoint[i_seekpoint]->i_time_offset) +
-                  i_start_time;
+            i64 = p_sys->p_title->seekpoint[i_seekpoint]->i_time_offset *
+                  AV_TIME_BASE / 1000000 + i_start_time;
 
             msg_Warn( p_demux, "DEMUX_SET_SEEKPOINT: %"PRId64, i64 );
 
@@ -1207,28 +1172,8 @@ static int Control( demux_t *p_demux, int i_query, va_list args )
             ResetTime( p_demux, i64 - i_start_time );
             return VLC_SUCCESS;
         }
-        case DEMUX_TEST_AND_CLEAR_FLAGS:
-        {
-            unsigned *restrict flags = va_arg(args, unsigned *);
-            *flags &= p_sys->i_update;
-            p_sys->i_update &= ~*flags;
-            return VLC_SUCCESS;
-        }
-        case DEMUX_GET_TITLE:
-            if( p_sys->p_title == NULL )
-                return VLC_EGENERIC;
-            *va_arg( args, int * ) = 0;
-            return VLC_SUCCESS;
-        case DEMUX_GET_SEEKPOINT:
-            if( p_sys->p_title == NULL )
-                return VLC_EGENERIC;
-            *va_arg( args, int * ) = p_sys->i_seekpoint;
-            return VLC_SUCCESS;
-        case DEMUX_CAN_PAUSE:
-        case DEMUX_SET_PAUSE_STATE:
-        case DEMUX_CAN_CONTROL_PACE:
-        case DEMUX_GET_PTS_DELAY:
-            return demux_vaControlHelper( p_demux->s, 0, -1, 0, 1, i_query, args );
+
+
         default:
             return VLC_EGENERIC;
     }

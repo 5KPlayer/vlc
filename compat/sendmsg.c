@@ -78,12 +78,8 @@ ssize_t sendmsg(int fd, const struct msghdr *msg, int flags)
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
-#ifdef HAVE_SYS_SOCKET_H
 #include <sys/socket.h>
-#endif
-#ifdef HAVE_SYS_UIO_H
 #include <sys/uio.h>
-#endif
 
 ssize_t sendmsg(int fd, const struct msghdr *msg, int flags)
 {

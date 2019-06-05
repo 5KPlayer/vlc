@@ -2,6 +2,7 @@
  * mmstu.c: MMS access plug-in
  *****************************************************************************
  * Copyright (C) 2001, 2002 VLC authors and VideoLAN
+ * $Id: 16c99d160923805359819f0ed864553cdd37d273 $
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *
@@ -41,7 +42,6 @@
 #   include <poll.h>
 #endif
 
-#include <vlc_charset.h>
 #include <vlc_network.h>
 #include <vlc_url.h>
 #include <vlc_interrupt.h>
@@ -214,6 +214,7 @@ static int Control( stream_t *p_access, int i_query, va_list args )
     access_sys_t *p_sys = p_access->p_sys;
     bool   *pb_bool;
     bool    b_bool;
+    int64_t      *pi_64;
     int           i_int;
 
     switch( i_query )
@@ -250,13 +251,14 @@ static int Control( stream_t *p_access, int i_query, va_list args )
             break;
 
         case STREAM_GET_PTS_DELAY:
-            *va_arg( args, vlc_tick_t * ) =
-                VLC_TICK_FROM_MS(var_InheritInteger( p_access, "network-caching" ));
+            pi_64 = va_arg( args, int64_t * );
+            *pi_64 = INT64_C(1000)
+                   * var_InheritInteger( p_access, "network-caching" );
             break;
 
         case STREAM_GET_PRIVATE_ID_STATE:
             i_int = va_arg( args, int );
-            pb_bool = va_arg( args, bool * );
+            pb_bool = (bool *)va_arg( args, bool * );
 
             if( i_int < 0 || i_int > 127 )
                 return VLC_EGENERIC;
@@ -482,8 +484,8 @@ static int MMSOpen( stream_t  *p_access, vlc_url_t *p_url, int  i_proto )
 
     var_buffer_t buffer;
     char         *tmp;
-    const uint8_t *p;
-    const uint8_t *p_cmdend;
+    const uint16_t *p;
+    const uint8_t  *p_cmdend;
     uint32_t     i_server_version;
     uint32_t     i_tool_version;
     uint32_t     i_update_player_url;
@@ -495,7 +497,7 @@ static int MMSOpen( stream_t  *p_access, vlc_url_t *p_url, int  i_proto )
 
     /* *** Open a TCP connection with server *** */
     msg_Dbg( p_access, "waiting for connection..." );
-    p_sys->i_handle_tcp = net_Connect( p_access, p_url->psz_host, p_url->i_port, SOCK_STREAM, 0 );
+    p_sys->i_handle_tcp = net_ConnectTCP( p_access, p_url->psz_host, p_url->i_port );
     if( p_sys->i_handle_tcp < 0 )
     {
         msg_Err( p_access, "failed to open a connection (tcp)" );
@@ -588,32 +590,38 @@ static int MMSOpen( stream_t  *p_access, vlc_url_t *p_url, int  i_proto )
     i_tool_version = GetDWLE( p_sys->p_cmd + MMS_CMD_HEADERSIZE + 36 );
     i_update_player_url = GetDWLE( p_sys->p_cmd + MMS_CMD_HEADERSIZE + 40 );
     i_encryption_type = GetDWLE( p_sys->p_cmd + MMS_CMD_HEADERSIZE + 44 );
-    p = p_sys->p_cmd + MMS_CMD_HEADERSIZE + 48;
+    p = (uint16_t*)( p_sys->p_cmd + MMS_CMD_HEADERSIZE + 48 );
     p_cmdend = &p_sys->p_cmd[p_sys->i_cmd];
 
-#define GETUTF16( fmt, size ) \
-do \
-{ \
-    if( (p_cmdend - p) / 2 < (size) ) \
+#define GETUTF16( psz, size ) \
+    if( (UINT32_MAX == size) || \
+        ((uintptr_t) p / sizeof(uint16_t) < size) || \
+       ((UINTPTR_MAX - (uintptr_t) p_cmdend) / sizeof(uint16_t)) < size )\
     {\
         var_buffer_free( &buffer );\
         MMSClose( p_access );\
         return VLC_EBADVAR;\
     }\
-    char *str = FromCharset( "UTF-16LE", p, (size) * 2 ); \
-    p += (size) * 2; \
-    if( str != NULL ) \
-    { \
-        msg_Dbg( p_access, fmt " %s", str ); \
-        free( str ); \
-    } \
-} while (0)
-
-    GETUTF16( "server version:   ", i_server_version );
-    GETUTF16( "tool version:     ", i_tool_version );
-    GETUTF16( "update player URL:", i_update_player_url );
-    GETUTF16( "encryption type:  ", i_encryption_type );
+    if( (psz = malloc(size + 1)) )\
+    {\
+        for( size_t i = 0; i < size; i++ ) \
+        { \
+            psz[i] = p[i]; \
+        } \
+        psz[size] = '\0'; \
+        p += ( size ); \
+    }
+    GETUTF16( p_sys->psz_server_version, i_server_version );
+    GETUTF16( p_sys->psz_tool_version, i_tool_version );
+    GETUTF16( p_sys->psz_update_player_url, i_update_player_url );
+    GETUTF16( p_sys->psz_encryption_type, i_encryption_type );
 #undef GETUTF16
+    msg_Dbg( p_access,
+             "0x01 --> server_version:\"%s\" tool_version:\"%s\" update_player_url:\"%s\" encryption_type:\"%s\"",
+             p_sys->psz_server_version,
+             p_sys->psz_tool_version,
+             p_sys->psz_update_player_url,
+             p_sys->psz_encryption_type );
 
     /* *** should make an 18 command to make data timing *** */
 
@@ -990,6 +998,11 @@ static void MMSClose( stream_t  *p_access )
     FREENULL( p_sys->p_media );
     FREENULL( p_sys->p_header );
     p_sys->i_header = 0;
+
+    FREENULL( p_sys->psz_server_version );
+    FREENULL( p_sys->psz_tool_version );
+    FREENULL( p_sys->psz_update_player_url );
+    FREENULL( p_sys->psz_encryption_type );
 }
 
 /****************************************************************************
@@ -1598,7 +1611,7 @@ noreturn static void *KeepAliveThread( void *p_data )
 
         vlc_restorecancel( canc );
 
-        vlc_tick_sleep( VLC_TICK_FROM_SEC(10) );
+        msleep( 10 * CLOCK_FREQ );
     }
     vlc_assert_unreachable();
 }

@@ -2,6 +2,7 @@
  * grain.c: add film grain
  *****************************************************************************
  * Copyright (C) 2010 Laurent Aimar
+ * $Id: fc8c7fbdcb3baccc43a8c51f1380b41eb124f2f8 $
  *
  * Authors: Laurent Aimar <fenrir _AT_ videolan _DOT_ org>
  *
@@ -80,8 +81,7 @@ vlc_module_end()
  *****************************************************************************/
 
 #define BLEND_SIZE (8)
-typedef struct
-{
+struct filter_sys_t {
     bool     is_uv_filtered;
     uint32_t seed;
 
@@ -99,7 +99,7 @@ typedef struct
         vlc_mutex_t lock;
         double      variance;
     } cfg;
-} filter_sys_t;
+};
 
 /* Simple and *really fast* RNG (xorshift[13,17,5])*/
 #define URAND_SEED (2463534242)
@@ -334,7 +334,7 @@ static int Generate(int16_t *bank, int h_min, int h_max, int v_min, int v_max)
         }
     }
 
-    //vlc_tick_t tmul_0 = vlc_tick_now();
+    //mtime_t tmul_0 = mdate();
     for (int i = 0; i < N; i++) {
         for (int j = 0; j < N; j++) {
             double v = 0.0;
@@ -357,7 +357,7 @@ static int Generate(int16_t *bank, int h_min, int h_max, int v_min, int v_max)
             bank[i * N + j] = VLC_CLIP(vq, INT16_MIN, INT16_MAX);
         }
     }
-    //vlc_tick_t mul_duration = vlc_tick_now() - tmul_0;
+    //mtime_t mul_duration = mdate() - tmul_0;
     //fprintf(stderr, "IDCT took %d ms\n", (int)(mul_duration / 1000));
 
     free(workspace);

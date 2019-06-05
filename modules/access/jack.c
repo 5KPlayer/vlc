@@ -39,6 +39,7 @@
 
 #include <vlc_common.h>
 #include <vlc_plugin.h>
+#include <vlc_input.h>
 #include <vlc_demux.h>
 #include <vlc_url.h>
 #include <vlc_strings.h>
@@ -64,7 +65,7 @@ static void Close( vlc_object_t * );
 
 vlc_module_begin ()
      set_description( N_("JACK audio input") )
-     set_capability( "access", 0 )
+     set_capability( "access_demux", 0 )
      set_shortname( N_( "JACK Input" ) )
      set_category( CAT_INPUT )
      set_subcategory( SUBCAT_INPUT_ACCESS )
@@ -82,7 +83,7 @@ vlc_module_end ()
  * Local prototypes
  *****************************************************************************/
 
-typedef struct
+struct demux_sys_t
 {
     /* Audio properties */
     vlc_fourcc_t                i_acodec_raw;
@@ -105,7 +106,7 @@ typedef struct
     char                        *psz_ports;
     char                        **pp_jack_port_table;
     char                        i_match_ports;
-} demux_sys_t;
+};
 
 static int Demux( demux_t * );
 static int Control( demux_t *p_demux, int i_query, va_list args );
@@ -125,9 +126,6 @@ static int Open( vlc_object_t *p_this )
     demux_sys_t *p_sys;
     es_format_t fmt;
     int i_out_ports = 0;
-
-    if (p_demux->out == NULL)
-        return VLC_EGENERIC;
 
     p_demux->pf_demux = Demux;
     p_demux->pf_control = Control;
@@ -289,7 +287,7 @@ static int Open( vlc_object_t *p_this )
 
     p_sys->p_es_audio = es_out_Add( p_demux->out, &fmt );
     date_Init( &p_sys->pts, fmt.audio.i_rate, 1 );
-    date_Set( &p_sys->pts, VLC_TICK_0 );
+    date_Set( &p_sys->pts, 1 );
 
     return VLC_SUCCESS;
 }
@@ -319,6 +317,7 @@ static void Close( vlc_object_t *p_this )
 static int Control( demux_t *p_demux, int i_query, va_list args )
 {
     bool *pb;
+    int64_t *pi64;
     demux_sys_t *p_sys = p_demux->p_sys;
 
     switch( i_query )
@@ -338,12 +337,13 @@ static int Control( demux_t *p_demux, int i_query, va_list args )
         return VLC_SUCCESS;
 
     case DEMUX_GET_PTS_DELAY:
-        *va_arg( args, vlc_tick_t * ) =
-            VLC_TICK_FROM_MS( var_InheritInteger( p_demux, "live-caching" ) );
+        pi64 = va_arg( args, int64_t * );
+        *pi64 = INT64_C(1000) * var_InheritInteger( p_demux, "live-caching" );
         return VLC_SUCCESS;
 
     case DEMUX_GET_TIME:
-        *va_arg( args, vlc_tick_t * ) = date_Get(&p_sys->pts);
+        pi64 = va_arg( args, int64_t * );
+        *pi64 = date_Get(&p_sys->pts);
         return VLC_SUCCESS;
 
     /* TODO implement others */
@@ -429,9 +429,9 @@ static block_t *GrabJack( demux_t *p_demux )
 
     if( i_read < 100 ) /* avoid small read */
     {   /* vlc has too much free time on its hands? */
-#undef vlc_tick_sleep
+#undef msleep
 #warning Hmm.... looks wrong
-        vlc_tick_sleep(1000);
+        msleep(1000);
         return NULL;
     }
 
@@ -461,7 +461,7 @@ static block_t *GrabJack( demux_t *p_demux )
 
     i_read = jack_ringbuffer_read( p_sys->p_jack_ringbuffer, ( char * ) p_block->p_buffer, i_read );
 
-    p_block->i_dts = p_block->i_pts = date_Increment( &p_sys->pts,
+    p_block->i_dts = p_block->i_pts =    date_Increment( &p_sys->pts,
          i_read/(p_sys->i_channels * p_sys->jack_sample_size) );
 
     p_sys->p_block_audio = p_block;

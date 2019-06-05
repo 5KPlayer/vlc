@@ -31,9 +31,8 @@
 
 using namespace adaptive::logic;
 
-AbstractAdaptationLogic::AbstractAdaptationLogic    (vlc_object_t *obj)
+AbstractAdaptationLogic::AbstractAdaptationLogic    ()
 {
-    p_obj = obj;
     maxwidth = std::numeric_limits<int>::max();
     maxheight = std::numeric_limits<int>::max();
 }
@@ -42,7 +41,7 @@ AbstractAdaptationLogic::~AbstractAdaptationLogic   ()
 {
 }
 
-void AbstractAdaptationLogic::updateDownloadRate    (const adaptive::ID &, size_t, vlc_tick_t)
+void AbstractAdaptationLogic::updateDownloadRate    (const adaptive::ID &, size_t, mtime_t)
 {
 }
 

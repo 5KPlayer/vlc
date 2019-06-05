@@ -32,13 +32,13 @@
 #include <vlc_picture.h>
 #include "vlc_vdpau.h"
 
-typedef struct
+struct filter_sys_t
 {
     vlc_atomic_float brightness;
     vlc_atomic_float contrast;
     vlc_atomic_float saturation;
     vlc_atomic_float hue;
-} filter_sys_t;
+};
 
 static float vlc_to_vdp_brightness(float brightness)
 {

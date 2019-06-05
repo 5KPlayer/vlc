@@ -2,6 +2,7 @@
  * filter.cpp : DirectShow access module for vlc
  *****************************************************************************
  * Copyright (C) 2002-2010 VLC authors and VideoLAN
+ * $Id: 40620b9c644bc9b3fd0c07a695a97bb1f150bc3f $
  *
  * Author: Gildas Bazin <gbazin@videolan.org>
  *
@@ -43,8 +44,6 @@
 #include <initguid.h>
 
 #include <new>
-
-namespace dshow {
 
 DEFINE_GUID(MEDIASUBTYPE_HDYC ,0x43594448 /* CYDH */ , 0x0000, 0x0010, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71);
 DEFINE_GUID(MEDIASUBTYPE_DIVX ,0x58564944 /* XVID */ , 0x0000, 0x0010, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71);
@@ -639,7 +638,8 @@ STDMETHODIMP CapturePin::Receive( IMediaSample *pSample )
     msg_Dbg( p_input, "CapturePin::Receive" );
 #endif
 
-    VLCMediaSample vlc_sample = {pSample, vlc_tick_now()};
+    mtime_t i_timestamp = mdate() * 10;
+    VLCMediaSample vlc_sample = {pSample, i_timestamp};
 
     vlc_mutex_lock( &p_sys->lock );
     samples_queue.push_front( vlc_sample );
@@ -1166,5 +1166,3 @@ STDMETHODIMP CaptureEnumMediaTypes::Clone( IEnumMediaTypes **ppEnum )
 
     return NOERROR;
 };
-
-} // namespace

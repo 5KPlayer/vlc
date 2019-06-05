@@ -1,8 +1,9 @@
 notifydir = $(pluginsdir)/notify
 
 libosx_notifications_plugin_la_SOURCES = notify/osx_notifications.m
-libosx_notifications_plugin_la_OBJCFLAGS = $(AM_OBJCFLAGS) -fobjc-arc -fobjc-exceptions
-libosx_notifications_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(notifydir)' -Wl,-framework,AppKit,-framework,Foundation
+libosx_notifications_plugin_la_OBJCFLAGS = $(AM_OBJCFLAGS) $(OBJCFLAGS_osx_notifications)
+libosx_notifications_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(notifydir)' -Wl,-framework,AppKit
+libosx_notifications_plugin_la_LIBADD = $(LIBS_osx_notifications)
 
 libnotify_plugin_la_SOURCES = notify/notify.c
 libnotify_plugin_la_CFLAGS = $(AM_CFLAGS) $(NOTIFY_CFLAGS)

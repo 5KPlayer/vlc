@@ -30,12 +30,12 @@
 #include <vlc_plugin.h>
 #include <vlc_stream.h>
 
-typedef struct
+struct stream_sys_t
 {
     z_stream zstream;
     bool eof;
     unsigned char buffer[16384];
-} stream_sys_t;
+};
 
 static ssize_t Read(stream_t *stream, void *buf, size_t buflen)
 {
@@ -56,7 +56,7 @@ static ssize_t Read(stream_t *stream, void *buf, size_t buflen)
 
     if (val > 0)
     {   /* Fill input buffer if there is space left */
-        val = vlc_stream_Read(stream->s,
+        val = vlc_stream_Read(stream->p_source,
                           sys->zstream.next_in + sys->zstream.avail_in, val);
         if (val >= 0)
             sys->zstream.avail_in += val;
@@ -94,6 +94,12 @@ static ssize_t Read(stream_t *stream, void *buf, size_t buflen)
     return -1;
 }
 
+static int ReadDir(stream_t *stream, input_item_node_t *node)
+{
+    (void) stream; (void) node;
+    return VLC_EGENERIC;
+}
+
 static int Seek(stream_t *stream, uint64_t offset)
 {
     (void) stream; (void) offset;
@@ -115,7 +121,8 @@ static int Control(stream_t *stream, int query, va_list args)
         case STREAM_GET_CONTENT_TYPE:
         case STREAM_GET_SIGNAL:
         case STREAM_SET_PAUSE_STATE:
-            return vlc_stream_vaControl(stream->s, query, args);
+            return vlc_stream_vaControl(stream->p_source, query, args);
+        case STREAM_IS_DIRECTORY:
         case STREAM_GET_SIZE:
         case STREAM_GET_TITLE_INFO:
         case STREAM_GET_TITLE:
@@ -140,7 +147,7 @@ static int Open(vlc_object_t *obj)
     int bits;
 
     /* See IETF RFC6713 */
-    if (vlc_stream_Peek(stream->s, &peek, 2) < 2)
+    if (vlc_stream_Peek(stream->p_source, &peek, 2) < 2)
         return VLC_EGENERIC;
 
     if ((peek[0] & 0xF) == 8 && (peek[0] >> 4) < 8 && (U16_AT(peek) % 31) == 0)
@@ -171,6 +178,7 @@ static int Open(vlc_object_t *obj)
 
     stream->p_sys = sys;
     stream->pf_read = Read;
+    stream->pf_readdir = ReadDir;
     stream->pf_seek = Seek;
     stream->pf_control = Control;
     return VLC_SUCCESS;
@@ -188,7 +196,7 @@ static void Close (vlc_object_t *obj)
 vlc_module_begin()
     set_category(CAT_INPUT)
     set_subcategory(SUBCAT_INPUT_STREAM_FILTER)
-    set_capability("stream_filter", 330)
+    set_capability("stream_filter", 30)
 
     set_description(N_("Zlib decompression filter"))
     set_callbacks(Open, Close)

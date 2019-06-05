@@ -2,6 +2,7 @@
  * EPGWidget.cpp : EPGWidget
  ****************************************************************************
  * Copyright © 2009-2010 VideoLAN
+ * $Id: d670dbdb6945d98c77da093b64b77eab581df0b0 $
  *
  * Authors: Ludovic Fauvet <etix@l0cal.com>
  *
@@ -23,7 +24,7 @@
 #include "qt.hpp"
 
 #include <vlc_epg.h>
-#include "components/player_controller.hpp"
+#include "input_manager.hpp"
 
 #include <QStackedWidget>
 #include <QVBoxLayout>

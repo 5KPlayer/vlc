@@ -2,6 +2,7 @@
  * url.c: Test for url encoding/decoding stuff
  *****************************************************************************
  * Copyright (C) 2006 Rémi Denis-Courmont
+ * $Id: ab02571ac77b83acc765e05f0c9ee5452f5dfc8b $
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published by
@@ -37,20 +38,18 @@ static void test_compare(const char *in, const char *exp, const char *res)
     if (res == NULL)
     {
         if (exp != NULL)
-            fprintf(stderr, "\"%s\" returned NULL, expected \"%s\"\n",
-                    in, exp);
+            fprintf(stderr, "\"%s\" returned NULL, expected \"%s\"", in, exp);
         else
             return;
     }
     else
     {
         if (exp == NULL)
-            fprintf(stderr, "\"%s\" returned \"%s\", expected NULL\n",
-                    in, res);
+            fprintf(stderr, "\"%s\" returned \"%s\", expected NULL", in, res);
         else
         if (strcmp(res, exp))
-            fprintf(stderr, "\"%s\" returned \"%s\", expected \"%s\"\n",
-                    in, res, exp);
+            fprintf(stderr, "\"%s\" returned \"%s\", expected \"%s\"\n", in,
+                    res, exp);
         else
             return;
     }
@@ -73,8 +72,7 @@ static inline void test_decode (const char *in, const char *out)
 
 static inline void test_b64 (const char *in, const char *out)
 {
-    test(vlc_b64_encode, in, out);
-    test(vlc_b64_decode, out, in);
+    test (vlc_b64_encode, in, out);
 }
 
 static char *make_URI_def (const char *in)
@@ -98,20 +96,13 @@ static inline void test_current_directory_path (const char *in, const char *cwd,
     free(expected_result);
 }
 
-#define test_url_parse(in, protocol, user, pass, host, port, path, option) \
-    test_url_parse_internal(in, false, protocol, user, pass, host, port, path, option)
-
-#define test_url_parse_fixup(in, protocol, user, pass, host, port, path, option) \
-    test_url_parse_internal(in, true, protocol, user, pass, host, port, path, option)
-
-static void test_url_parse_internal(const char *in, bool fixup,
-                                    const char *protocol,
-                                    const char *user, const char *pass,
-                                    const char *host, unsigned port,
-                                    const char *path, const char *option)
+static void test_url_parse(const char *in, const char *protocol,
+                           const char *user, const char *pass,
+                           const char *host, unsigned port,
+                           const char *path, const char *option)
 {
     vlc_url_t url;
-    int ret = fixup ? vlc_UrlParseFixup(&url, in) : vlc_UrlParse(&url, in);
+    int ret = vlc_UrlParse(&url, in);
 
     /* XXX: only checking that the port-part is parsed correctly, and
      *      equal to 0, is currently not supported due to the below. */
@@ -128,13 +119,13 @@ static void test_url_parse_internal(const char *in, bool fixup,
         return;
     }
 
-    test_compare(in, protocol, url.psz_protocol);
-    test_compare(in, user, url.psz_username);
-    test_compare(in, pass, url.psz_password);
+    test_compare(in, url.psz_protocol, protocol);
+    test_compare(in, url.psz_username, user);
+    test_compare(in, url.psz_password, pass);
 
     if (ret != 0 && errno == ENOSYS)
     {
-        test_compare(in, NULL, url.psz_host);
+        test_compare(in, url.psz_host, NULL);
         exitcode = 77;
     }
     else
@@ -147,8 +138,8 @@ static void test_url_parse_internal(const char *in, bool fixup,
         exit(2);
     }
 
-    test_compare(in, path, url.psz_path);
-    test_compare(in, option, url.psz_option);
+    test_compare(in, url.psz_path, path);
+    test_compare(in, url.psz_option, option);
     vlc_UrlClean(&url);
 }
 
@@ -160,6 +151,11 @@ static char *vlc_uri_resolve_rfc3986_test(const char *in)
 static void test_rfc3986(const char *reference, const char *expected)
 {
     test(vlc_uri_resolve_rfc3986_test, reference, expected);
+}
+
+static void test_fixup_noop(const char *expected)
+{
+    test(vlc_uri_fixup, expected, expected);
 }
 
 int main (void)
@@ -192,7 +188,6 @@ int main (void)
     test_b64 ("foobar", "Zm9vYmFy");
 
     /* Path test */
-    test_path("", NULL);
 #ifndef _WIN32
     test_path ("/", "file:///");
     test_path ("/home/john/", "file:///home/john/");
@@ -228,6 +223,7 @@ int main (void)
 
     test_current_directory_path ("movie.ogg", tmpdir, "movie.ogg");
     test_current_directory_path (".", tmpdir, ".");
+    test_current_directory_path ("", tmpdir, "");
 #endif
 
     /*val = fchdir (fd);
@@ -314,12 +310,6 @@ int main (void)
     test_url_parse("http://example.com:-123", NULL, NULL, NULL, NULL, 0, NULL, NULL );
     test_url_parse("http://example.com:-4294967298", NULL, NULL, NULL, NULL, 0, NULL, NULL );
     test_url_parse("http://example.com:-18446744073709551615", NULL, NULL, NULL, NULL, 0, NULL, NULL );
-    test_url_parse("http://user%/Oath", "http", NULL, NULL, NULL, 0, "/Oath",
-                   NULL);
-
-    /* URIs to fixup */
-    test_url_parse("smb://SERVER:445/SHARE/My file.mp3", "smb", NULL, NULL, "SERVER", 445, NULL, NULL);
-    test_url_parse_fixup("smb://SERVER:445/SHARE/My file.mp3", "smb", NULL, NULL, "SERVER", 445, "/SHARE/My%20file.mp3", NULL);
 
     /* Reference test cases for reference URI resolution */
     static const char *rfc3986_cases[] =
@@ -393,21 +383,7 @@ int main (void)
     };
 
     for (size_t i = 0; i < ARRAY_SIZE(valid_uris); i++)
-        test(vlc_uri_fixup, valid_uris[i], valid_uris[i]);
-
-    /* Check how invalid URIs are fixed up */
-    static const char *invalid_uris[][2] =
-    {
-        { "Hello world.txt", "Hello%20world.txt" },
-        { "Café", "Caf%C3%A9" },
-        { "100%", "100%25" },
-        { "//[1.2.3.4]/[Foo]", "//[1.2.3.4]/%5BFoo%5D" },
-        { "/[Bar]", "/%5BBar%5D" },
-        { "http://localhost/[Baz]", "http://localhost/%5BBaz%5D" },
-    };
-
-    for (size_t i = 0; i < ARRAY_SIZE(invalid_uris); i++)
-        test(vlc_uri_fixup, invalid_uris[i][0], invalid_uris[i][1]);
+        test_fixup_noop(valid_uris[i]);
 
     return exitcode;
 }

@@ -2,6 +2,7 @@
  * meta.c : Metadata handling
  *****************************************************************************
  * Copyright (C) 1998-2004 VLC authors and VideoLAN
+ * $Id: 241b926079ff186952b18c3ff7dedab377ea6705 $
  *
  * Authors: Antoine Cellerier <dionoea@videolan.org>
  *          Clément Stenac <zorglub@videolan.org
@@ -28,13 +29,14 @@
 #include <assert.h>
 
 #include <vlc_common.h>
+#include <vlc_playlist.h>
 #include <vlc_url.h>
 #include <vlc_arrays.h>
 #include <vlc_modules.h>
 #include <vlc_charset.h>
 
 #include "input_internal.h"
-#include "../preparser/art.h"
+#include "../playlist/art.h"
 
 struct vlc_meta_t
 {
@@ -210,13 +212,27 @@ void input_ExtractAttachmentAndCacheArt( input_thread_t *p_input,
     {   /* XXX Weird, we should not end up with attachment:// art URL
          * unless there is a race condition */
         msg_Warn( p_input, "art already fetched" );
-        if( likely(input_FindArtInCache( p_item ) == VLC_SUCCESS) )
+        if( likely(playlist_FindArtInCache( p_item ) == VLC_SUCCESS) )
             return;
     }
 
     /* */
-    input_attachment_t *p_attachment = input_GetAttachment( p_input, name );
-    if( !p_attachment )
+    input_attachment_t *p_attachment = NULL;
+
+    vlc_mutex_lock( &p_item->lock );
+    for( int i_idx = 0; i_idx < input_priv(p_input)->i_attachment; i_idx++ )
+    {
+        input_attachment_t *a = input_priv(p_input)->attachment[i_idx];
+
+        if( !strcmp( a->psz_name, name ) )
+        {
+            p_attachment = vlc_input_attachment_Duplicate( a );
+            break;
+        }
+    }
+    vlc_mutex_unlock( &p_item->lock );
+
+    if( p_attachment == NULL )
     {
         msg_Warn( p_input, "art attachment %s not found", name );
         return;
@@ -232,8 +248,8 @@ void input_ExtractAttachmentAndCacheArt( input_thread_t *p_input,
     else if( !strcmp( p_attachment->psz_mime, "image/x-pict" ) )
         psz_type = ".pct";
 
-    input_SaveArt( VLC_OBJECT(p_input), p_item,
-                   p_attachment->p_data, p_attachment->i_data, psz_type );
+    playlist_SaveArt( VLC_OBJECT(p_input), p_item,
+                      p_attachment->p_data, p_attachment->i_data, psz_type );
     vlc_input_attachment_Delete( p_attachment );
 }
 
@@ -245,7 +261,7 @@ int input_item_WriteMeta( vlc_object_t *obj, input_item_t *p_item )
         return VLC_ENOMEM;
     p_export->p_item = p_item;
 
-    enum input_item_type_e type;
+    int type;
     vlc_mutex_lock( &p_item->lock );
     type = p_item->i_type;
     vlc_mutex_unlock( &p_item->lock );
@@ -263,11 +279,11 @@ int input_item_WriteMeta( vlc_object_t *obj, input_item_t *p_item )
     module_t *p_mod = module_need( p_export, "meta writer", NULL, false );
     if( p_mod )
         module_unneed( p_export, p_mod );
-    vlc_object_delete(p_export);
+    vlc_object_release( p_export );
     return VLC_SUCCESS;
 
 error:
-    vlc_object_delete(p_export);
+    vlc_object_release( p_export );
     return VLC_EGENERIC;
 }
 

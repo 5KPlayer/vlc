@@ -2,6 +2,7 @@
  * b4s.c : B4S playlist format import
  *****************************************************************************
  * Copyright (C) 2005-2009 VLC authors and VideoLAN
+ * $Id: dd886463e5330615b1ec1b8206b203aa6da15137 $
  *
  * Authors: Sigmund Augdal Helberg <dnumgis@videolan.org>
  *
@@ -71,9 +72,9 @@ static int ReadDir( stream_t *p_demux, input_item_node_t *p_subitems )
 
     input_item_t *p_current_input = GetCurrentItem(p_demux);
 
-    free( vlc_stream_ReadLine( p_demux->s ) );
+    free( vlc_stream_ReadLine( p_demux->p_source ) );
 
-    p_xml_reader = xml_ReaderCreate( p_demux, p_demux->s );
+    p_xml_reader = xml_ReaderCreate( p_demux, p_demux->p_source );
     if( !p_xml_reader )
         return -1;
 

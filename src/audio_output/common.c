@@ -2,6 +2,7 @@
  * common.c : audio output management of common data structures
  *****************************************************************************
  * Copyright (C) 2002-2007 VLC authors and VideoLAN
+ * $Id: f7dbc575578979ffa5588155fef8c08f4d2e14c5 $
  *
  * Authors: Christophe Massiot <massiot@via.ecp.fr>
  *
@@ -228,7 +229,7 @@ const char * aout_FormatPrintChannels( const audio_sample_format_t * p_format )
 void aout_FormatPrint( vlc_object_t *obj, const char *psz_text,
                        const audio_sample_format_t *p_format )
 {
-    msg_Dbg( obj, "%s '%4.4s' %d Hz %s frame=%u samples/%u bytes", psz_text,
+    msg_Dbg( obj, "%s '%4.4s' %d Hz %s frame=%d samples/%d bytes", psz_text,
              (char *)&p_format->i_format, p_format->i_rate,
              aout_FormatPrintChannels( p_format ),
              p_format->i_frame_length, p_format->i_bytes_per_frame );
@@ -242,7 +243,7 @@ void aout_FormatsPrint( vlc_object_t *obj, const char * psz_text,
                         const audio_sample_format_t * p_format1,
                         const audio_sample_format_t * p_format2 )
 {
-    msg_Dbg( obj, "%s '%4.4s'->'%4.4s' %u Hz->%u Hz %s->%s",
+    msg_Dbg( obj, "%s '%4.4s'->'%4.4s' %d Hz->%d Hz %s->%s",
              psz_text,
              (char *)&p_format1->i_format, (char *)&p_format2->i_format,
              p_format1->i_rate, p_format2->i_rate,
@@ -536,14 +537,25 @@ static int FilterOrder( const char *psz_name )
     return INT_MAX;
 }
 
-int aout_EnableFilter( audio_output_t *p_aout, const char *psz_name, bool b_add )
+/* This function will add or remove a module from a string list (colon
+ * separated). It will return true if there is a modification
+ * In case p_aout is NULL, we will use configuration instead of variable */
+bool aout_ChangeFilterString( vlc_object_t *p_obj, vlc_object_t *p_aout,
+                              const char *psz_variable,
+                              const char *psz_name, bool b_add )
 {
     if( *psz_name == '\0' )
-        return VLC_EGENERIC;
+        return false;
 
-    const char *psz_variable = "audio-filter";
     char *psz_list;
-    psz_list = var_GetString( p_aout, psz_variable );
+    if( p_aout )
+    {
+        psz_list = var_GetString( p_aout, psz_variable );
+    }
+    else
+    {
+        psz_list = var_InheritString( p_obj, psz_variable );
+    }
 
     /* Split the string into an array of filters */
     int i_count = 1;
@@ -555,7 +567,7 @@ int aout_EnableFilter( audio_output_t *p_aout, const char *psz_name, bool b_add 
     if( !ppsz_filter )
     {
         free( psz_list );
-        return VLC_ENOMEM;
+        return false;
     }
     bool b_present = false;
     i_count = 0;
@@ -577,7 +589,7 @@ int aout_EnableFilter( audio_output_t *p_aout, const char *psz_name, bool b_add 
     {
         free( ppsz_filter );
         free( psz_list );
-        return VLC_EGENERIC;
+        return false;
     }
 
     if( b_add )
@@ -612,7 +624,7 @@ int aout_EnableFilter( audio_output_t *p_aout, const char *psz_name, bool b_add 
     {
         free( ppsz_filter );
         free( psz_list );
-        return VLC_ENOMEM;
+        return false;
     }
 
     *psz_new = '\0';
@@ -627,8 +639,10 @@ int aout_EnableFilter( audio_output_t *p_aout, const char *psz_name, bool b_add 
     free( ppsz_filter );
     free( psz_list );
 
-    var_SetString( p_aout, psz_variable, psz_new );
+    var_SetString( p_obj, psz_variable, psz_new );
+    if( p_aout )
+        var_SetString( p_aout, psz_variable, psz_new );
     free( psz_new );
 
-    return VLC_SUCCESS;
+    return true;
 }

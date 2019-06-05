@@ -2,6 +2,7 @@
  * demux.c
  *****************************************************************************
  * Copyright (C) 1999-2004 VLC authors and VideoLAN
+ * $Id: 838ebe85911153ec4363d2466d84563b90bdf43c $
  *
  * Author: Laurent Aimar <fenrir@via.ecp.fr>
  *
@@ -34,7 +35,6 @@
 #include <vlc_url.h>
 #include <vlc_modules.h>
 #include <vlc_strings.h>
-#include "input_internal.h"
 
 typedef const struct
 {
@@ -138,31 +138,44 @@ static const char* DemuxNameFromExtension( char const* ext,
     return result ? result->name : NULL;
 }
 
+/*****************************************************************************
+ * demux_New:
+ *  if s is NULL then load a access_demux
+ *****************************************************************************/
 demux_t *demux_New( vlc_object_t *p_obj, const char *psz_name,
-                    stream_t *s, es_out_t *out )
+                    const char *psz_location, stream_t *s, es_out_t *out )
 {
-    assert(s != NULL );
-    return demux_NewAdvanced( p_obj, NULL, psz_name, "", s, out, false );
+    return demux_NewAdvanced( p_obj, NULL,
+                              (s == NULL) ? psz_name : "",
+                              (s != NULL) ? psz_name : "",
+                              psz_location, s, out, false );
 }
 
-struct vlc_demux_private
+typedef struct demux_priv_t
 {
-    module_t *module;
-};
+    demux_t demux;
+    void (*destroy)(demux_t *);
+} demux_priv_t;
 
 static void demux_DestroyDemux(demux_t *demux)
 {
-    struct vlc_demux_private *priv = vlc_stream_Private(demux);
-
-    module_unneed(demux, priv->module);
-    free(demux->psz_filepath);
-    free(demux->psz_name);
-
     assert(demux->s != NULL);
     vlc_stream_Delete(demux->s);
 }
 
-static int demux_Probe(void *func, bool forced, va_list ap)
+static void demux_DestroyAccessDemux(demux_t *demux)
+{
+    assert(demux->s == NULL);
+    (void) demux;
+}
+
+static void demux_DestroyDemuxFilter(demux_t *demux)
+{
+    assert(demux->p_next != NULL);
+    demux_Delete(demux->p_next);
+}
+
+static int demux_Probe(void *func, va_list ap)
 {
     int (*probe)(vlc_object_t *) = func;
     demux_t *demux = va_arg(ap, demux_t *);
@@ -175,29 +188,26 @@ static int demux_Probe(void *func, bool forced, va_list ap)
         return VLC_EGENERIC;
     }
 
-    demux->obj.force = forced;
-
-    int ret = probe(VLC_OBJECT(demux));
-    if (ret)
-        vlc_objres_clear(VLC_OBJECT(demux));
-    return ret;
+    return probe(VLC_OBJECT(demux));
 }
 
-demux_t *demux_NewAdvanced( vlc_object_t *p_obj, input_thread_t *p_input,
-                            const char *psz_demux, const char *url,
+/*****************************************************************************
+ * demux_NewAdvanced:
+ *  if s is NULL then load a access_demux
+ *****************************************************************************/
+#undef demux_NewAdvanced
+demux_t *demux_NewAdvanced( vlc_object_t *p_obj, input_thread_t *p_parent_input,
+                            const char *psz_access, const char *psz_demux,
+                            const char *psz_location,
                             stream_t *s, es_out_t *out, bool b_preparsing )
 {
-    struct vlc_demux_private *priv;
-    demux_t *p_demux = vlc_stream_CustomNew(p_obj, demux_DestroyDemux,
-                                            sizeof (*priv), "demux");
-
-    if (unlikely(p_demux == NULL))
+    demux_priv_t *priv = vlc_custom_create(p_obj, sizeof (*priv), "demux");
+    if (unlikely(priv == NULL))
         return NULL;
 
-    assert(s != NULL);
-    priv = vlc_stream_Private(p_demux);
+    demux_t *p_demux = &priv->demux;
 
-    if (!strcasecmp( psz_demux, "any" ) || !psz_demux[0])
+    if( s != NULL && (!strcasecmp( psz_demux, "any" ) || !psz_demux[0]) )
     {   /* Look up demux by mime-type for hard to detect formats */
         char *type = stream_MimeType( s );
         if( type != NULL )
@@ -207,22 +217,22 @@ demux_t *demux_NewAdvanced( vlc_object_t *p_obj, input_thread_t *p_input,
         }
     }
 
-    p_demux->p_input_item = p_input ? input_GetItem(p_input) : NULL;
-    p_demux->psz_name = strdup( psz_demux );
-    if (unlikely(p_demux->psz_name == NULL))
-        goto error;
+    p_demux->p_input = p_parent_input;
+    p_demux->psz_access = strdup( psz_access );
+    p_demux->psz_demux = strdup( psz_demux );
+    p_demux->psz_location = strdup( psz_location );
+    p_demux->psz_file = get_path( psz_location ); /* parse URL */
 
-    p_demux->psz_url = strdup(url);
-    if (unlikely(p_demux->psz_url == NULL))
+    if( unlikely(p_demux->psz_access == NULL
+              || p_demux->psz_demux == NULL
+              || p_demux->psz_location == NULL) )
         goto error;
-
-    const char *p = strstr(p_demux->psz_url, "://");
-    p_demux->psz_location = (p != NULL) ? (p + 3) : "";
-    p_demux->psz_filepath = get_path(p_demux->psz_location); /* parse URL */
 
     if( !b_preparsing )
-        msg_Dbg( p_obj, "creating demux \"%s\", URL: %s, path: %s",
-                 psz_demux, url, p_demux->psz_filepath );
+        msg_Dbg( p_obj, "creating demux: access='%s' demux='%s' "
+                 "location='%s' file='%s'",
+                 p_demux->psz_access, p_demux->psz_demux,
+                 p_demux->psz_location, p_demux->psz_file );
 
     p_demux->s              = s;
     p_demux->out            = out;
@@ -231,41 +241,127 @@ demux_t *demux_NewAdvanced( vlc_object_t *p_obj, input_thread_t *p_input,
     p_demux->pf_demux   = NULL;
     p_demux->pf_control = NULL;
     p_demux->p_sys      = NULL;
+    p_demux->info.i_update = 0;
+    p_demux->info.i_title  = 0;
+    p_demux->info.i_seekpoint = 0;
+    priv->destroy = s ? demux_DestroyDemux : demux_DestroyAccessDemux;
 
-    const char *psz_module = NULL;
-
-    if( !strcmp( p_demux->psz_name, "any" ) && p_demux->psz_filepath )
+    if( s != NULL )
     {
-        char const* psz_ext = strrchr( p_demux->psz_filepath, '.' );
+        const char *psz_module = NULL;
 
-        if( psz_ext )
-            psz_module = DemuxNameFromExtension( psz_ext + 1, b_preparsing );
+        if( !strcmp( p_demux->psz_demux, "any" ) && p_demux->psz_file )
+        {
+            char const* psz_ext = strrchr( p_demux->psz_file, '.' );
+
+            if( psz_ext )
+                psz_module = DemuxNameFromExtension( psz_ext + 1, b_preparsing );
+        }
+
+        if( psz_module == NULL )
+            psz_module = p_demux->psz_demux;
+
+        p_demux->p_module = vlc_module_load(p_demux, "demux", psz_module,
+             !strcmp(psz_module, p_demux->psz_demux), demux_Probe, p_demux);
+    }
+    else
+    {
+        p_demux->p_module =
+            module_need( p_demux, "access_demux", p_demux->psz_access, true );
     }
 
-    if( psz_module == NULL )
-        psz_module = p_demux->psz_name;
-
-    priv->module = vlc_module_load(p_demux, "demux", psz_module,
-        !strcmp(psz_module, p_demux->psz_name), demux_Probe, p_demux);
-
-    if (priv->module == NULL)
-    {
-        free( p_demux->psz_filepath );
+    if( p_demux->p_module == NULL )
         goto error;
-    }
 
     return p_demux;
 error:
-    free( p_demux->psz_name );
-    stream_CommonDelete( p_demux );
+    free( p_demux->psz_file );
+    free( p_demux->psz_location );
+    free( p_demux->psz_demux );
+    free( p_demux->psz_access );
+    vlc_object_release( p_demux );
     return NULL;
+}
+
+/*****************************************************************************
+ * demux_Delete:
+ *****************************************************************************/
+void demux_Delete( demux_t *p_demux )
+{
+    demux_priv_t *priv = (demux_priv_t *)p_demux;
+
+    module_unneed( p_demux, p_demux->p_module );
+
+    priv->destroy(p_demux);
+    free( p_demux->psz_file );
+    free( p_demux->psz_location );
+    free( p_demux->psz_demux );
+    free( p_demux->psz_access );
+    vlc_object_release( p_demux );
 }
 
 #define static_control_match(foo) \
     static_assert((unsigned) DEMUX_##foo == STREAM_##foo, "Mismatch")
 
+static int demux_ControlInternal( demux_t *demux, int query, ... )
+{
+    int ret;
+    va_list ap;
+
+    va_start( ap, query );
+    ret = demux->pf_control( demux, query, ap );
+    va_end( ap );
+    return ret;
+}
+
 int demux_vaControl( demux_t *demux, int query, va_list args )
 {
+    if( demux->s != NULL )
+        switch( query )
+        {
+            /* Legacy fallback for missing getters in synchronous demuxers */
+            case DEMUX_CAN_PAUSE:
+            case DEMUX_CAN_CONTROL_PACE:
+            case DEMUX_GET_PTS_DELAY:
+            {
+                int ret;
+                va_list ap;
+
+                va_copy( ap, args );
+                ret = demux->pf_control( demux, query, args );
+                if( ret != VLC_SUCCESS )
+                    ret = vlc_stream_vaControl( demux->s, query, ap );
+                va_end( ap );
+                return ret;
+            }
+
+            /* Some demuxers need to control pause directly (e.g. adaptive),
+             * but many legacy demuxers do not understand pause at all.
+             * If DEMUX_CAN_PAUSE is not implemented, bypass the demuxer and
+             * byte stream. If DEMUX_CAN_PAUSE is implemented and pause is
+             * supported, pause the demuxer normally. Else, something went very
+             * wrong.
+             *
+             * Note that this requires asynchronous/threaded demuxers to
+             * always return VLC_SUCCESS for DEMUX_CAN_PAUSE, so that they are
+             * never bypassed. Otherwise, we would reenter demux->s callbacks
+             * and break thread safety. At the time of writing, asynchronous or
+             * threaded *non-access* demuxers do not exist and are not fully
+             * supported by the input thread, so this is theoretical. */
+            case DEMUX_SET_PAUSE_STATE:
+            {
+                bool can_pause;
+
+                if( demux_ControlInternal( demux, DEMUX_CAN_PAUSE,
+                                           &can_pause ) )
+                    return vlc_stream_vaControl( demux->s, query, args );
+
+                /* The caller shall not pause if pause is unsupported. */
+                assert( can_pause );
+                break;
+            }
+        }
+
     return demux->pf_control( demux, query, args );
 }
 
@@ -279,7 +375,7 @@ int demux_vaControlHelper( stream_t *s,
 {
     int64_t i_tell;
     double  f, *pf;
-    vlc_tick_t i64;
+    int64_t i64, *pi64;
 
     if( i_end < 0 )    i_end   = stream_Size( s );
     if( i_start < 0 )  i_start = 0;
@@ -314,23 +410,25 @@ int demux_vaControlHelper( stream_t *s,
             return vlc_stream_vaControl( s, i_query, args );
 
         case DEMUX_GET_LENGTH:
+            pi64 = (int64_t*)va_arg( args, int64_t * );
             if( i_bitrate > 0 && i_end > i_start )
             {
-                *va_arg( args, vlc_tick_t * ) = INT64_C(8000000) * (i_end - i_start) / i_bitrate;
+                *pi64 = INT64_C(8000000) * (i_end - i_start) / i_bitrate;
                 return VLC_SUCCESS;
             }
             return VLC_EGENERIC;
 
         case DEMUX_GET_TIME:
+            pi64 = (int64_t*)va_arg( args, int64_t * );
             if( i_bitrate > 0 && i_tell >= i_start )
             {
-                *va_arg( args, vlc_tick_t * ) = INT64_C(8000000) * (i_tell - i_start) / i_bitrate;
+                *pi64 = INT64_C(8000000) * (i_tell - i_start) / i_bitrate;
                 return VLC_SUCCESS;
             }
             return VLC_EGENERIC;
 
         case DEMUX_GET_POSITION:
-            pf = va_arg( args, double * );
+            pf = (double*)va_arg( args, double * );
             if( i_start < i_end )
             {
                 *pf = (double)( i_tell - i_start ) /
@@ -341,7 +439,7 @@ int demux_vaControlHelper( stream_t *s,
 
 
         case DEMUX_SET_POSITION:
-            f = va_arg( args, double );
+            f = (double)va_arg( args, double );
             if( i_start < i_end && f >= 0.0 && f <= 1.0 )
             {
                 int64_t i_block = (f * ( i_end - i_start )) / i_align;
@@ -355,7 +453,7 @@ int demux_vaControlHelper( stream_t *s,
             return VLC_EGENERIC;
 
         case DEMUX_SET_TIME:
-            i64 = va_arg( args, vlc_tick_t );
+            i64 = (int64_t)va_arg( args, int64_t );
             if( i_bitrate > 0 && i64 >= 0 )
             {
                 int64_t i_block = i64 * i_bitrate / INT64_C(8000000) / i_align;
@@ -375,9 +473,7 @@ int demux_vaControlHelper( stream_t *s,
         case DEMUX_HAS_UNSUPPORTED_META:
         case DEMUX_SET_NEXT_DEMUX_TIME:
         case DEMUX_GET_TITLE_INFO:
-        case DEMUX_SET_GROUP_DEFAULT:
-        case DEMUX_SET_GROUP_ALL:
-        case DEMUX_SET_GROUP_LIST:
+        case DEMUX_SET_GROUP:
         case DEMUX_SET_ES:
         case DEMUX_GET_ATTACHMENTS:
         case DEMUX_CAN_RECORD:
@@ -431,7 +527,7 @@ decoder_t *demux_PacketizerNew( demux_t *p_demux, es_format_t *p_fmt, const char
     if( !p_packetizer->p_module )
     {
         es_format_Clean( p_fmt );
-        vlc_object_delete(p_packetizer);
+        vlc_object_release( p_packetizer );
         msg_Err( p_demux, "cannot find packetizer for %s", psz_msg );
         return NULL;
     }
@@ -447,63 +543,63 @@ void demux_PacketizerDestroy( decoder_t *p_packetizer )
     es_format_Clean( &p_packetizer->fmt_out );
     if( p_packetizer->p_description )
         vlc_meta_Delete( p_packetizer->p_description );
-    vlc_object_delete(p_packetizer);
+    vlc_object_release( p_packetizer );
 }
 
 unsigned demux_TestAndClearFlags( demux_t *p_demux, unsigned flags )
 {
     unsigned update = flags;
 
-    if (demux_Control( p_demux, DEMUX_TEST_AND_CLEAR_FLAGS, &update))
-        return 0;
+    if ( demux_Control( p_demux, DEMUX_TEST_AND_CLEAR_FLAGS, &update ) == VLC_SUCCESS )
+        return update;
+
+    update = p_demux->info.i_update & flags;
+    p_demux->info.i_update &= ~flags;
     return update;
 }
 
 int demux_GetTitle( demux_t *p_demux )
 {
-    int title;
-
-    if (demux_Control(p_demux, DEMUX_GET_TITLE, &title))
-        title = 0;
-    return title;
+    int i_title;
+    if ( demux_Control( p_demux, DEMUX_GET_TITLE, &i_title ) == VLC_SUCCESS )
+        return i_title;
+    return p_demux->info.i_title;
 }
 
 int demux_GetSeekpoint( demux_t *p_demux )
 {
-    int seekpoint;
-
-    if (demux_Control(p_demux, DEMUX_GET_SEEKPOINT, &seekpoint))
-        seekpoint = 0;
-    return seekpoint;
+    int i_seekpoint;
+    if ( demux_Control( p_demux, DEMUX_GET_SEEKPOINT, &i_seekpoint ) == VLC_SUCCESS  )
+        return i_seekpoint;
+    return p_demux->info.i_seekpoint;
 }
 
 static demux_t *demux_FilterNew( demux_t *p_next, const char *p_name )
 {
-    struct vlc_demux_private *priv;
-    demux_t *p_demux = vlc_stream_CustomNew(VLC_OBJECT(p_next),
-                                            demux_DestroyDemux, sizeof (*priv),
-                                            "demux filter");
-    if (unlikely(p_demux == NULL))
+    demux_priv_t *priv = vlc_custom_create(p_next, sizeof (*priv), "demux_filter");
+    if (unlikely(priv == NULL))
         return NULL;
 
-    priv = vlc_stream_Private(p_demux);
-    p_demux->p_next       = p_next;
-    p_demux->p_input_item = NULL;
-    p_demux->p_sys        = NULL;
-    p_demux->psz_name     = NULL;
-    p_demux->psz_url      = NULL;
-    p_demux->psz_location = NULL;
-    p_demux->psz_filepath = NULL;
-    p_demux->out          = NULL;
+    demux_t *p_demux = &priv->demux;
 
-    priv->module = module_need(p_demux, "demux_filter", p_name,
-                               p_name != NULL);
-    if (priv->module == NULL)
+    p_demux->p_next       = p_next;
+    p_demux->p_input      = NULL;
+    p_demux->p_sys        = NULL;
+    p_demux->psz_access   = NULL;
+    p_demux->psz_demux    = NULL;
+    p_demux->psz_location = NULL;
+    p_demux->psz_file     = NULL;
+    p_demux->out          = NULL;
+    priv->destroy         = demux_DestroyDemuxFilter;
+    p_demux->p_module =
+        module_need( p_demux, "demux_filter", p_name, p_name != NULL );
+
+    if( p_demux->p_module == NULL )
         goto error;
 
     return p_demux;
 error:
-    stream_CommonDelete( p_demux );
+    vlc_object_release( p_demux );
     return NULL;
 }
 
@@ -536,15 +632,14 @@ demux_t *demux_FilterChainNew( demux_t *p_demux, const char *psz_chain )
     return p_demux;
 }
 
-static bool demux_filter_enable_disable(demux_t *p_demux,
-                                        const char *psz_demux, bool b_enable)
+static bool demux_filter_enable_disable( demux_t *p_demux_chain,
+                                          const char* psz_demux, bool b_enable )
 {
-    struct vlc_demux_private *priv = vlc_stream_Private(p_demux);
+    demux_t *p_demux = p_demux_chain;
 
-    if ( psz_demux &&
-        (strcmp(module_get_name(priv->module, false), psz_demux) == 0
-      || strcmp(module_get_name(priv->module, true), psz_demux) == 0) )
-    {
+     if( strcmp( module_get_name( p_demux->p_module, false ), psz_demux) == 0 ||
+         strcmp( module_get_name( p_demux->p_module, true ), psz_demux ) == 0 )
+     {
         demux_Control( p_demux,
                        b_enable ? DEMUX_FILTER_ENABLE : DEMUX_FILTER_DISABLE );
         return true;

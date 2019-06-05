@@ -2,6 +2,7 @@
  * svcdsub.c : Overlay Graphics Text (SVCD subtitles) decoder
  *****************************************************************************
  * Copyright (C) 2003, 2004 VLC authors and VideoLAN
+ * $Id: e509effdbce524b8854874365d8b62d6f8f4d58e $
  *
  * Authors: Rocky Bernstein
  *          Gildas Bazin <gbazin@videolan.org>
@@ -34,8 +35,6 @@
 #include <vlc_plugin.h>
 #include <vlc_codec.h>
 #include <vlc_bits.h>
-
-#include "../demux/mpeg/timestamps.h"
 
 /*****************************************************************************
  * Module descriptor.
@@ -72,13 +71,15 @@ static void SVCDSubRenderImage( decoder_t *, block_t *, subpicture_region_t * );
 
 #define GETINT16(p) GetWBE(p)  ; p +=2;
 
+#define GETINT32(p) GetDWBE(p) ; p += 4;
+
 typedef enum  {
   SUBTITLE_BLOCK_EMPTY    = 0,
   SUBTITLE_BLOCK_PARTIAL  = 1,
   SUBTITLE_BLOCK_COMPLETE = 2
 } packet_state_t;
 
-typedef struct
+struct decoder_sys_t
 {
   packet_state_t i_state; /* data-gathering state for this subtitle */
 
@@ -97,7 +98,7 @@ typedef struct
   size_t metadata_offset;          /* offset to data describing the image */
   size_t metadata_length;          /* length of metadata */
 
-  vlc_tick_t i_duration;   /* how long to display the image, 0 stands
+  mtime_t i_duration;   /* how long to display the image, 0 stands
                            for "until next subtitle" */
 
   uint16_t i_x_start, i_y_start; /* position of top leftmost pixel of
@@ -105,9 +106,12 @@ typedef struct
   uint16_t i_width, i_height;    /* dimensions in pixels of image */
 
   uint8_t p_palette[4][4];       /* Palette of colors used in subtitle */
-} decoder_sys_t;
+};
 
-static int OpenCommon( vlc_object_t *p_this, bool b_packetizer )
+/*****************************************************************************
+ * DecoderOpen: open/initialize the svcdsub decoder.
+ *****************************************************************************/
+static int DecoderOpen( vlc_object_t *p_this )
 {
     decoder_t     *p_dec = (decoder_t*)p_this;
     decoder_sys_t *p_sys;
@@ -127,20 +131,10 @@ static int OpenCommon( vlc_object_t *p_this, bool b_packetizer )
 
     p_dec->fmt_out.i_codec = VLC_CODEC_OGT;
 
-    if( b_packetizer )
-        p_dec->pf_packetize = Packetize;
-    else
-        p_dec->pf_decode    = Decode;
+    p_dec->pf_decode    = Decode;
+    p_dec->pf_packetize = Packetize;
 
     return VLC_SUCCESS;
-}
-
-/*****************************************************************************
- * DecoderOpen: open/initialize the svcdsub decoder.
- *****************************************************************************/
-static int DecoderOpen( vlc_object_t *p_this )
-{
-    return OpenCommon( p_this, false );
 }
 
 /*****************************************************************************
@@ -148,7 +142,9 @@ static int DecoderOpen( vlc_object_t *p_this )
  *****************************************************************************/
 static int PacketizerOpen( vlc_object_t *p_this )
 {
-    return OpenCommon( p_this, true );
+    if( DecoderOpen( p_this ) != VLC_SUCCESS ) return VLC_EGENERIC;
+
+    return VLC_SUCCESS;
 }
 
 /*****************************************************************************
@@ -200,7 +196,7 @@ static block_t *Packetize( decoder_t *p_dec, block_t **pp_block )
     if( !(p_spu = Reassemble( p_dec, p_block )) ) return NULL;
 
     p_spu->i_dts = p_spu->i_pts;
-    p_spu->i_length = VLC_TICK_INVALID;
+    p_spu->i_length = 0;
 
     return p_spu;
 }
@@ -366,28 +362,17 @@ static void ParseHeader( decoder_t *p_dec, block_t *p_block )
 {
     decoder_sys_t *p_sys = p_dec->p_sys;
     uint8_t *p = p_block->p_buffer;
-    size_t i_buffer = p_block->i_buffer;
     uint8_t i_options, i_cmd;
     int i;
-
-    if (i_buffer < 4) return;
 
     p_sys->i_spu_size = GETINT16(p);
     i_options  = *p++;
     // Skip over unused value
     p++;
 
-    i_buffer -= 4;
-
-    if( i_options & 0x08 ) {
-      if (i_buffer < 4) return;
-      p_sys->i_duration = FROM_SCALE_NZ(GetDWBE(p));
-      p += 4;
-      i_buffer -= 4;
-    }
+    if( i_options & 0x08 ) { p_sys->i_duration = GETINT32(p); }
     else p_sys->i_duration = 0; /* Ephemer subtitle */
-
-    if (i_buffer < 25) return;
+    p_sys->i_duration *= 100 / 9;
 
     p_sys->i_x_start = GETINT16(p);
     p_sys->i_y_start = GETINT16(p);
@@ -403,21 +388,12 @@ static void ParseHeader( decoder_t *p_dec, block_t *p_block )
     }
 
     i_cmd = *p++;
-
-    i_buffer -= 25;
-
     /* We do not really know this, FIXME */
-    if( i_cmd ) {
-      if (i_buffer < 4) return;
-      p += 4;
-      i_buffer -= 4;
-    }
+    if( i_cmd ) { p += 4; }
 
     /* Actually, this is measured against a different origin, so we have to
      * adjust it */
-    if (i_buffer < 2) return;
     p_sys->second_field_offset = GETINT16(p);
-    i_buffer -= 2;
     p_sys->i_image_offset  = p - p_block->p_buffer;
     p_sys->i_image_length  = p_sys->i_spu_size - p_sys->i_image_offset;
     p_sys->metadata_length = p_sys->i_image_offset;

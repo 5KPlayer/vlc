@@ -2,6 +2,7 @@
  * playtree.cpp
  *****************************************************************************
  * Copyright (C) 2005 the VideoLAN team
+ * $Id: c0d2fda468e0548ba22d234834edf872d4978884 $
  *
  * Authors: Antoine Cellerier <dionoea@videolan.org>
  *          Clément Stenac <zorglub@videolan.org>
@@ -29,7 +30,7 @@
 #include <vlc_common.h>
 
 #include "playtree.hpp"
-#include <vlc_playlist_legacy.h>
+#include <vlc_playlist.h>
 #include <vlc_input_item.h>
 #include <vlc_url.h>
 #include "../utils/ustring.hpp"
@@ -292,6 +293,12 @@ void Playtree::insertItems( VarTree& elem, const std::list<std::string>& files, 
     if( p_elem->getId() == m_pPlaylist->p_playing->i_id )
     {
         p_node = m_pPlaylist->p_playing;
+        i_pos = 0;
+        p_elem->setExpanded( true );
+    }
+    else if( p_elem->getId() == m_pPlaylist->p_media_library->i_id )
+    {
+        p_node = m_pPlaylist->p_media_library;
         i_pos = 0;
         p_elem->setExpanded( true );
     }

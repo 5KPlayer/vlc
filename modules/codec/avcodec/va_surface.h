@@ -33,7 +33,7 @@ struct va_pic_context
 {
     picture_context_t         s;
     struct vlc_va_surface_t *va_surface;
-    picture_sys_t             picsys;
+    struct picture_sys_t      picsys;
 };
 
 #endif /* AVCODEC_VA_SURFACE_H */

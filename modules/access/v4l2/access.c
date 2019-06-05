@@ -37,7 +37,7 @@
 
 #include "v4l2.h"
 
-typedef struct
+struct access_sys_t
 {
     int fd;
     uint32_t block_flags;
@@ -48,7 +48,7 @@ typedef struct
     };
     struct buffer_t *bufv;
     vlc_v4l2_ctrl_t *controls;
-} access_sys_t;
+};
 
 static block_t *MMapBlock (stream_t *, bool *);
 static block_t *ReadBlock (stream_t *, bool *);
@@ -86,7 +86,7 @@ int AccessOpen( vlc_object_t *obj )
         goto error;
     }
 
-    sys->controls = ControlsInit(vlc_object_parent(obj), fd);
+    sys->controls = ControlsInit (VLC_OBJECT(access), fd);
     access->pf_seek = NULL;
     access->pf_control = AccessControl;
     return VLC_SUCCESS;
@@ -192,7 +192,7 @@ void AccessClose( vlc_object_t *obj )
 
     if (sys->bufv != NULL)
         StopMmap (sys->fd, sys->bufv, sys->bufc);
-    ControlsDeinit(vlc_object_parent(obj), sys->controls);
+    ControlsDeinit( obj, sys->controls );
     v4l2_close (sys->fd);
     free( sys );
 }
@@ -220,7 +220,7 @@ static block_t *MMapBlock (stream_t *access, bool *restrict eof)
     block_t *block = GrabVideo (VLC_OBJECT(access), sys->fd, sys->bufv);
     if( block != NULL )
     {
-        block->i_pts = block->i_dts = vlc_tick_now();
+        block->i_pts = block->i_dts = mdate();
         block->i_flags |= sys->block_flags;
     }
     (void) eof;
@@ -263,8 +263,8 @@ static int AccessControl( stream_t *access, int query, va_list args )
             break;
 
         case STREAM_GET_PTS_DELAY:
-            *va_arg(args,vlc_tick_t *) = VLC_TICK_FROM_MS(
-                var_InheritInteger( access, "live-caching" ) );
+            *va_arg(args,int64_t *) = INT64_C(1000)
+                * var_InheritInteger( access, "live-caching" );
             break;
 
         case STREAM_SET_PAUSE_STATE:

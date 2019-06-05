@@ -4,6 +4,7 @@
  * Copyright (C) 2003-2004, 2010 VLC authors and VideoLAN
  * Copyright © 2007 Rémi Denis-Courmont
  *
+ * $Id: 52bc54fc9bad2cc83e78ad187414cf7a223078fb $
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *          Pierre Ynard
@@ -68,7 +69,7 @@ struct rtsp_stream_t
     int             sessionc;
     rtsp_session_t **sessionv;
 
-    vlc_tick_t      timeout;
+    int             timeout;
     vlc_timer_t     timer;
 };
 
@@ -95,8 +96,8 @@ rtsp_stream_t *RtspSetup( vlc_object_t *owner, vod_media_t *media,
     rtsp->vod_media = media;
     vlc_mutex_init( &rtsp->lock );
 
-    rtsp->timeout = vlc_tick_from_sec(__MAX(0,var_InheritInteger(owner, "rtsp-timeout")));
-    if (rtsp->timeout != 0)
+    rtsp->timeout = var_InheritInteger(owner, "rtsp-timeout");
+    if (rtsp->timeout > 0)
     {
         if (vlc_timer_create(&rtsp->timer, RtspTimeOut, rtsp))
             goto error;
@@ -147,7 +148,7 @@ void RtspUnsetup( rtsp_stream_t *rtsp )
     while( rtsp->sessionc > 0 )
         RtspClientDel( rtsp, rtsp->sessionv[0] );
 
-    if (rtsp->timeout != 0)
+    if (rtsp->timeout > 0)
         vlc_timer_destroy(rtsp->timer);
 
     free( rtsp->psz_path );
@@ -176,7 +177,7 @@ struct rtsp_session_t
 {
     rtsp_stream_t *stream;
     uint64_t       id;
-    vlc_tick_t     last_seen; /* for timeouts */
+    mtime_t        last_seen; /* for timeouts */
 
     /* output (id-access) */
     int            trackc;
@@ -299,24 +300,18 @@ void RtspDelId( rtsp_stream_t *rtsp, rtsp_stream_id_t *id )
 /** rtsp must be locked */
 static void RtspUpdateTimer( rtsp_stream_t *rtsp )
 {
-    if (rtsp->timeout == 0)
+    if (rtsp->timeout <= 0)
         return;
 
-    vlc_tick_t timeout = 0;
+    mtime_t timeout = 0;
     for (int i = 0; i < rtsp->sessionc; i++)
     {
         if (timeout == 0 || rtsp->sessionv[i]->last_seen < timeout)
             timeout = rtsp->sessionv[i]->last_seen;
     }
     if (timeout != 0)
-    {
-        timeout += rtsp->timeout;
-        vlc_timer_schedule(rtsp->timer, true, timeout, VLC_TIMER_FIRE_ONCE);
-    }
-    else
-    {
-        vlc_timer_disarm(rtsp->timer);
-    }
+        timeout += rtsp->timeout * CLOCK_FREQ;
+    vlc_timer_schedule(rtsp->timer, true, timeout, 0);
 }
 
 
@@ -325,10 +320,10 @@ static void RtspTimeOut( void *data )
     rtsp_stream_t *rtsp = data;
 
     vlc_mutex_lock(&rtsp->lock);
-    vlc_tick_t now = vlc_tick_now();
+    mtime_t now = mdate();
     for (int i = rtsp->sessionc - 1; i >= 0; i--)
     {
-        if (rtsp->sessionv[i]->last_seen + rtsp->timeout < now)
+        if (rtsp->sessionv[i]->last_seen + rtsp->timeout * CLOCK_FREQ < now)
         {
             if (rtsp->vod_media != NULL)
             {
@@ -408,10 +403,10 @@ void RtspClientDel( rtsp_stream_t *rtsp, rtsp_session_t *session )
 /** rtsp must be locked */
 static void RtspClientAlive( rtsp_session_t *session )
 {
-    if (session->stream->timeout == 0)
+    if (session->stream->timeout <= 0)
         return;
 
-    session->last_seen = vlc_tick_now();
+    session->last_seen = mdate();
     RtspUpdateTimer(session->stream);
 }
 
@@ -575,7 +570,7 @@ static inline const char *parameter_next( const char *str )
 }
 
 
-static vlc_tick_t ParseNPT (const char *str)
+static int64_t ParseNPT (const char *str)
 {
     locale_t loc = newlocale (LC_NUMERIC_MASK, "C", NULL);
     locale_t oldloc = uselocale (loc);
@@ -593,7 +588,7 @@ static vlc_tick_t ParseNPT (const char *str)
         uselocale (oldloc);
         freelocale (loc);
     }
-    return sec < 0 ? -1 : vlc_tick_from_sec( sec );
+    return sec < 0 ? -1 : sec * CLOCK_FREQ;
 }
 
 
@@ -951,7 +946,7 @@ static int RtspHandler( rtsp_stream_t *rtsp, rtsp_stream_id_t *id,
             answer->i_status = 200;
 
             psz_session = httpd_MsgGet( query, "Session" );
-            vlc_tick_t start = -1, end = -1, npt;
+            int64_t start = -1, end = -1, npt;
             const char *range = httpd_MsgGet (query, "Range");
             if (range != NULL)
             {
@@ -1011,7 +1006,7 @@ static int RtspHandler( rtsp_stream_t *rtsp, rtsp_stream_id_t *id,
                             break;
                     }
                 }
-                vlc_tick_t ts = rtp_get_ts(vod ? NULL : (sout_stream_t *)owner,
+                int64_t ts = rtp_get_ts(vod ? NULL : (sout_stream_t *)owner,
                                         sout_id, rtsp->vod_media, psz_session,
                                         vod ? NULL : &npt);
 
@@ -1072,7 +1067,7 @@ static int RtspHandler( rtsp_stream_t *rtsp, rtsp_stream_id_t *id,
                     npt = start;
                 }
 
-                double f_npt = secf_from_vlc_tick(npt);
+                double f_npt = (double) npt / CLOCK_FREQ;
                 httpd_MsgAdd( answer, "Range", "npt=%f-", f_npt );
             }
 
@@ -1128,16 +1123,15 @@ static int RtspHandler( rtsp_stream_t *rtsp, rtsp_stream_id_t *id,
             if (ses != NULL && id == NULL)
             {
                 assert(vod);
-                vlc_tick_t npt = 0;
+                int64_t npt = 0;
                 vod_pause(rtsp->vod_media, psz_session, &npt);
-                double f_npt = secf_from_vlc_tick(npt);
+                double f_npt = (double) npt / CLOCK_FREQ;
                 httpd_MsgAdd( answer, "Range", "npt=%f-", f_npt );
             }
             break;
         }
 
         case HTTPD_MSG_GETPARAMETER:
-        {
             if( query->i_body > 0 )
             {
                 answer->i_status = 451;
@@ -1152,7 +1146,6 @@ static int RtspHandler( rtsp_stream_t *rtsp, rtsp_stream_id_t *id,
                 RtspClientAlive(ses);
             vlc_mutex_unlock( &rtsp->lock );
             break;
-        }
 
         case HTTPD_MSG_TEARDOWN:
         {
@@ -1199,9 +1192,9 @@ static int RtspHandler( rtsp_stream_t *rtsp, rtsp_stream_id_t *id,
 
     if( psz_session )
     {
-        if (rtsp->timeout != 0)
-            httpd_MsgAdd( answer, "Session", "%s;timeout=%" PRIu64, psz_session,
-                                                              SEC_FROM_VLC_TICK(rtsp->timeout) );
+        if (rtsp->timeout > 0)
+            httpd_MsgAdd( answer, "Session", "%s;timeout=%d", psz_session,
+                                                              rtsp->timeout );
         else
             httpd_MsgAdd( answer, "Session", "%s", psz_session );
     }

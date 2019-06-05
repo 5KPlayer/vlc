@@ -37,9 +37,13 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#ifndef HAVE_LSTAT
+# define lstat(a, b) stat(a, b)
+#endif
 #include <dirent.h>
-#ifdef HAVE_SYS_SOCKET_H
 #include <sys/socket.h>
+#ifndef O_TMPFILE
+# define O_TMPFILE 0
 #endif
 
 #include <vlc_common.h>
@@ -58,7 +62,7 @@ int vlc_open (const char *filename, int flags, ...)
     va_list ap;
 
     va_start (ap, flags);
-    if (flags & O_CREAT)
+    if (flags & (O_CREAT|O_TMPFILE))
         mode = va_arg (ap, unsigned int);
     va_end (ap);
 
@@ -78,7 +82,7 @@ int vlc_openat (int dir, const char *filename, int flags, ...)
     va_list ap;
 
     va_start (ap, flags);
-    if (flags & O_CREAT)
+    if (flags & (O_CREAT|O_TMPFILE))
         mode = va_arg (ap, unsigned int);
     va_end (ap);
 
@@ -105,10 +109,22 @@ int vlc_mkstemp (char *template)
 #endif
 }
 
-VLC_WEAK int vlc_memfd(void)
+int vlc_memfd (void)
 {
-    char bufpath[] = "/tmp/"PACKAGE_NAME"XXXXXX";
     int fd;
+#if O_TMPFILE
+    fd = vlc_open ("/tmp", O_RDWR|O_TMPFILE, S_IRUSR|S_IWUSR);
+    if (fd != -1)
+        return fd;
+    /* ENOENT means either /tmp is missing (!) or the kernel does not support
+     * O_TMPFILE. EISDIR means /tmp exists but the kernel does not support
+     * O_TMPFILE. EOPNOTSUPP means the kernel supports O_TMPFILE but the /tmp
+     * filesystem does not. Do not fallback on other errors. */
+    if (errno != ENOENT && errno != EISDIR && errno != EOPNOTSUPP)
+        return -1;
+#endif
+
+    char bufpath[] = "/tmp/"PACKAGE_NAME"XXXXXX";
 
     fd = vlc_mkstemp (bufpath);
     if (fd != -1)

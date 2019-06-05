@@ -33,10 +33,10 @@
 #define D3D_DecoderDevice   IUnknown
 #define D3D_DecoderSurface  IUnknown
 
-typedef struct
+struct picture_sys_t
 {
     void *dummy;
-} picture_sys_t;
+};
 
 #include "directx_va.h"
 

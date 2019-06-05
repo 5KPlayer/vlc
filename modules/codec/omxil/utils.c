@@ -2,6 +2,7 @@
  * utils.c: helper functions
  *****************************************************************************
  * Copyright (C) 2010 VLC authors and VideoLAN
+ * $Id: bdb8e445ce9f5a1c9d243d9a24e9d0e26cd1f5ae $
  *
  * Authors: Gildas Bazin <gbazin@videolan.org>
  *
@@ -80,7 +81,7 @@ OMX_ERRORTYPE WaitForOmxEvent(OmxEventQueue *queue, OMX_EVENTTYPE *event,
     OMX_U32 *data_1, OMX_U32 *data_2, OMX_PTR *event_data)
 {
     OmxEvent *p_event;
-    vlc_tick_t deadline = vlc_tick_now() + VLC_TICK_FROM_SEC(1);
+    mtime_t deadline = mdate() + CLOCK_FREQ;
 
     vlc_mutex_lock(&queue->mutex);
 
@@ -115,7 +116,7 @@ OMX_ERRORTYPE WaitForSpecificOmxEvent(OmxEventQueue *queue,
 {
     OMX_ERRORTYPE status;
     OMX_EVENTTYPE event;
-    vlc_tick_t before =  vlc_tick_now();
+    mtime_t before =  mdate();
 
     while(1)
     {
@@ -123,7 +124,7 @@ OMX_ERRORTYPE WaitForSpecificOmxEvent(OmxEventQueue *queue,
         if(status != OMX_ErrorNone) return status;
 
         if(event == specific_event) break;
-        if(vlc_tick_now() - before > VLC_TICK_FROM_SEC(1)) return OMX_ErrorTimeout;
+        if(mdate() - before > CLOCK_FREQ) return OMX_ErrorTimeout;
     }
 
     return OMX_ErrorNone;

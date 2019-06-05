@@ -2,6 +2,7 @@
  * standard.c: standard stream output module
  *****************************************************************************
  * Copyright (C) 2003-2011 VLC authors and VideoLAN
+ * $Id: 29f80b58651b63d7c563341bd7b8bf9330274fba $
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *
@@ -123,34 +124,31 @@ static const char *const ppsz_sout_options[] = {
 
 #define DEFAULT_PORT 1234
 
-typedef struct
+struct sout_stream_sys_t
 {
     sout_mux_t           *p_mux;
     session_descriptor_t *p_session;
-} sout_stream_sys_t;
+};
 
-static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
+static sout_stream_id_sys_t * Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
 {
-    sout_stream_sys_t *p_sys = p_stream->p_sys;
-    return sout_MuxAddStream( p_sys->p_mux, p_fmt );
+    return (sout_stream_id_sys_t*)sout_MuxAddStream( p_stream->p_sys->p_mux, p_fmt );
 }
 
-static void Del( sout_stream_t *p_stream, void *id )
+static void Del( sout_stream_t *p_stream, sout_stream_id_sys_t *id )
 {
-    sout_stream_sys_t *p_sys = p_stream->p_sys;
-    sout_MuxDeleteStream( p_sys->p_mux, (sout_input_t*)id );
+    sout_MuxDeleteStream( p_stream->p_sys->p_mux, (sout_input_t*)id );
 }
 
-static int Send( sout_stream_t *p_stream, void *id, block_t *p_buffer )
+static int Send( sout_stream_t *p_stream, sout_stream_id_sys_t *id,
+                 block_t *p_buffer )
 {
-    sout_stream_sys_t *p_sys = p_stream->p_sys;
-    return sout_MuxSendBuffer( p_sys->p_mux, (sout_input_t*)id, p_buffer );
+    return sout_MuxSendBuffer( p_stream->p_sys->p_mux, (sout_input_t*)id, p_buffer );
 }
 
-static void Flush( sout_stream_t *p_stream, void *id )
+static void Flush( sout_stream_t *p_stream, sout_stream_id_sys_t *id )
 {
-    sout_stream_sys_t *p_sys = p_stream->p_sys;
-    sout_MuxFlush( p_sys->p_mux, (sout_input_t*)id );
+    sout_MuxFlush( p_stream->p_sys->p_mux, (sout_input_t*)id );
 }
 
 static void create_SDP(sout_stream_t *p_stream, sout_access_out_t *p_access)

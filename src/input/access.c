@@ -2,6 +2,7 @@
  * access.c
  *****************************************************************************
  * Copyright (C) 1999-2008 VLC authors and VideoLAN
+ * $Id: 2e7c1aea1da5cdcb2ea22daf3e08ce3cee6844e7 $
  *
  * Author: Laurent Aimar <fenrir _AT_ videolan _DOT_ org>
  *
@@ -37,16 +38,6 @@
 #include "stream.h"
 #include "input_internal.h"
 
-struct vlc_access_private
-{
-    module_t *module;
-};
-
-struct vlc_access_stream_private
-{
-    input_thread_t *input;
-};
-
 /* Decode URL (which has had its scheme stripped earlier) to a file path. */
 char *get_path(const char *location)
 {
@@ -65,65 +56,31 @@ char *get_path(const char *location)
 
 static void vlc_access_Destroy(stream_t *access)
 {
-    struct vlc_access_private *priv = vlc_stream_Private(access);
-
-    module_unneed(access, priv->module);
+    module_unneed(access, access->p_module);
     free(access->psz_filepath);
     free(access->psz_name);
 }
 
 #define MAX_REDIR 5
 
-static stream_t *accessNewAttachment(vlc_object_t *parent,
-                                     input_thread_t *input, const char *mrl)
-{
-    if (!input)
-        return NULL;
-
-    input_attachment_t *attachment = input_GetAttachment(input, mrl + 13);
-    if (!attachment)
-        return NULL;
-    stream_t *stream = vlc_stream_AttachmentNew(parent, attachment);
-    if (!stream)
-    {
-        vlc_input_attachment_Delete(attachment);
-        return NULL;
-    }
-    stream->psz_url = strdup(mrl);
-    if (!stream->psz_url)
-    {
-        vlc_stream_Delete(stream);
-        return NULL;
-    }
-    stream->psz_location = stream->psz_url + 13;
-    return stream;
-}
-
 /*****************************************************************************
  * access_New:
  *****************************************************************************/
 static stream_t *access_New(vlc_object_t *parent, input_thread_t *input,
-                            es_out_t *out, bool preparsing, const char *mrl)
+                            bool preparsing, const char *mrl)
 {
-    struct vlc_access_private *priv;
     char *redirv[MAX_REDIR];
     unsigned redirc = 0;
 
-    if (strncmp(mrl, "attachment://", 13) == 0)
-        return accessNewAttachment(parent, input, mrl);
-
-    stream_t *access = vlc_stream_CustomNew(parent, vlc_access_Destroy,
-                                            sizeof (*priv), "access");
+    stream_t *access = vlc_stream_CommonNew(parent, vlc_access_Destroy);
     if (unlikely(access == NULL))
         return NULL;
 
-    access->p_input_item = input ? input_GetItem(input) : NULL;
-    access->out = out;
+    access->p_input = input;
     access->psz_name = NULL;
     access->psz_url = strdup(mrl);
     access->psz_filepath = NULL;
     access->b_preparsing = preparsing;
-    priv = vlc_stream_Private(access);
 
     if (unlikely(access->psz_url == NULL))
         goto error;
@@ -146,8 +103,9 @@ static stream_t *access_New(vlc_object_t *parent, input_thread_t *input,
         if (access->psz_filepath != NULL)
             msg_Dbg(access, " (path: %s)", access->psz_filepath);
 
-        priv->module = module_need(access, "access", access->psz_name, true);
-        if (priv->module != NULL) /* success */
+        access->p_module = module_need(access, "access", access->psz_name,
+                                       true);
+        if (access->p_module != NULL) /* success */
         {
             while (redirc > 0)
                 free(redirv[--redirc]);
@@ -187,7 +145,7 @@ error:
 
 stream_t *vlc_access_NewMRL(vlc_object_t *parent, const char *mrl)
 {
-    return access_New(parent, NULL, NULL, false, mrl);
+    return access_New(parent, NULL, false, mrl);
 }
 
 /*****************************************************************************
@@ -206,7 +164,9 @@ int access_vaDirectoryControlHelper( stream_t *p_access, int i_query, va_list ar
             *va_arg( args, bool* ) = false;
             break;
         case STREAM_GET_PTS_DELAY:
-            *va_arg( args, vlc_tick_t * ) = 0;
+            *va_arg( args, int64_t * ) = 0;
+            break;
+        case STREAM_IS_DIRECTORY:
             break;
         default:
             return VLC_EGENERIC;
@@ -214,10 +174,17 @@ int access_vaDirectoryControlHelper( stream_t *p_access, int i_query, va_list ar
      return VLC_SUCCESS;
 }
 
+static int AStreamNoReadDir(stream_t *s, input_item_node_t *p_node)
+{
+    (void) s; (void) p_node;
+    return VLC_EGENERIC;;
+}
+
 /* Block access */
 static block_t *AStreamReadBlock(stream_t *s, bool *restrict eof)
 {
     stream_t *access = s->p_sys;
+    input_thread_t *input = s->p_input;
     block_t * block;
 
     if (vlc_stream_Eof(access))
@@ -230,13 +197,16 @@ static block_t *AStreamReadBlock(stream_t *s, bool *restrict eof)
 
     block = vlc_stream_ReadBlock(access);
 
-    if (block != NULL)
+    if (block != NULL && input != NULL)
     {
-        struct vlc_access_stream_private *priv = vlc_stream_Private(s);
-        struct input_stats *stats =
-            priv->input ? input_priv(priv->input)->stats : NULL;
-        if (stats != NULL)
-            input_rate_Add(&stats->input_bitrate, block->i_buffer);
+        uint64_t total;
+
+        vlc_mutex_lock(&input_priv(input)->counters.counters_lock);
+        stats_Update(input_priv(input)->counters.p_read_bytes,
+                     block->i_buffer, &total);
+        stats_Update(input_priv(input)->counters.p_input_bitrate, total, NULL);
+        stats_Update(input_priv(input)->counters.p_read_packets, 1, NULL);
+        vlc_mutex_unlock(&input_priv(input)->counters.counters_lock);
     }
 
     return block;
@@ -246,6 +216,7 @@ static block_t *AStreamReadBlock(stream_t *s, bool *restrict eof)
 static ssize_t AStreamReadStream(stream_t *s, void *buf, size_t len)
 {
     stream_t *access = s->p_sys;
+    input_thread_t *input = s->p_input;
 
     if (vlc_stream_Eof(access))
         return 0;
@@ -254,16 +225,26 @@ static ssize_t AStreamReadStream(stream_t *s, void *buf, size_t len)
 
     ssize_t val = vlc_stream_ReadPartial(access, buf, len);
 
-    if (val > 0)
+    if (val > 0 && input != NULL)
     {
-        struct vlc_access_stream_private *priv = vlc_stream_Private(s);
-        struct input_stats *stats =
-            priv->input ? input_priv(priv->input)->stats : NULL;
-        if (stats != NULL)
-            input_rate_Add(&stats->input_bitrate, val);
+        uint64_t total;
+
+        vlc_mutex_lock(&input_priv(input)->counters.counters_lock);
+        stats_Update(input_priv(input)->counters.p_read_bytes, val, &total);
+        stats_Update(input_priv(input)->counters.p_input_bitrate, total, NULL);
+        stats_Update(input_priv(input)->counters.p_read_packets, 1, NULL);
+        vlc_mutex_unlock(&input_priv(input)->counters.counters_lock);
     }
 
     return val;
+}
+
+/* Directory */
+static int AStreamReadDir(stream_t *s, input_item_node_t *p_node)
+{
+    stream_t *access = s->p_sys;
+
+    return access->pf_readdir(access, p_node);
 }
 
 /* Common */
@@ -289,50 +270,50 @@ static void AStreamDestroy(stream_t *s)
 }
 
 stream_t *stream_AccessNew(vlc_object_t *parent, input_thread_t *input,
-                           es_out_t *out, bool preparsing, const char *url)
+                           bool preparsing, const char *url)
 {
-    stream_t *access = access_New(parent, input, out, preparsing, url);
-    if (access == NULL)
+    stream_t *s = vlc_stream_CommonNew(parent, AStreamDestroy);
+    if (unlikely(s == NULL))
         return NULL;
 
-    stream_t *s;
-
-    if (access->pf_block != NULL || access->pf_read != NULL)
+    stream_t *access = access_New(VLC_OBJECT(s), input, preparsing, url);
+    if (access == NULL)
     {
-        struct vlc_access_stream_private *priv;
-        s = vlc_stream_CustomNew(VLC_OBJECT(access), AStreamDestroy,
-                                 sizeof(*priv), "stream");
+        stream_CommonDelete(s);
+        return NULL;
+    }
 
-        if (unlikely(s == NULL))
-        {
-            vlc_stream_Delete(access);
-            return NULL;
-        }
-        priv = vlc_stream_Private(s);
-        priv->input = input;
+    s->p_input = input;
+    s->psz_url = strdup(access->psz_url);
 
-        s->p_input_item = input ? input_GetItem(input) : NULL;
-        s->psz_url = strdup(access->psz_url);
-        if (unlikely(s->psz_url == NULL))
-        {
-            vlc_object_delete(s);
-            vlc_stream_Delete(access);
-            return NULL;
-        }
+    const char *cachename;
 
-        if (access->pf_block != NULL)
-            s->pf_block = AStreamReadBlock;
-        if (access->pf_read != NULL)
-            s->pf_read = AStreamReadStream;
-
-        s->pf_seek = AStreamSeek;
-        s->pf_control = AStreamControl;
-        s->p_sys = access;
-
-        s = stream_FilterChainNew(s, "prefetch,cache");
+    if (access->pf_block != NULL)
+    {
+        s->pf_block = AStreamReadBlock;
+        cachename = "prefetch,cache_block";
     }
     else
-        s = access;
+    if (access->pf_read != NULL)
+    {
+        s->pf_read = AStreamReadStream;
+        cachename = "prefetch,cache_read";
+    }
+    else
+    {
+        cachename = NULL;
+    }
 
-    return s;
+    if (access->pf_readdir != NULL)
+        s->pf_readdir = AStreamReadDir;
+    else
+        s->pf_readdir = AStreamNoReadDir;
+
+    s->pf_seek    = AStreamSeek;
+    s->pf_control = AStreamControl;
+    s->p_sys      = access;
+
+    if (cachename != NULL)
+        s = stream_FilterChainNew(s, cachename);
+    return stream_FilterAutoNew(s);
 }

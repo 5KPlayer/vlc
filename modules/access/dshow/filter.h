@@ -3,6 +3,7 @@
  * CapturePin, CaptureFilter, CaptureEnumPins implementations
  *****************************************************************************
  * Copyright (C) 2002-2004, 2008 VLC authors and VideoLAN
+ * $Id: 733f45b7bddd4e2f5c09896d5a8466f9bb5a31fc $
  *
  * Author: Gildas Bazin <gbazin@videolan.org>
  *
@@ -27,12 +28,10 @@
 
 #include <deque>
 
-namespace dshow {
-
 struct VLCMediaSample
 {
     ComPtr<IMediaSample> p_sample;
-    vlc_tick_t i_timestamp;
+    mtime_t i_timestamp;
 };
 
 /* */
@@ -227,5 +226,3 @@ public:
 private:
     virtual ~CaptureEnumMediaTypes();
 };
-
-} // namespace

@@ -29,15 +29,6 @@ namespace adaptive
     {
         class Transport;
 
-        enum RequestStatus
-        {
-            Success,
-            Redirection,
-            Unauthorized,
-            NotFound,
-            GenericError,
-        };
-
         class BackendPrefInterface
         {
             /* Design Hack for now to force fallback on regular access

@@ -2,6 +2,7 @@
  * x264.c: h264 video encoder
  *****************************************************************************
  * Copyright (C) 2004-2010 the VideoLAN team
+ * $Id: bcf3c89a10f1b18af01275b6855515ad59a8e7b6 $
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *          Ilkka Ollakka <ileoo (at)videolan org>
@@ -37,7 +38,7 @@
 #include <vlc_cpu.h>
 #include <math.h>
 
-#if defined(PTW32_STATIC_LIB) && defined(HAVE_PTHREAD_H)
+#ifdef PTW32_STATIC_LIB
 #include <pthread.h>
 #endif
 #ifdef MODULE_NAME_IS_x262
@@ -756,16 +757,18 @@ static const char *const ppsz_sout_options[] = {
 
 static block_t *Encode( encoder_t *, picture_t * );
 
-typedef struct
+struct encoder_sys_t
 {
     x264_t          *h;
     x264_param_t    param;
+
+    mtime_t         i_initial_delay;
 
     char            *psz_stat_name;
     int             i_sei_size;
     uint32_t         i_colorspace;
     uint8_t         *p_sei;
-} encoder_sys_t;
+};
 
 #ifdef PTW32_STATIC_LIB
 static vlc_mutex_t pthread_win32_mutex = VLC_STATIC_MUTEX;
@@ -810,12 +813,12 @@ static int  Open ( vlc_object_t *p_this )
 #else
     p_enc->fmt_out.i_codec = VLC_CODEC_H264;
 #endif
-    p_enc->p_sys = p_sys = vlc_obj_malloc( p_this, sizeof( encoder_sys_t ) );
+    p_enc->p_sys = p_sys = malloc( sizeof( encoder_sys_t ) );
     if( !p_sys )
         return VLC_ENOMEM;
 
     fullrange = var_GetBool( p_enc, SOUT_CFG_PREFIX "fullrange" );
-    fullrange |= p_enc->fmt_in.video.color_range == COLOR_RANGE_FULL;
+    fullrange |= p_enc->fmt_in.video.b_color_range_full;
     p_enc->fmt_in.i_codec = fullrange ? VLC_CODEC_J420 : VLC_CODEC_I420;
     p_sys->i_colorspace = X264_CSP_I420;
     char *psz_profile = var_GetString( p_enc, SOUT_CFG_PREFIX "profile" );
@@ -846,7 +849,6 @@ static int  Open ( vlc_object_t *p_this )
         else
         {
             msg_Err( p_enc, "Only high-profiles and 10-bit are supported");
-            free( psz_profile );
             return VLC_EGENERIC;
         }
 # endif
@@ -854,14 +856,15 @@ static int  Open ( vlc_object_t *p_this )
 # ifdef MODULE_NAME_IS_x26410b
     else
     {
-        msg_Err( p_enc, "Only high-profiles and 10-bit are supported");
-        return VLC_EGENERIC;
+            msg_Err( p_enc, "Only high-profiles and 10-bit are supported");
+            return VLC_EGENERIC;
     }
 # endif
     free( psz_profile );
 
     p_enc->pf_encode_video = Encode;
     p_enc->pf_encode_audio = NULL;
+    p_sys->i_initial_delay = 0;
     p_sys->psz_stat_name = NULL;
     p_sys->i_sei_size = 0;
     p_sys->p_sei = NULL;
@@ -1500,7 +1503,7 @@ static block_t *Encode( encoder_t *p_enc, picture_t *p_pict )
 
        x264_encoder_encode( p_sys->h, &nal, &i_nal, &pic, &pic );
     } else {
-       while( x264_encoder_delayed_frames( p_sys->h ) && i_nal == 0 ) {
+       if( x264_encoder_delayed_frames( p_sys->h ) ) {
            x264_encoder_encode( p_sys->h, &nal, &i_nal, NULL, &pic );
        }
     }
@@ -1541,9 +1544,9 @@ static block_t *Encode( encoder_t *p_enc, picture_t *p_pict )
     if( !p_sys->param.b_vfr_input )
     {
         /* This isn't really valid for streams with B-frames */
-        p_block->i_length = vlc_tick_from_samples(
-                    p_enc->fmt_in.video.i_frame_rate_base,
-                    p_enc->fmt_in.video.i_frame_rate );
+        p_block->i_length = CLOCK_FREQ *
+            p_enc->fmt_in.video.i_frame_rate_base /
+                p_enc->fmt_in.video.i_frame_rate;
     }
 
     /* scale pts-values back*/
@@ -1583,4 +1586,6 @@ static void Close( vlc_object_t *p_this )
 
     vlc_mutex_unlock( &pthread_win32_mutex );
 #endif
+
+    free( p_sys );
 }

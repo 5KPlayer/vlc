@@ -139,11 +139,11 @@ struct rtp_source_t
 {
     uint32_t ssrc;
     uint32_t jitter;  /* interarrival delay jitter estimate */
-    vlc_tick_t  last_rx; /* last received packet local timestamp */
+    mtime_t  last_rx; /* last received packet local timestamp */
     uint32_t last_ts; /* last received packet RTP timestamp */
 
     uint32_t ref_rtp; /* sender RTP timestamp reference */
-    vlc_tick_t  ref_ntp; /* sender NTP timestamp reference */
+    mtime_t  ref_ntp; /* sender NTP timestamp reference */
 
     uint16_t bad_seq; /* tentatively next expected sequence for resync */
     uint16_t max_seq; /* next expected sequence */
@@ -169,6 +169,7 @@ rtp_source_create (demux_t *demux, const rtp_session_t *session,
     source->ssrc = ssrc;
     source->jitter = 0;
     source->ref_rtp = 0;
+    /* TODO: use VLC_TS_0, but VLC does not like negative PTS at the moment */
     source->ref_ntp = UINT64_C (1) << 62;
     source->max_seq = source->bad_seq = init_seq;
     source->last_seq = init_seq - 1;
@@ -256,7 +257,7 @@ rtp_queue (demux_t *demux, rtp_session_t *session, block_t *block)
         block->i_buffer -= padding;
     }
 
-    vlc_tick_t     now = vlc_tick_now ();
+    mtime_t        now = mdate ();
     rtp_source_t  *src  = NULL;
     const uint16_t seq  = rtp_seq (block);
     const uint32_t ssrc = GetDWBE (block->p_buffer + 8);
@@ -313,7 +314,7 @@ rtp_queue (demux_t *demux, rtp_session_t *session, block_t *block)
              * It is independent of RTP sequence. */
             uint32_t freq = pt->frequency;
             int64_t ts = rtp_timestamp (block);
-            int64_t d = samples_from_vlc_tick(now - src->last_rx, freq);
+            int64_t d = ((now - src->last_rx) * freq) / CLOCK_FREQ;
             d        -=    ts - src->last_ts;
             if (d < 0) d = -d;
             src->jitter += ((d - src->jitter) + 8) >> 4;
@@ -391,9 +392,9 @@ static void rtp_decode (demux_t *, const rtp_session_t *, rtp_source_t *);
  * In the later case, *deadlinep is undefined.
  */
 bool rtp_dequeue (demux_t *demux, const rtp_session_t *session,
-                  vlc_tick_t *restrict deadlinep)
+                  mtime_t *restrict deadlinep)
 {
-    vlc_tick_t now = vlc_tick_now ();
+    mtime_t now = mdate ();
     bool pending = false;
 
     *deadlinep = INT64_MAX;
@@ -430,16 +431,16 @@ bool rtp_dequeue (demux_t *demux, const rtp_session_t *session,
             /* Wait for 3 times the inter-arrival delay variance (about 99.7%
              * match for random gaussian jitter).
              */
-            vlc_tick_t deadline;
+            mtime_t deadline;
             const rtp_pt_t *pt = rtp_find_ptype (session, src, block, NULL);
             if (pt)
-                deadline = vlc_tick_from_samples(3 * src->jitter, pt->frequency);
+                deadline = CLOCK_FREQ * 3 * src->jitter / pt->frequency;
             else
                 deadline = 0; /* no jitter estimate with no frequency :( */
 
             /* Make sure we wait at least for 25 msec */
-            if (deadline < VLC_TICK_FROM_MS(25))
-                deadline = VLC_TICK_FROM_MS(25);
+            if (deadline < (CLOCK_FREQ / 40))
+                deadline = CLOCK_FREQ / 40;
 
             /* Additionnaly, we implicitly wait for the packetization time
              * multiplied by the number of missing packets. block is the first
@@ -523,7 +524,7 @@ rtp_decode (demux_t *demux, const rtp_session_t *session, rtp_source_t *src)
      * Otherwise it would be impossible to compute consistent timestamps. */
     const uint32_t timestamp = rtp_timestamp (block);
     block->i_pts = src->ref_ntp
-       + vlc_tick_from_samples(timestamp - src->ref_rtp, pt->frequency);
+       + CLOCK_FREQ * (int32_t)(timestamp - src->ref_rtp) / pt->frequency;
     /* TODO: proper inter-medias/sessions sync (using RTCP-SR) */
     src->ref_ntp = block->i_pts;
     src->ref_rtp = timestamp;

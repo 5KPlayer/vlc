@@ -28,8 +28,6 @@
 #include "../src/generic_window.hpp"
 #include "../src/os_window.hpp"
 
-#include <vlc_vout_window.h>
-
 
 /// OS2 implementation of OSWindow
 class OS2Window: public OSWindow
@@ -62,15 +60,11 @@ public:
     /// Getter for the window handle
     HWND getHandle() const { return m_hWndClient; }
 
-    /// Set the window handler
-    void setOSHandle( vout_window_t *pWnd ) const {
-        pWnd->type = VOUT_WINDOW_TYPE_HWND;
-        pWnd->info.has_double_click = true;
-        pWnd->handle.hwnd = ( void * )getHandle();
-    }
+    /// Getter for the window handle
+    void* getOSHandle() const { return (void*) m_hWndClient; }
 
     /// reparent the window
-    void reparent( OSWindow *parent, int x, int y, int w, int h );
+    void reparent( void* OSHandle, int x, int y, int w, int h );
 
     /// invalidate a window surface
     bool invalidateRect( int x, int y, int w, int h ) const;

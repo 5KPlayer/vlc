@@ -2,6 +2,7 @@
  * x11_dragdrop.hpp
  *****************************************************************************
  * Copyright (C) 2003 the VideoLAN team
+ * $Id: a4fbbd67a08b5c0aa8551defef7206e00c9b7c10 $
  *
  * Authors: Cyril Deguet     <asmax@via.ecp.fr>
  *          Olivier Teulière <ipkiss@via.ecp.fr>
@@ -44,7 +45,6 @@ public:
     void dndPosition( ldata_t data );
     void dndLeave( ldata_t data );
     void dndDrop( ldata_t data );
-    void dndSelectionNotify( );
 
 private:
     /// X11 display

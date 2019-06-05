@@ -2,6 +2,7 @@
  * speex.c: speex decoder/packetizer/encoder module making use of libspeex.
  *****************************************************************************
  * Copyright (C) 2003-2009 VLC authors and VideoLAN
+ * $Id: 9f6884a40cf70b3421d941e6b97667180eed94a9 $
  *
  * Authors: Gildas Bazin <gbazin@videolan.org>
  *
@@ -29,7 +30,7 @@
 
 #include <vlc_common.h>
 #include <vlc_plugin.h>
-#include <vlc_input_item.h>
+#include <vlc_input.h>
 #include <vlc_codec.h>
 #include "../demux/xiph.h"
 
@@ -146,7 +147,7 @@ static const char *const ppsz_enc_options[] = {
 /*****************************************************************************
  * decoder_sys_t : speex decoder descriptor
  *****************************************************************************/
-typedef struct
+struct decoder_sys_t
 {
     /* Module mode */
     bool b_packetizer;
@@ -171,7 +172,18 @@ typedef struct
      */
     date_t end_date;
 
-} decoder_sys_t;
+};
+
+static const int pi_channels_maps[6] =
+{
+    0,
+    AOUT_CHAN_CENTER,   AOUT_CHAN_LEFT | AOUT_CHAN_RIGHT,
+    AOUT_CHAN_CENTER | AOUT_CHAN_LEFT | AOUT_CHAN_RIGHT,
+    AOUT_CHAN_LEFT | AOUT_CHAN_RIGHT | AOUT_CHAN_REARLEFT
+     | AOUT_CHAN_REARRIGHT,
+    AOUT_CHAN_LEFT | AOUT_CHAN_RIGHT | AOUT_CHAN_CENTER
+     | AOUT_CHAN_REARLEFT | AOUT_CHAN_REARRIGHT
+};
 
 /****************************************************************************
  * Local prototypes
@@ -190,7 +202,10 @@ static block_t *SendPacket( decoder_t *, block_t * );
 
 static void ParseSpeexComments( decoder_t *, ogg_packet * );
 
-static int OpenCommon( vlc_object_t *p_this, bool b_packetizer )
+/*****************************************************************************
+ * OpenDecoder: probe the decoder and return score
+ *****************************************************************************/
+static int OpenDecoder( vlc_object_t *p_this )
 {
     decoder_t *p_dec = (decoder_t*)p_this;
     decoder_sys_t *p_sys;
@@ -201,40 +216,33 @@ static int OpenCommon( vlc_object_t *p_this, bool b_packetizer )
     /* Allocate the memory needed to store the decoder's structure */
     if( ( p_dec->p_sys = p_sys = malloc(sizeof(decoder_sys_t)) ) == NULL )
         return VLC_ENOMEM;
-    p_sys->bits.buf_size = 0;
-    p_sys->b_packetizer = b_packetizer;
-    p_sys->rtp_rate = p_dec->fmt_in.audio.i_rate;
-    p_sys->b_has_headers = false;
+    p_dec->p_sys->bits.buf_size = 0;
+    p_dec->p_sys->b_packetizer = false;
+    p_dec->p_sys->rtp_rate = p_dec->fmt_in.audio.i_rate;
+    p_dec->p_sys->b_has_headers = false;
 
-    date_Set( &p_sys->end_date, VLC_TICK_INVALID );
+    date_Set( &p_sys->end_date, 0 );
 
-    if( b_packetizer )
+    /* Set output properties */
+    p_dec->fmt_out.i_codec = VLC_CODEC_S16N;
+
+    /*
+      Set callbacks
+      If the codec is spxr then this decoder is
+      being invoked on a Speex stream arriving via RTP.
+      A special decoder callback is used.
+    */
+    if (p_dec->fmt_in.i_original_fourcc == VLC_FOURCC('s', 'p', 'x', 'r'))
     {
-        p_dec->fmt_out.i_codec = VLC_CODEC_SPEEX;
-        p_dec->pf_packetize    = Packetize;
+        msg_Dbg( p_dec, "Using RTP version of Speex decoder @ rate %d.",
+        p_dec->fmt_in.audio.i_rate );
+        p_dec->pf_decode = DecodeRtpSpeexPacket;
     }
     else
     {
-        /* Set output properties */
-        p_dec->fmt_out.i_codec = VLC_CODEC_S16N;
-
-        /*
-          Set callbacks
-          If the codec is spxr then this decoder is
-          being invoked on a Speex stream arriving via RTP.
-          A special decoder callback is used.
-        */
-        if (p_dec->fmt_in.i_original_fourcc == VLC_FOURCC('s', 'p', 'x', 'r'))
-        {
-            msg_Dbg( p_dec, "Using RTP version of Speex decoder @ rate %d.",
-            p_dec->fmt_in.audio.i_rate );
-            p_dec->pf_decode = DecodeRtpSpeexPacket;
-        }
-        else
-        {
-            p_dec->pf_decode = DecodeAudio;
-        }
+        p_dec->pf_decode = DecodeAudio;
     }
+    p_dec->pf_packetize    = Packetize;
     p_dec->pf_flush        = Flush;
 
     p_sys->p_state = NULL;
@@ -244,17 +252,19 @@ static int OpenCommon( vlc_object_t *p_this, bool b_packetizer )
     return VLC_SUCCESS;
 }
 
-/*****************************************************************************
- * OpenDecoder: probe the decoder and return score
- *****************************************************************************/
-static int OpenDecoder( vlc_object_t *p_this )
-{
-    return OpenCommon( p_this, false );
-}
-
 static int OpenPacketizer( vlc_object_t *p_this )
 {
-    return OpenCommon( p_this, true );
+    decoder_t *p_dec = (decoder_t*)p_this;
+
+    int i_ret = OpenDecoder( p_this );
+
+    if( i_ret == VLC_SUCCESS )
+    {
+        p_dec->p_sys->b_packetizer = true;
+        p_dec->fmt_out.i_codec = VLC_CODEC_SPEEX;
+    }
+
+    return i_ret;
 }
 
 static int CreateDefaultHeader( decoder_t *p_dec )
@@ -538,7 +548,7 @@ static int ProcessInitialHeader( decoder_t *p_dec, ogg_packet *p_oggpacket )
 
     /* Setup the format */
     p_dec->fmt_out.audio.i_physical_channels =
-        vlc_chan_maps[p_header->nb_channels];
+        pi_channels_maps[p_header->nb_channels];
     p_dec->fmt_out.audio.i_channels = p_header->nb_channels;
     p_dec->fmt_out.audio.i_rate = p_header->rate;
 
@@ -554,7 +564,7 @@ static void Flush( decoder_t *p_dec )
 {
     decoder_sys_t *p_sys = p_dec->p_sys;
 
-    date_Set( &p_sys->end_date, VLC_TICK_INVALID );
+    date_Set( &p_sys->end_date, 0 );
 }
 
 /*****************************************************************************
@@ -567,13 +577,13 @@ static block_t *ProcessPacket( decoder_t *p_dec, ogg_packet *p_oggpacket,
     block_t *p_block = *pp_block;
 
     /* Date management */
-    if( p_block && p_block->i_pts != VLC_TICK_INVALID &&
+    if( p_block && p_block->i_pts > VLC_TS_INVALID &&
         p_block->i_pts != date_Get( &p_sys->end_date ) )
     {
         date_Set( &p_sys->end_date, p_block->i_pts );
     }
 
-    if( date_Get( &p_sys->end_date ) == VLC_TICK_INVALID )
+    if( !date_Get( &p_sys->end_date ) )
     {
         /* We've just started the stream, wait for the first PTS. */
         if( p_block ) block_Release( p_block );
@@ -670,7 +680,7 @@ static int DecodeRtpSpeexPacket( decoder_t *p_dec, block_t *p_speex_bit_block )
     int i_decode_ret;
     unsigned int i_speex_frame_size;
 
-    if ( !p_speex_bit_block || p_speex_bit_block->i_pts == VLC_TICK_INVALID )
+    if ( !p_speex_bit_block || p_speex_bit_block->i_pts <= VLC_TS_INVALID )
         return VLCDEC_SUCCESS;
 
     /*
@@ -707,7 +717,7 @@ static int DecodeRtpSpeexPacket( decoder_t *p_dec, block_t *p_speex_bit_block )
 
         p_dec->fmt_out.audio.i_channels = p_sys->p_header->nb_channels;
         p_dec->fmt_out.audio.i_physical_channels =
-            vlc_chan_maps[p_sys->p_header->nb_channels];
+            pi_channels_maps[p_sys->p_header->nb_channels];
         p_dec->fmt_out.audio.i_rate = p_sys->p_header->rate;
 
         if ( speex_mode_query( &speex_nb_mode,
@@ -734,7 +744,7 @@ static int DecodeRtpSpeexPacket( decoder_t *p_dec, block_t *p_speex_bit_block )
         return VLCDEC_SUCCESS;
     }
 
-    if ( date_Get( &p_sys->end_date ) == VLC_TICK_INVALID )
+    if ( !date_Get( &p_sys->end_date ) )
         date_Set( &p_sys->end_date, p_speex_bit_block->i_dts );
 
     /*
@@ -821,7 +831,6 @@ static block_t *DecodePacket( decoder_t *p_dec, ogg_packet *p_oggpacket )
         {
             case -2:
                 msg_Err( p_dec, "decoding error: corrupted stream?" );
-                /* fall through */
             case -1: /* End of stream */
                 return NULL;
         }
@@ -927,7 +936,7 @@ static void CloseDecoder( vlc_object_t *p_this )
  *****************************************************************************/
 #define MAX_FRAME_BYTES 2000
 
-typedef struct
+struct encoder_sys_t
 {
     /*
      * Input properties
@@ -949,7 +958,7 @@ typedef struct
     int i_frame_length;
     int i_samples_delay;
     int i_frame_size;
-} encoder_sys_t;
+};
 
 static block_t *Encode   ( encoder_t *, block_t * );
 
@@ -1094,9 +1103,9 @@ static block_t *Encode( encoder_t *p_enc, block_t *p_aout_buf )
     unsigned i_samples = p_aout_buf->i_nb_samples;
     int i_samples_delay = p_sys->i_samples_delay;
 
-    vlc_tick_t i_pts = p_aout_buf->i_pts -
-                vlc_tick_from_samples( p_sys->i_samples_delay,
-                            p_enc->fmt_in.audio.i_rate );
+    mtime_t i_pts = p_aout_buf->i_pts -
+                (mtime_t)1000000 * (mtime_t)p_sys->i_samples_delay /
+                (mtime_t)p_enc->fmt_in.audio.i_rate;
 
     p_sys->i_samples_delay += i_samples;
 
@@ -1154,9 +1163,9 @@ static block_t *Encode( encoder_t *p_enc, block_t *p_aout_buf )
         p_block = block_Alloc( i_out );
         memcpy( p_block->p_buffer, p_sys->p_buffer_out, i_out );
 
-        p_block->i_length = vlc_tick_from_samples(
-            p_sys->i_frame_length * p_sys->header.frames_per_packet,
-            p_enc->fmt_in.audio.i_rate );
+        p_block->i_length = (mtime_t)1000000 *
+            (mtime_t)p_sys->i_frame_length * p_sys->header.frames_per_packet /
+            (mtime_t)p_enc->fmt_in.audio.i_rate;
 
         p_block->i_dts = p_block->i_pts = i_pts;
 

@@ -28,14 +28,14 @@
 #include <vlc_access.h>
 #include <vlc_plugin.h>
 
-typedef struct
+struct access_sys_t
 {
     void *opaque;
     ssize_t (*read_cb)(void *, unsigned char *, size_t);
     int (*seek_cb)(void *, uint64_t);
     void (*close_cb)(void *);
     uint64_t size;
-} access_sys_t;
+};
 
 static ssize_t Read(stream_t *access, void *buf, size_t len)
 {
@@ -88,7 +88,7 @@ static int Control(stream_t *access, int query, va_list args)
             break;
 
         case STREAM_GET_PTS_DELAY:
-            *va_arg(args, vlc_tick_t *) = DEFAULT_PTS_DELAY;
+            *va_arg(args, int64_t *) = DEFAULT_PTS_DELAY;
             break;
 
         case STREAM_SET_PAUSE_STATE:

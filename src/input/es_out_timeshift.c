@@ -2,6 +2,7 @@
  * es_out_timeshift.c: Es Out timeshift.
  *****************************************************************************
  * Copyright (C) 2008 Laurent Aimar
+ * $Id: e30f9239587ff44a51907c43367372c1e8eb434b $
  *
  * Authors: Laurent Aimar < fenrir _AT_ videolan _DOT_ org>
  *
@@ -39,14 +40,15 @@
 
 #include <vlc_common.h>
 #include <vlc_fs.h>
-#include <vlc_mouse.h>
 #ifdef _WIN32
 #  include <vlc_charset.h>
 #endif
+#include <vlc_input.h>
 #include <vlc_es_out.h>
 #include <vlc_block.h>
 #include "input_internal.h"
 #include "es_out.h"
+#include "es_out_timeshift.h"
 
 /*****************************************************************************
  * Local prototypes
@@ -134,13 +136,13 @@ typedef struct attribute_packed
         {
             /* FIXME Really too big (double make the whole thing too big) */
             double  f_position;
-            vlc_tick_t i_time;
-            vlc_tick_t i_length;
+            mtime_t i_time;
+            mtime_t i_length;
         } times;
         struct
         {
-            vlc_tick_t i_pts_delay;
-            vlc_tick_t i_pts_jitter;
+            mtime_t i_pts_delay;
+            mtime_t i_pts_jitter;
             int     i_cr_average;
         } jitter;
     } u;
@@ -149,7 +151,7 @@ typedef struct attribute_packed
 typedef struct attribute_packed
 {
     int8_t  i_type;
-    vlc_tick_t i_date;
+    mtime_t i_date;
     union
     {
         ts_cmd_add_t     add;
@@ -194,22 +196,22 @@ typedef struct
 
     /* */
     bool           b_paused;
-    vlc_tick_t     i_pause_date;
+    mtime_t        i_pause_date;
 
     /* */
-    float          rate;
-    float          rate_source;
-    vlc_tick_t     i_rate_date;
-    vlc_tick_t     i_rate_delay;
+    int            i_rate;
+    int            i_rate_source;
+    mtime_t        i_rate_date;
+    mtime_t        i_rate_delay;
 
     /* */
-    vlc_tick_t     i_buffering_delay;
+    mtime_t        i_buffering_delay;
 
     /* */
     ts_storage_t   *p_storage_r;
     ts_storage_t   *p_storage_w;
 
-    vlc_tick_t     i_cmd_delay;
+    mtime_t        i_cmd_delay;
 
 } ts_thread_t;
 
@@ -218,7 +220,7 @@ struct es_out_id_t
     es_out_id_t *p_es;
 };
 
-typedef struct
+struct es_out_sys_t
 {
     input_thread_t *p_input;
     es_out_t       *p_out;
@@ -237,17 +239,19 @@ typedef struct
     /* */
     bool           b_input_paused;
     bool           b_input_paused_source;
-    float          input_rate;
-    float          input_rate_source;
+    int            i_input_rate;
+    int            i_input_rate_source;
 
     /* */
     int            i_es;
     es_out_id_t    **pp_es;
+};
 
-    es_out_t       out;
-} es_out_sys_t;
-
+static es_out_id_t *Add    ( es_out_t *, const es_format_t * );
+static int          Send   ( es_out_t *, es_out_id_t *, block_t * );
 static void         Del    ( es_out_t *, es_out_id_t * );
+static int          Control( es_out_t *, int i_query, va_list );
+static void         Destroy( es_out_t * );
 
 static int          TsStart( es_out_t * );
 static void         TsAutoStop( es_out_t * );
@@ -257,8 +261,8 @@ static void         TsPushCmd( ts_thread_t *, ts_cmd_t * );
 static int          TsPopCmdLocked( ts_thread_t *, ts_cmd_t *, bool b_flush );
 static bool         TsHasCmd( ts_thread_t * );
 static bool         TsIsUnused( ts_thread_t * );
-static int          TsChangePause( ts_thread_t *, bool b_source_paused, bool b_paused, vlc_tick_t i_date );
-static int          TsChangeRate( ts_thread_t *, float src_rate, float rate );
+static int          TsChangePause( ts_thread_t *, bool b_source_paused, bool b_paused, mtime_t i_date );
+static int          TsChangeRate( ts_thread_t *, int i_src_rate, int i_rate );
 
 static void         *TsRun( void * );
 
@@ -292,25 +296,36 @@ static int  CmdExecuteControl( es_out_t *, ts_cmd_t * );
 /* File helpers */
 static int GetTmpFile( char **ppsz_file, const char *psz_path );
 
-static const struct es_out_callbacks es_out_timeshift_cbs;
-
 /*****************************************************************************
  * input_EsOutTimeshiftNew:
  *****************************************************************************/
-es_out_t *input_EsOutTimeshiftNew( input_thread_t *p_input, es_out_t *p_next_out, float rate )
+es_out_t *input_EsOutTimeshiftNew( input_thread_t *p_input, es_out_t *p_next_out, int i_rate )
 {
-    es_out_sys_t *p_sys = malloc( sizeof(*p_sys) );
-    if( !p_sys )
+    es_out_t *p_out = malloc( sizeof(*p_out) );
+    if( !p_out )
         return NULL;
 
-    p_sys->out.cbs = &es_out_timeshift_cbs;
+    es_out_sys_t *p_sys = malloc( sizeof(*p_sys) );
+    if( !p_sys )
+    {
+        free( p_out );
+        return NULL;
+    }
+
+    /* */
+    p_out->pf_add     = Add;
+    p_out->pf_send    = Send;
+    p_out->pf_del     = Del;
+    p_out->pf_control = Control;
+    p_out->pf_destroy = Destroy;
+    p_out->p_sys      = p_sys;
 
     /* */
     p_sys->b_input_paused = false;
     p_sys->b_input_paused_source = false;
     p_sys->p_input = p_input;
-    p_sys->input_rate = rate;
-    p_sys->input_rate_source = rate;
+    p_sys->i_input_rate = i_rate;
+    p_sys->i_input_rate_source = i_rate;
 
     p_sys->p_out = p_next_out;
     vlc_mutex_init_recursive( &p_sys->lock );
@@ -336,12 +351,12 @@ es_out_t *input_EsOutTimeshiftNew( input_thread_t *p_input, es_out_t *p_next_out
         const DWORD count = GetTempPath( 0, NULL );
         if( count > 0 )
         {
-            WCHAR *path = vlc_alloc( count + 1, sizeof(WCHAR) );
+            TCHAR *path = vlc_alloc( count + 1, sizeof(TCHAR) );
             if( path != NULL )
             {
                 DWORD ret = GetTempPath( count + 1, path );
                 if( ret != 0 && ret <= count )
-                    p_sys->psz_tmp_path = FromWide( path );
+                    p_sys->psz_tmp_path = FromT( path );
                 free( path );
             }
         }
@@ -383,7 +398,7 @@ es_out_t *input_EsOutTimeshiftNew( input_thread_t *p_input, es_out_t *p_next_out
 #undef S
 #endif
 
-    return &p_sys->out;
+    return p_out;
 }
 
 /*****************************************************************************
@@ -391,7 +406,7 @@ es_out_t *input_EsOutTimeshiftNew( input_thread_t *p_input, es_out_t *p_next_out
  *****************************************************************************/
 static void Destroy( es_out_t *p_out )
 {
-    es_out_sys_t *p_sys = container_of(p_out, es_out_sys_t, out);
+    es_out_sys_t *p_sys = p_out->p_sys;
 
     if( p_sys->b_delayed )
     {
@@ -406,11 +421,12 @@ static void Destroy( es_out_t *p_out )
     free( p_sys->psz_tmp_path );
     vlc_mutex_destroy( &p_sys->lock );
     free( p_sys );
+    free( p_out );
 }
 
 static es_out_id_t *Add( es_out_t *p_out, const es_format_t *p_fmt )
 {
-    es_out_sys_t *p_sys = container_of(p_out, es_out_sys_t, out);
+    es_out_sys_t *p_sys = p_out->p_sys;
     ts_cmd_t cmd;
 
     es_out_id_t *p_es = malloc( sizeof( *p_es ) );
@@ -441,7 +457,7 @@ static es_out_id_t *Add( es_out_t *p_out, const es_format_t *p_fmt )
 }
 static int Send( es_out_t *p_out, es_out_id_t *p_es, block_t *p_block )
 {
-    es_out_sys_t *p_sys = container_of(p_out, es_out_sys_t, out);
+    es_out_sys_t *p_sys = p_out->p_sys;
     ts_cmd_t cmd;
     int i_ret = VLC_SUCCESS;
 
@@ -461,7 +477,7 @@ static int Send( es_out_t *p_out, es_out_id_t *p_es, block_t *p_block )
 }
 static void Del( es_out_t *p_out, es_out_id_t *p_es )
 {
-    es_out_sys_t *p_sys = container_of(p_out, es_out_sys_t, out);
+    es_out_sys_t *p_sys = p_out->p_sys;
     ts_cmd_t cmd;
 
     vlc_mutex_lock( &p_sys->lock );
@@ -481,7 +497,7 @@ static void Del( es_out_t *p_out, es_out_id_t *p_es )
 
 static int ControlLockedGetEmpty( es_out_t *p_out, bool *pb_empty )
 {
-    es_out_sys_t *p_sys = container_of(p_out, es_out_sys_t, out);
+    es_out_sys_t *p_sys = p_out->p_sys;
 
     if( p_sys->b_delayed && TsHasCmd( p_sys->p_ts ) )
         *pb_empty = false;
@@ -490,9 +506,9 @@ static int ControlLockedGetEmpty( es_out_t *p_out, bool *pb_empty )
 
     return VLC_SUCCESS;
 }
-static int ControlLockedGetWakeup( es_out_t *p_out, vlc_tick_t *pi_wakeup )
+static int ControlLockedGetWakeup( es_out_t *p_out, mtime_t *pi_wakeup )
 {
-    es_out_sys_t *p_sys = container_of(p_out, es_out_sys_t, out);
+    es_out_sys_t *p_sys = p_out->p_sys;
 
     if( p_sys->b_delayed )
     {
@@ -508,7 +524,7 @@ static int ControlLockedGetWakeup( es_out_t *p_out, vlc_tick_t *pi_wakeup )
 }
 static int ControlLockedGetBuffering( es_out_t *p_out, bool *pb_buffering )
 {
-    es_out_sys_t *p_sys = container_of(p_out, es_out_sys_t, out);
+    es_out_sys_t *p_sys = p_out->p_sys;
 
     if( p_sys->b_delayed )
         *pb_buffering = true;
@@ -517,9 +533,9 @@ static int ControlLockedGetBuffering( es_out_t *p_out, bool *pb_buffering )
 
     return VLC_SUCCESS;
 }
-static int ControlLockedSetPauseState( es_out_t *p_out, bool b_source_paused, bool b_paused, vlc_tick_t i_date )
+static int ControlLockedSetPauseState( es_out_t *p_out, bool b_source_paused, bool b_paused, mtime_t i_date )
 {
-    es_out_sys_t *p_sys = container_of(p_out, es_out_sys_t, out);
+    es_out_sys_t *p_sys = p_out->p_sys;
     int i_ret;
 
     if( !p_sys->b_delayed && !b_source_paused == !b_paused )
@@ -552,14 +568,14 @@ static int ControlLockedSetPauseState( es_out_t *p_out, bool b_source_paused, bo
     }
     return i_ret;
 }
-static int ControlLockedSetRate( es_out_t *p_out, float src_rate, float rate )
+static int ControlLockedSetRate( es_out_t *p_out, int i_src_rate, int i_rate )
 {
-    es_out_sys_t *p_sys = container_of(p_out, es_out_sys_t, out);
+    es_out_sys_t *p_sys = p_out->p_sys;
     int i_ret;
 
-    if( !p_sys->b_delayed && src_rate == rate )
+    if( !p_sys->b_delayed && i_src_rate == i_rate )
     {
-        i_ret = es_out_SetRate( p_sys->p_out, src_rate, rate );
+        i_ret = es_out_SetRate( p_sys->p_out, i_src_rate, i_rate );
     }
     else
     {
@@ -569,7 +585,7 @@ static int ControlLockedSetRate( es_out_t *p_out, float src_rate, float rate )
             if( !p_sys->b_delayed )
                 TsStart( p_out );
             if( p_sys->b_delayed )
-                i_ret = TsChangeRate( p_sys->p_ts, src_rate, rate );
+                i_ret = TsChangeRate( p_sys->p_ts, i_src_rate, i_rate );
         }
         else
         {
@@ -583,21 +599,32 @@ static int ControlLockedSetRate( es_out_t *p_out, float src_rate, float rate )
 
     if( !i_ret )
     {
-        p_sys->input_rate_source = src_rate;
-        p_sys->input_rate = rate;
+        p_sys->i_input_rate_source = i_src_rate;
+        p_sys->i_input_rate = i_rate;
     }
     return i_ret;
 }
+static int ControlLockedSetTime( es_out_t *p_out, mtime_t i_date )
+{
+    es_out_sys_t *p_sys = p_out->p_sys;
+
+    if( !p_sys->b_delayed )
+        return es_out_SetTime( p_sys->p_out, i_date );
+
+    /* TODO */
+    msg_Err( p_sys->p_input, "EsOutTimeshift does not yet support time change" );
+    return VLC_EGENERIC;
+}
 static int ControlLockedSetFrameNext( es_out_t *p_out )
 {
-    es_out_sys_t *p_sys = container_of(p_out, es_out_sys_t, out);
+    es_out_sys_t *p_sys = p_out->p_sys;
 
     return es_out_SetFrameNext( p_sys->p_out );
 }
 
 static int ControlLocked( es_out_t *p_out, int i_query, va_list args )
 {
-    es_out_sys_t *p_sys = container_of(p_out, es_out_sys_t, out);
+    es_out_sys_t *p_sys = p_out->p_sys;
 
     switch( i_query )
     {
@@ -616,8 +643,8 @@ static int ControlLocked( es_out_t *p_out, int i_query, va_list args )
     case ES_OUT_DEL_GROUP:
     case ES_OUT_SET_META:
     case ES_OUT_SET_ES:
-    case ES_OUT_UNSET_ES:
     case ES_OUT_RESTART_ES:
+    case ES_OUT_RESTART_ALL_ES:
     case ES_OUT_SET_ES_DEFAULT:
     case ES_OUT_SET_ES_STATE:
     case ES_OUT_SET_ES_CAT_POLICY:
@@ -640,8 +667,8 @@ static int ControlLocked( es_out_t *p_out, int i_query, va_list args )
     /* Special control when delayed */
     case ES_OUT_GET_ES_STATE:
     {
-        es_out_id_t *p_es = va_arg( args, es_out_id_t * );
-        bool *pb_enabled = va_arg( args, bool* );
+        es_out_id_t *p_es = (es_out_id_t*)va_arg( args, es_out_id_t * );
+        bool *pb_enabled = (bool*)va_arg( args, bool* );
 
         if( p_sys->b_delayed )
         {
@@ -650,66 +677,42 @@ static int ControlLocked( es_out_t *p_out, int i_query, va_list args )
         }
         return es_out_Control( p_sys->p_out, ES_OUT_GET_ES_STATE, p_es->p_es, pb_enabled );
     }
-    case ES_OUT_VOUT_SET_MOUSE_EVENT:
-    {
-        es_out_id_t *p_es = va_arg( args, es_out_id_t * );
-        vlc_mouse_event cb = va_arg( args, vlc_mouse_event );
-        void *user_data = va_arg( args, void * );
-        return es_out_Control( p_sys->p_out, ES_OUT_VOUT_SET_MOUSE_EVENT,
-                               p_es->p_es, cb, user_data );
-    }
-    case ES_OUT_VOUT_ADD_OVERLAY:
-    {
-        es_out_id_t *p_es = va_arg( args, es_out_id_t * );
-        subpicture_t *sub = va_arg( args, subpicture_t * );
-        int *channel = va_arg( args, int * );
-        return es_out_Control( p_sys->p_out, ES_OUT_VOUT_ADD_OVERLAY,
-                               p_es->p_es, sub, channel );
-    }
-    case ES_OUT_VOUT_FLUSH_OVERLAY:
-    {
-        es_out_id_t *p_es = va_arg( args, es_out_id_t * );
-        int channel = va_arg( args, int );
-        return es_out_Control( p_sys->p_out, ES_OUT_VOUT_FLUSH_OVERLAY,
-                               p_es->p_es, channel );
-    }
-    case ES_OUT_SPU_SET_HIGHLIGHT:
-    {
-        es_out_id_t *p_es = va_arg( args, es_out_id_t * );
-        const vlc_spu_highlight_t *p_hl = va_arg( args, const vlc_spu_highlight_t * );
-        return es_out_Control( p_sys->p_out, ES_OUT_SPU_SET_HIGHLIGHT,
-                               p_es->p_es, p_hl );
-    }
     /* Special internal input control */
     case ES_OUT_GET_EMPTY:
     {
-        bool *pb_empty = va_arg( args, bool* );
+        bool *pb_empty = (bool*)va_arg( args, bool* );
         return ControlLockedGetEmpty( p_out, pb_empty );
     }
     case ES_OUT_GET_WAKE_UP: /* TODO ? */
     {
-        vlc_tick_t *pi_wakeup = va_arg( args, vlc_tick_t* );
+        mtime_t *pi_wakeup = (mtime_t*)va_arg( args, mtime_t* );
         return ControlLockedGetWakeup( p_out, pi_wakeup );
     }
     case ES_OUT_GET_BUFFERING:
     {
-        bool *pb_buffering = va_arg( args, bool* );
+        bool *pb_buffering = (bool *)va_arg( args, bool* );
         return ControlLockedGetBuffering( p_out, pb_buffering );
     }
     case ES_OUT_SET_PAUSE_STATE:
     {
         const bool b_source_paused = (bool)va_arg( args, int );
         const bool b_paused = (bool)va_arg( args, int );
-        const vlc_tick_t i_date = va_arg( args, vlc_tick_t );
+        const mtime_t i_date = (mtime_t) va_arg( args, mtime_t );
 
         return ControlLockedSetPauseState( p_out, b_source_paused, b_paused, i_date );
     }
     case ES_OUT_SET_RATE:
     {
-        const float src_rate = va_arg( args, double );
-        const float rate = va_arg( args, double );
+        const int i_src_rate = (int)va_arg( args, int );
+        const int i_rate = (int)va_arg( args, int );
 
-        return ControlLockedSetRate( p_out, src_rate, rate );
+        return ControlLockedSetRate( p_out, i_src_rate, i_rate );
+    }
+    case ES_OUT_SET_TIME:
+    {
+        const mtime_t i_date = (mtime_t)va_arg( args, mtime_t );
+
+        return ControlLockedSetTime( p_out, i_date );
     }
     case ES_OUT_SET_FRAME_NEXT:
     {
@@ -727,7 +730,7 @@ static int ControlLocked( es_out_t *p_out, int i_query, va_list args )
     case ES_OUT_MODIFY_PCR_SYSTEM:
     {
         const bool    b_absolute = va_arg( args, int );
-        const vlc_tick_t i_system   = va_arg( args, vlc_tick_t );
+        const mtime_t i_system   = va_arg( args, mtime_t );
 
         if( b_absolute && p_sys->b_delayed )
             return VLC_EGENERIC;
@@ -739,12 +742,11 @@ static int ControlLocked( es_out_t *p_out, int i_query, va_list args )
     case ES_OUT_SET_ES_BY_ID:
     case ES_OUT_RESTART_ES_BY_ID:
     case ES_OUT_SET_ES_DEFAULT_BY_ID:
+    case ES_OUT_GET_ES_OBJECTS_BY_ID:
     case ES_OUT_STOP_ALL_ES:
     case ES_OUT_START_ALL_ES:
     case ES_OUT_SET_DELAY:
     case ES_OUT_SET_RECORD_STATE:
-    case ES_OUT_SET_VBI_PAGE:
-    case ES_OUT_SET_VBI_TRANSPARENCY:
     default:
         vlc_assert_unreachable();
         return VLC_EGENERIC;
@@ -752,7 +754,7 @@ static int ControlLocked( es_out_t *p_out, int i_query, va_list args )
 }
 static int Control( es_out_t *p_out, int i_query, va_list args )
 {
-    es_out_sys_t *p_sys = container_of(p_out, es_out_sys_t, out);
+    es_out_sys_t *p_sys = p_out->p_sys;
     int i_ret;
 
     vlc_mutex_lock( &p_sys->lock );
@@ -766,15 +768,6 @@ static int Control( es_out_t *p_out, int i_query, va_list args )
     return i_ret;
 }
 
-static const struct es_out_callbacks es_out_timeshift_cbs =
-{
-    .add = Add,
-    .send = Send,
-    .del = Del,
-    .control = Control,
-    .destroy = Destroy,
-};
-
 /*****************************************************************************
  *
  *****************************************************************************/
@@ -786,7 +779,7 @@ static void TsDestroy( ts_thread_t *p_ts )
 }
 static int TsStart( es_out_t *p_out )
 {
-    es_out_sys_t *p_sys = container_of(p_out, es_out_sys_t, out);
+    es_out_sys_t *p_sys = p_out->p_sys;
     ts_thread_t *p_ts;
 
     assert( !p_sys->b_delayed );
@@ -802,9 +795,9 @@ static int TsStart( es_out_t *p_out )
     vlc_mutex_init( &p_ts->lock );
     vlc_cond_init( &p_ts->wait );
     p_ts->b_paused = p_sys->b_input_paused && !p_sys->b_input_paused_source;
-    p_ts->i_pause_date = p_ts->b_paused ? vlc_tick_now() : -1;
-    p_ts->rate_source = p_sys->input_rate_source;
-    p_ts->rate        = p_sys->input_rate;
+    p_ts->i_pause_date = p_ts->b_paused ? mdate() : -1;
+    p_ts->i_rate_source = p_sys->i_input_rate_source;
+    p_ts->i_rate        = p_sys->i_input_rate;
     p_ts->i_rate_date = -1;
     p_ts->i_rate_delay = 0;
     p_ts->i_buffering_delay = 0;
@@ -827,7 +820,7 @@ static int TsStart( es_out_t *p_out )
 }
 static void TsAutoStop( es_out_t *p_out )
 {
-    es_out_sys_t *p_sys = container_of(p_out, es_out_sys_t, out);
+    es_out_sys_t *p_sys = p_out->p_sys;
 
     if( !p_sys->b_delayed || !TsIsUnused( p_sys->p_ts ) )
         return;
@@ -896,7 +889,7 @@ static void TsPushCmd( ts_thread_t *p_ts, ts_cmd_t *p_cmd )
 }
 static int TsPopCmdLocked( ts_thread_t *p_ts, ts_cmd_t *p_cmd, bool b_flush )
 {
-    vlc_mutex_assert( &p_ts->lock );
+    vlc_assert_locked( &p_ts->lock );
 
     if( TsStorageIsEmpty( p_ts->p_storage_r ) )
         return VLC_EGENERIC;
@@ -920,7 +913,7 @@ static bool TsHasCmd( ts_thread_t *p_ts )
     bool b_cmd;
 
     vlc_mutex_lock( &p_ts->lock );
-    b_cmd = !TsStorageIsEmpty( p_ts->p_storage_r );
+    b_cmd =  TsStorageIsEmpty( p_ts->p_storage_r );
     vlc_mutex_unlock( &p_ts->lock );
 
     return b_cmd;
@@ -931,13 +924,13 @@ static bool TsIsUnused( ts_thread_t *p_ts )
 
     vlc_mutex_lock( &p_ts->lock );
     b_unused = !p_ts->b_paused &&
-               p_ts->rate == p_ts->rate_source &&
+               p_ts->i_rate == p_ts->i_rate_source &&
                TsStorageIsEmpty( p_ts->p_storage_r );
     vlc_mutex_unlock( &p_ts->lock );
 
     return b_unused;
 }
-static int TsChangePause( ts_thread_t *p_ts, bool b_source_paused, bool b_paused, vlc_tick_t i_date )
+static int TsChangePause( ts_thread_t *p_ts, bool b_source_paused, bool b_paused, mtime_t i_date )
 {
     vlc_mutex_lock( &p_ts->lock );
 
@@ -969,7 +962,7 @@ static int TsChangePause( ts_thread_t *p_ts, bool b_source_paused, bool b_paused
     vlc_mutex_unlock( &p_ts->lock );
     return i_ret;
 }
-static int TsChangeRate( ts_thread_t *p_ts, float src_rate, float rate )
+static int TsChangeRate( ts_thread_t *p_ts, int i_src_rate, int i_rate )
 {
     int i_ret;
 
@@ -978,10 +971,10 @@ static int TsChangeRate( ts_thread_t *p_ts, float src_rate, float rate )
 
     p_ts->i_rate_date = -1;
     p_ts->i_rate_delay = 0;
-    p_ts->rate = rate;
-    p_ts->rate_source = src_rate;
+    p_ts->i_rate = i_rate;
+    p_ts->i_rate_source = i_src_rate;
 
-    i_ret = es_out_SetRate( p_ts->p_out, rate, rate );
+    i_ret = es_out_SetRate( p_ts->p_out, i_rate, i_rate );
     vlc_mutex_unlock( &p_ts->lock );
 
     return i_ret;
@@ -990,12 +983,12 @@ static int TsChangeRate( ts_thread_t *p_ts, float src_rate, float rate )
 static void *TsRun( void *p_data )
 {
     ts_thread_t *p_ts = p_data;
-    vlc_tick_t i_buffering_date = -1;
+    mtime_t i_buffering_date = -1;
 
     for( ;; )
     {
         ts_cmd_t cmd;
-        vlc_tick_t  i_deadline;
+        mtime_t  i_deadline;
         bool b_buffering;
 
         /* Pop a command to execute */
@@ -1034,32 +1027,32 @@ static void *TsRun( void *p_data )
             p_ts->i_rate_date = cmd.i_date;
 
         p_ts->i_rate_delay = 0;
-        if( p_ts->rate_source != p_ts->rate )
+        if( p_ts->i_rate_source != p_ts->i_rate )
         {
-            const vlc_tick_t i_duration = cmd.i_date - p_ts->i_rate_date;
-            p_ts->i_rate_delay = i_duration * p_ts->rate_source / p_ts->rate - i_duration;
+            const mtime_t i_duration = cmd.i_date - p_ts->i_rate_date;
+            p_ts->i_rate_delay = i_duration * p_ts->i_rate / p_ts->i_rate_source - i_duration;
         }
-        if( p_ts->i_cmd_delay + p_ts->i_rate_delay + p_ts->i_buffering_delay < 0 && p_ts->rate != p_ts->rate_source )
+        if( p_ts->i_cmd_delay + p_ts->i_rate_delay + p_ts->i_buffering_delay < 0 && p_ts->i_rate != p_ts->i_rate_source )
         {
             const int canc = vlc_savecancel();
 
             /* Auto reset to rate 1.0 */
-            msg_Warn( p_ts->p_input, "es out timeshift: auto reset rate to %f", p_ts->rate_source );
+            msg_Warn( p_ts->p_input, "es out timeshift: auto reset rate to %d", p_ts->i_rate_source );
 
             p_ts->i_cmd_delay = 0;
             p_ts->i_buffering_delay = 0;
 
             p_ts->i_rate_delay = 0;
             p_ts->i_rate_date = -1;
-            p_ts->rate = p_ts->rate_source;
+            p_ts->i_rate = p_ts->i_rate_source;
 
-            if( !es_out_SetRate( p_ts->p_out, p_ts->rate_source, p_ts->rate ) )
+            if( !es_out_SetRate( p_ts->p_out, p_ts->i_rate_source, p_ts->i_rate ) )
             {
-                vlc_value_t val = { .f_float = p_ts->rate };
+                vlc_value_t val = { .i_int = p_ts->i_rate };
                 /* Warn back input
                  * FIXME it is perfectly safe BUT it is ugly as it may hide a
                  * rate change requested by user */
-                input_ControlPushHelper( p_ts->p_input, INPUT_CONTROL_SET_RATE, &val );
+                input_ControlPush( p_ts->p_input, INPUT_CONTROL_SET_RATE, &val );
             }
 
             vlc_restorecancel( canc );
@@ -1073,7 +1066,7 @@ static void *TsRun( void *p_data )
          * reading  */
         vlc_cleanup_push( cmd_cleanup_routine, &cmd );
 
-        vlc_tick_wait( i_deadline );
+        mwait( i_deadline );
 
         vlc_cleanup_pop();
 
@@ -1313,7 +1306,7 @@ static void CmdClean( ts_cmd_t *p_cmd )
 static int CmdInitAdd( ts_cmd_t *p_cmd, es_out_id_t *p_es, const es_format_t *p_fmt, bool b_copy )
 {
     p_cmd->i_type = C_ADD;
-    p_cmd->i_date = vlc_tick_now();
+    p_cmd->i_date = mdate();
     p_cmd->u.add.p_es = p_es;
     if( b_copy )
     {
@@ -1341,7 +1334,7 @@ static void CmdCleanAdd( ts_cmd_t *p_cmd )
 static void CmdInitSend( ts_cmd_t *p_cmd, es_out_id_t *p_es, block_t *p_block )
 {
     p_cmd->i_type = C_SEND;
-    p_cmd->i_date = vlc_tick_now();
+    p_cmd->i_date = mdate();
     p_cmd->u.send.p_es = p_es;
     p_cmd->u.send.p_block = p_block;
 }
@@ -1368,7 +1361,7 @@ static void CmdCleanSend( ts_cmd_t *p_cmd )
 static int CmdInitDel( ts_cmd_t *p_cmd, es_out_id_t *p_es )
 {
     p_cmd->i_type = C_DEL;
-    p_cmd->i_date = vlc_tick_now();
+    p_cmd->i_date = mdate();
     p_cmd->u.del.p_es = p_es;
     return VLC_SUCCESS;
 }
@@ -1382,7 +1375,7 @@ static void CmdExecuteDel( es_out_t *p_out, ts_cmd_t *p_cmd )
 static int CmdInitControl( ts_cmd_t *p_cmd, int i_query, va_list args, bool b_copy )
 {
     p_cmd->i_type = C_CONTROL;
-    p_cmd->i_date = vlc_tick_now();
+    p_cmd->i_date = mdate();
     p_cmd->u.control.i_query = i_query;
 
     switch( i_query )
@@ -1391,33 +1384,34 @@ static int CmdInitControl( ts_cmd_t *p_cmd, int i_query, va_list args, bool b_co
     case ES_OUT_SET_MODE:    /* arg1= int                            */
     case ES_OUT_SET_GROUP:   /* arg1= int                            */
     case ES_OUT_DEL_GROUP:   /* arg1=int i_group */
-        p_cmd->u.control.u.i_int = va_arg( args, int );
+        p_cmd->u.control.u.i_int = (int)va_arg( args, int );
         break;
 
-    case ES_OUT_SET_PCR:                /* arg1=vlc_tick_t i_pcr(microsecond!) (using default group 0)*/
+    case ES_OUT_SET_PCR:                /* arg1=int64_t i_pcr(microsecond!) (using default group 0)*/
     case ES_OUT_SET_NEXT_DISPLAY_TIME:  /* arg1=int64_t i_pts(microsecond) */
-        p_cmd->u.control.u.i_i64 = va_arg( args, int64_t );
+        p_cmd->u.control.u.i_i64 = (int64_t)va_arg( args, int64_t );
         break;
 
-    case ES_OUT_SET_GROUP_PCR:          /* arg1= int i_group, arg2=vlc_tick_t i_pcr(microsecond!)*/
-        p_cmd->u.control.u.int_i64.i_int = va_arg( args, int );
-        p_cmd->u.control.u.int_i64.i_i64 = va_arg( args, vlc_tick_t );
+    case ES_OUT_SET_GROUP_PCR:          /* arg1= int i_group, arg2=int64_t i_pcr(microsecond!)*/
+        p_cmd->u.control.u.int_i64.i_int = (int)va_arg( args, int );
+        p_cmd->u.control.u.int_i64.i_i64 = (int64_t)va_arg( args, int64_t );
         break;
 
     case ES_OUT_SET_ES_SCRAMBLED_STATE:
-        p_cmd->u.control.u.es_bool.p_es = va_arg( args, es_out_id_t * );
+        p_cmd->u.control.u.es_bool.p_es = (es_out_id_t*)va_arg( args, es_out_id_t * );
         p_cmd->u.control.u.es_bool.b_bool = (bool)va_arg( args, int );
         break;
 
     case ES_OUT_RESET_PCR:           /* no arg */
     case ES_OUT_SET_EOS:
+    case ES_OUT_RESTART_ALL_ES:
         break;
 
     case ES_OUT_SET_META:        /* arg1=const vlc_meta_t* */
     case ES_OUT_SET_GROUP_META:  /* arg1=int i_group arg2=const vlc_meta_t* */
     {
         if( i_query == ES_OUT_SET_GROUP_META )
-            p_cmd->u.control.u.int_meta.i_int = va_arg( args, int );
+            p_cmd->u.control.u.int_meta.i_int = (int)va_arg( args, int );
         const vlc_meta_t *p_meta = va_arg( args, const vlc_meta_t * );
 
         if( b_copy )
@@ -1437,7 +1431,7 @@ static int CmdInitControl( ts_cmd_t *p_cmd, int i_query, va_list args, bool b_co
 
     case ES_OUT_SET_GROUP_EPG:   /* arg1=int i_group arg2=const vlc_epg_t* */
     {
-        p_cmd->u.control.u.int_epg.i_int = va_arg( args, int );
+        p_cmd->u.control.u.int_epg.i_int = (int)va_arg( args, int );
         const vlc_epg_t *p_epg = va_arg( args, const vlc_epg_t * );
 
         if( b_copy )
@@ -1455,7 +1449,7 @@ static int CmdInitControl( ts_cmd_t *p_cmd, int i_query, va_list args, bool b_co
     }
     case ES_OUT_SET_GROUP_EPG_EVENT:   /* arg1=int i_group arg2=const vlc_epg_event_t* */
     {
-        p_cmd->u.control.u.int_epg_evt.i_int = va_arg( args, int );
+        p_cmd->u.control.u.int_epg_evt.i_int = (int)va_arg( args, int );
         const vlc_epg_event_t *p_evt = va_arg( args, const vlc_epg_event_t * );
 
         if( b_copy )
@@ -1472,31 +1466,30 @@ static int CmdInitControl( ts_cmd_t *p_cmd, int i_query, va_list args, bool b_co
         break;
     }
     case ES_OUT_SET_EPG_TIME: /* arg1=int64_t (seconds) */
-        p_cmd->u.control.u.i_i64 = va_arg( args, int64_t );
+        p_cmd->u.control.u.i_i64 = (int64_t)va_arg( args, int64_t );
         break;
 
     /* Modified control */
     case ES_OUT_SET_ES:      /* arg1= es_out_id_t*                   */
-    case ES_OUT_UNSET_ES:    /* arg1= es_out_id_t*                   */
     case ES_OUT_RESTART_ES:  /* arg1= es_out_id_t*                   */
     case ES_OUT_SET_ES_DEFAULT: /* arg1= es_out_id_t*                */
-        p_cmd->u.control.u.p_es = va_arg( args, es_out_id_t * );
+        p_cmd->u.control.u.p_es = (es_out_id_t*)va_arg( args, es_out_id_t * );
         break;
 
     case ES_OUT_SET_ES_CAT_POLICY:
-        p_cmd->u.control.u.es_policy.i_cat = va_arg( args, int );
-        p_cmd->u.control.u.es_policy.i_policy = va_arg( args, int );
+        p_cmd->u.control.u.es_policy.i_cat = (int) va_arg( args, int );
+        p_cmd->u.control.u.es_policy.i_policy = (int) va_arg( args, int );
         break;
 
     case ES_OUT_SET_ES_STATE:/* arg1= es_out_id_t* arg2=bool   */
-        p_cmd->u.control.u.es_bool.p_es = va_arg( args, es_out_id_t * );
+        p_cmd->u.control.u.es_bool.p_es = (es_out_id_t*)va_arg( args, es_out_id_t * );
         p_cmd->u.control.u.es_bool.b_bool = (bool)va_arg( args, int );
         break;
 
     case ES_OUT_SET_ES_FMT:     /* arg1= es_out_id_t* arg2=es_format_t* */
     {
-        p_cmd->u.control.u.es_fmt.p_es = va_arg( args, es_out_id_t * );
-        es_format_t *p_fmt = va_arg( args, es_format_t * );
+        p_cmd->u.control.u.es_fmt.p_es = (es_out_id_t*)va_arg( args, es_out_id_t * );
+        es_format_t *p_fmt = (es_format_t*)va_arg( args, es_format_t * );
 
         if( b_copy )
         {
@@ -1513,9 +1506,9 @@ static int CmdInitControl( ts_cmd_t *p_cmd, int i_query, va_list args, bool b_co
     }
     case ES_OUT_SET_TIMES:
     {
-        double f_position = va_arg( args, double );
-        vlc_tick_t i_time = va_arg( args, vlc_tick_t );
-        vlc_tick_t i_length = va_arg( args, vlc_tick_t );
+        double f_position = (double)va_arg( args, double );
+        mtime_t i_time = (mtime_t)va_arg( args, mtime_t );
+        mtime_t i_length = (mtime_t)va_arg( args, mtime_t );
 
         p_cmd->u.control.u.times.f_position = f_position;
         p_cmd->u.control.u.times.i_time = i_time;
@@ -1524,9 +1517,9 @@ static int CmdInitControl( ts_cmd_t *p_cmd, int i_query, va_list args, bool b_co
     }
     case ES_OUT_SET_JITTER:
     {
-        vlc_tick_t i_pts_delay = va_arg( args, vlc_tick_t );
-        vlc_tick_t i_pts_jitter = va_arg( args, vlc_tick_t );
-        int     i_cr_average = va_arg( args, int );
+        mtime_t i_pts_delay = (mtime_t)va_arg( args, mtime_t );
+        mtime_t i_pts_jitter = (mtime_t)va_arg( args, mtime_t );
+        int     i_cr_average = (int)va_arg( args, int );
 
         p_cmd->u.control.u.jitter.i_pts_delay = i_pts_delay;
         p_cmd->u.control.u.jitter.i_pts_jitter = i_pts_jitter;
@@ -1553,16 +1546,17 @@ static int CmdExecuteControl( es_out_t *p_out, ts_cmd_t *p_cmd )
     case ES_OUT_DEL_GROUP:   /* arg1=int i_group */
         return es_out_Control( p_out, i_query, p_cmd->u.control.u.i_int );
 
-    case ES_OUT_SET_PCR:                /* arg1=vlc_tick_t i_pcr(microsecond!) (using default group 0)*/
+    case ES_OUT_SET_PCR:                /* arg1=int64_t i_pcr(microsecond!) (using default group 0)*/
     case ES_OUT_SET_NEXT_DISPLAY_TIME:  /* arg1=int64_t i_pts(microsecond) */
         return es_out_Control( p_out, i_query, p_cmd->u.control.u.i_i64 );
 
-    case ES_OUT_SET_GROUP_PCR:          /* arg1= int i_group, arg2=vlc_tick_t i_pcr(microsecond!)*/
+    case ES_OUT_SET_GROUP_PCR:          /* arg1= int i_group, arg2=int64_t i_pcr(microsecond!)*/
         return es_out_Control( p_out, i_query, p_cmd->u.control.u.int_i64.i_int,
                                                p_cmd->u.control.u.int_i64.i_i64 );
 
     case ES_OUT_RESET_PCR:           /* no arg */
     case ES_OUT_SET_EOS:
+    case ES_OUT_RESTART_ALL_ES:
         return es_out_Control( p_out, i_query );
 
     case ES_OUT_SET_GROUP_META:  /* arg1=int i_group arg2=const vlc_meta_t* */
@@ -1589,7 +1583,6 @@ static int CmdExecuteControl( es_out_t *p_out, ts_cmd_t *p_cmd )
 
     /* Modified control */
     case ES_OUT_SET_ES:      /* arg1= es_out_id_t*                   */
-    case ES_OUT_UNSET_ES:    /* arg1= es_out_id_t*                   */
     case ES_OUT_RESTART_ES:  /* arg1= es_out_id_t*                   */
     case ES_OUT_SET_ES_DEFAULT: /* arg1= es_out_id_t*                */
         return es_out_Control( p_out, i_query, !p_cmd->u.control.u.p_es ? NULL :

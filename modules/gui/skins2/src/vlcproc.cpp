@@ -2,6 +2,7 @@
  * vlcproc.cpp
  *****************************************************************************
  * Copyright (C) 2003-2009 the VideoLAN team
+ * $Id: e10240bb7b7787622b638adc047cc96083a23fcf $
  *
  * Authors: Cyril Deguet     <asmax@via.ecp.fr>
  *          Olivier Teulière <ipkiss@via.ecp.fr>
@@ -29,7 +30,7 @@
 #include <vlc_common.h>
 #include <vlc_aout.h>
 #include <vlc_vout.h>
-#include <vlc_playlist_legacy.h>
+#include <vlc_playlist.h>
 #include <vlc_url.h>
 #include <vlc_strings.h>
 
@@ -155,7 +156,7 @@ VlcProc::VlcProc( intf_thread_t *pIntf ): SkinObject( pIntf ),
 
     ADD_CALLBACK( getPL(), "volume" )
     ADD_CALLBACK( getPL(), "mute" )
-    ADD_CALLBACK( getPL(), "intf-toggle-fscontrol" )
+    ADD_CALLBACK( pIntf->obj.libvlc, "intf-toggle-fscontrol" )
 
     ADD_CALLBACK( getPL(), "random" )
     ADD_CALLBACK( getPL(), "loop" )
@@ -186,13 +187,13 @@ VlcProc::~VlcProc()
 {
     if( m_pVout )
     {
-        vout_Release(m_pVout);
+        vlc_object_release( m_pVout );
         m_pVout = NULL;
     }
 
     var_DelCallback( getPL(), "volume", onGenericCallback, this );
     var_DelCallback( getPL(), "mute",onGenericCallback, this );
-    var_DelCallback( getPL(), "intf-toggle-fscontrol",
+    var_DelCallback( getIntf()->obj.libvlc, "intf-toggle-fscontrol",
                      onGenericCallback, this );
 
     var_DelCallback( getPL(), "random", onGenericCallback, this );
@@ -215,10 +216,10 @@ int VlcProc::onInputNew( vlc_object_t *pObj, const char *pVariable,
 
     if( pInput != NULL )
     {
-        var_AddCallback( pInput, "intf-event", onIntfEvent, pThis );
-        var_AddCallback( pInput, "bit-rate", onInputCallback, pThis );
-        var_AddCallback( pInput, "sample-rate", onInputCallback, pThis );
-        var_AddCallback( pInput, "can-record", onInputCallback, pThis );
+        var_AddCallback( pInput, "intf-event", onGenericCallback2, pThis );
+        var_AddCallback( pInput, "bit-rate", onGenericCallback, pThis );
+        var_AddCallback( pInput, "sample-rate", onGenericCallback, pThis );
+        var_AddCallback( pInput, "can-record", onGenericCallback, pThis );
     }
     return VLC_SUCCESS;
 }
@@ -328,10 +329,6 @@ int VlcProc::onEqPreampChange( vlc_object_t *pObj, const char *pVariable,
     return VLC_SUCCESS;
 }
 
-#define ADD_CALLBACK_ENTRY( var, func ) \
-    if( strcmp( pVariable, var ) == 0 ) \
-        cb = &VlcProc::func; \
-    else
 
 int VlcProc::onGenericCallback( vlc_object_t *pObj, const char *pVariable,
                                 vlc_value_t oldVal, vlc_value_t newVal,
@@ -340,106 +337,47 @@ int VlcProc::onGenericCallback( vlc_object_t *pObj, const char *pVariable,
     (void)oldVal;
     VlcProc *pThis = (VlcProc*)pParam;
     AsyncQueue *pQueue = AsyncQueue::instance( pThis->getIntf() );
-    std::string label = pVariable;
-    void (VlcProc::*cb)(vlc_object_t *,vlc_value_t);
-    bool do_remove = false;
 
-    if( strcmp( pVariable, "volume" ) == 0 ) {
-        cb = &VlcProc::on_volume_changed;
-        do_remove = true;
-    } else if( strcmp( pVariable, "mute" ) == 0 ) {
-        cb = &VlcProc::on_mute_changed;
-        do_remove = true;
-    } else
+#define ADD_CALLBACK_ENTRY( var, func, remove ) \
+    { \
+    if( strcmp( pVariable, var ) == 0 ) \
+    { \
+        std::string label = var; \
+        CmdGeneric *pCmd = new CmdCallback( pThis->getIntf(), pObj, newVal, \
+                                            &VlcProc::func, label ); \
+        if( pCmd ) \
+            pQueue->push( CmdGenericPtr( pCmd ), remove ); \
+        return VLC_SUCCESS; \
+    } \
+    }
 
-    ADD_CALLBACK_ENTRY( "random", on_random_changed )
-    ADD_CALLBACK_ENTRY( "loop", on_loop_changed )
-    ADD_CALLBACK_ENTRY( "repeat", on_repeat_changed )
+    ADD_CALLBACK_ENTRY( "volume", on_volume_changed, true )
+    ADD_CALLBACK_ENTRY( "mute", on_mute_changed, true )
 
-    ADD_CALLBACK_ENTRY( "intf-toggle-fscontrol", on_intf_show_changed )
-       vlc_assert_unreachable();
+    ADD_CALLBACK_ENTRY( "bit-rate", on_bit_rate_changed, false )
+    ADD_CALLBACK_ENTRY( "sample-rate", on_sample_rate_changed, false )
+    ADD_CALLBACK_ENTRY( "can-record", on_can_record_changed, false )
 
-    CmdGeneric *pCmd = new CmdCallback( pThis->getIntf(), pObj, newVal, cb,
-                                        label );
-    if( pCmd )
-        pQueue->push( CmdGenericPtr( pCmd ), do_remove );
+    ADD_CALLBACK_ENTRY( "random", on_random_changed, false )
+    ADD_CALLBACK_ENTRY( "loop", on_loop_changed, false )
+    ADD_CALLBACK_ENTRY( "repeat", on_repeat_changed, false )
 
-    return VLC_SUCCESS;
-}
+    ADD_CALLBACK_ENTRY( "audio-filter", on_audio_filter_changed, false )
 
-int VlcProc::onInputCallback( vlc_object_t *pObj, const char *pVariable,
-                              vlc_value_t oldVal, vlc_value_t newVal,
-                              void *pParam )
-{
-    (void)oldVal;
-    input_thread_t *pInput = (input_thread_t *)pObj;
-    VlcProc *pThis = (VlcProc*)pParam;
-    AsyncQueue *pQueue = AsyncQueue::instance( pThis->getIntf() );
-    std::string label = pVariable;
-    void (VlcProc::*cb)(vlc_object_t *,vlc_value_t);
+    ADD_CALLBACK_ENTRY( "intf-toggle-fscontrol", on_intf_show_changed, false )
 
-    ADD_CALLBACK_ENTRY( "bit-rate", on_bit_rate_changed )
-    ADD_CALLBACK_ENTRY( "sample-rate", on_sample_rate_changed )
-    ADD_CALLBACK_ENTRY( "can-record", on_can_record_changed )
-        vlc_assert_unreachable();
-
-    CmdGeneric *pCmd = new CmdInputCallback( pThis->getIntf(), pInput, newVal,
-                                             cb, label );
-    if( pCmd )
-        pQueue->push( CmdGenericPtr( pCmd ), false );
-
-    return VLC_SUCCESS;
-}
-
-int VlcProc::onVoutCallback( vlc_object_t *pObj, const char *pVariable,
-                                vlc_value_t oldVal, vlc_value_t newVal,
-                                void *pParam )
-{
-    (void)oldVal;
-    vout_thread_t *pVout = (vout_thread_t *)pObj;
-    VlcProc *pThis = (VlcProc*)pParam;
-    AsyncQueue *pQueue = AsyncQueue::instance( pThis->getIntf() );
-    std::string label = pVariable;
-    void (VlcProc::*cb)(vlc_object_t *,vlc_value_t);
-
-    ADD_CALLBACK_ENTRY( "mouse-moved", on_mouse_moved_changed )
-        vlc_assert_unreachable();
-
-    CmdGeneric *pCmd = new CmdVoutCallback( pThis->getIntf(), pVout, newVal,
-                                            cb, label );
-    if( pCmd )
-        pQueue->push( CmdGenericPtr( pCmd ), false );
-
-    return VLC_SUCCESS;
-}
-
-int VlcProc::onAoutCallback( vlc_object_t *pObj, const char *pVariable,
-                                vlc_value_t oldVal, vlc_value_t newVal,
-                                void *pParam )
-{
-    (void)oldVal;
-    audio_output_t *pAout = (audio_output_t *)pObj;
-    VlcProc *pThis = (VlcProc*)pParam;
-    AsyncQueue *pQueue = AsyncQueue::instance( pThis->getIntf() );
-    std::string label = pVariable;
-    void (VlcProc::*cb)(vlc_object_t *,vlc_value_t);
-
-    ADD_CALLBACK_ENTRY( "audio-filter", on_audio_filter_changed )
-        vlc_assert_unreachable();
-
-    CmdGeneric *pCmd = new CmdAoutCallback( pThis->getIntf(), pAout, newVal,
-                                            cb, label );
-    if( pCmd )
-        pQueue->push( CmdGenericPtr( pCmd ), false );
-
-    return VLC_SUCCESS;
-}
+    ADD_CALLBACK_ENTRY( "mouse-moved", on_mouse_moved_changed, false )
 
 #undef ADD_CALLBACK_ENTRY
 
-int VlcProc::onIntfEvent( vlc_object_t *pObj, const char *pVariable,
-                          vlc_value_t oldVal, vlc_value_t newVal,
-                          void *pParam )
+    msg_Err( pThis->getIntf(), "no callback entry for %s", pVariable );
+    return VLC_EGENERIC;
+}
+
+
+int VlcProc::onGenericCallback2( vlc_object_t *pObj, const char *pVariable,
+                                 vlc_value_t oldVal, vlc_value_t newVal,
+                                 void *pParam )
 {
     (void)oldVal;
     VlcProc *pThis = (VlcProc*)pParam;
@@ -453,36 +391,40 @@ int VlcProc::onIntfEvent( vlc_object_t *pObj, const char *pVariable,
      *
      * for others, don't discard commands (remove=false)
      **/
-    std::stringstream label;
-    bool b_remove;
-
-    switch( newVal.i_int )
+    if( strcmp( pVariable, "intf-event" ) == 0 )
     {
-        case INPUT_EVENT_STATE:
-        case INPUT_EVENT_POSITION:
-        case INPUT_EVENT_RATE:
-        case INPUT_EVENT_ES:
-        case INPUT_EVENT_CHAPTER:
-        case INPUT_EVENT_RECORD:
-            b_remove = true;
-            break;
-        case INPUT_EVENT_VOUT:
-        case INPUT_EVENT_DEAD:
-            b_remove = false;
-            break;
-        default:
-            return VLC_SUCCESS;
+        std::stringstream label;
+        bool b_remove;
+        switch( newVal.i_int )
+        {
+            case INPUT_EVENT_STATE:
+            case INPUT_EVENT_POSITION:
+            case INPUT_EVENT_RATE:
+            case INPUT_EVENT_ES:
+            case INPUT_EVENT_CHAPTER:
+            case INPUT_EVENT_RECORD:
+                b_remove = true;
+                break;
+            case INPUT_EVENT_VOUT:
+            case INPUT_EVENT_AOUT:
+            case INPUT_EVENT_DEAD:
+                b_remove = false;
+                break;
+            default:
+                return VLC_SUCCESS;
+        }
+        label <<  pVariable << "_" << newVal.i_int;
+        CmdGeneric *pCmd = new CmdCallback( pThis->getIntf(), pObj, newVal,
+                                            &VlcProc::on_intf_event_changed,
+                                            label.str() );
+        if( pCmd )
+            pQueue->push( CmdGenericPtr( pCmd ), b_remove );
+
+        return VLC_SUCCESS;
     }
 
-    label <<  pVariable << "_" << newVal.i_int;
-
-    CmdGeneric *pCmd = new CmdCallback( pThis->getIntf(), pObj, newVal,
-                                        &VlcProc::on_intf_event_changed,
-                                        label.str() );
-    if( pCmd )
-        pQueue->push( CmdGenericPtr( pCmd ), b_remove );
-
-    return VLC_SUCCESS;
+    msg_Err( pThis->getIntf(), "no callback entry for %s", pVariable );
+    return VLC_EGENERIC;
 }
 
 
@@ -497,7 +439,7 @@ void VlcProc::on_intf_event_changed( vlc_object_t* p_obj, vlc_value_t newVal )
         msg_Dbg( getIntf(), "new input %p detected", (void *)pInput );
 
         getIntf()->p_sys->p_input = pInput;
-        input_Hold(pInput);
+        vlc_object_hold( pInput );
 
         // update global variables pertaining to this input
         update_current_input();
@@ -541,9 +483,10 @@ void VlcProc::on_intf_event_changed( vlc_object_t* p_obj, vlc_value_t newVal )
         case INPUT_EVENT_ES:
         {
             // Do we have audio
-            size_t audio_es;
-            var_Change( pInput, "audio-es", VLC_VAR_CHOICESCOUNT, &audio_es );
-            SET_BOOL( m_cVarHasAudio, audio_es > 0 );
+            vlc_value_t audio_es;
+            var_Change( pInput, "audio-es", VLC_VAR_CHOICESCOUNT,
+                            &audio_es, NULL );
+            SET_BOOL( m_cVarHasAudio, audio_es.i_int > 0 );
             break;
         }
 
@@ -555,30 +498,31 @@ void VlcProc::on_intf_event_changed( vlc_object_t* p_obj, vlc_value_t newVal )
             {
                 // end of input or vout reuse (nothing to do)
                 if( pVout )
-                    vout_Release(pVout);
+                    vlc_object_release( pVout );
                 break;
             }
             if( m_pVout )
             {
                 // remove previous Vout callbacks
                 var_DelCallback( m_pVout, "mouse-moved",
-                                 onVoutCallback, this );
-                vout_Release(m_pVout);
+                                 onGenericCallback, this );
+                vlc_object_release( m_pVout );
                 m_pVout = NULL;
             }
 
             // add new Vout callbackx
-            var_AddCallback( pVout, "mouse-moved", onVoutCallback, this );
+            var_AddCallback( pVout, "mouse-moved",
+                             onGenericCallback, this );
             m_pVout = pVout;
             break;
         }
 
         case INPUT_EVENT_CHAPTER:
         {
-            size_t chapters_count;
+            vlc_value_t chapters_count;
             var_Change( pInput, "chapter", VLC_VAR_CHOICESCOUNT,
-                        &chapters_count );
-            SET_BOOL( m_cVarDvdActive, chapters_count > 0 );
+                        &chapters_count, NULL );
+            SET_BOOL( m_cVarDvdActive, chapters_count.i_int > 0 );
             break;
         }
 
@@ -590,11 +534,11 @@ void VlcProc::on_intf_event_changed( vlc_object_t* p_obj, vlc_value_t newVal )
             msg_Dbg( getIntf(), "end of input detected for %p",
                      (void *)pInput );
 
-            var_DelCallback( pInput, "intf-event", onIntfEvent, this );
-            var_DelCallback( pInput, "bit-rate", onInputCallback, this );
-            var_DelCallback( pInput, "sample-rate", onInputCallback, this );
-            var_DelCallback( pInput, "can-record" , onInputCallback, this );
-            input_Release(pInput);
+            var_DelCallback( pInput, "intf-event", onGenericCallback2, this );
+            var_DelCallback( pInput, "bit-rate", onGenericCallback, this );
+            var_DelCallback( pInput, "sample-rate", onGenericCallback, this );
+            var_DelCallback( pInput, "can-record" , onGenericCallback, this );
+            vlc_object_release( pInput );
             getIntf()->p_sys->p_input = NULL;
             reset_input();
             break;
@@ -786,7 +730,7 @@ void VlcProc::update_current_input()
         char *psz_name = NULL;
         if( psz_fmt != NULL )
         {
-            psz_name = vlc_strfinput( pInput, NULL, psz_fmt );
+            psz_name = vlc_strfinput( pInput, psz_fmt );
             free( psz_fmt );
         }
 
@@ -822,7 +766,8 @@ void VlcProc::init_equalizer()
                         VLC_VAR_FLOAT | VLC_VAR_DOINHERIT);
 
         // New Aout (addCallbacks)
-        var_AddCallback( pAout, "audio-filter", onAoutCallback, this );
+        var_AddCallback( pAout, "audio-filter",
+                         onGenericCallback, this );
         var_AddCallback( pAout, "equalizer-bands",
                          onEqBandsChange, this );
         var_AddCallback( pAout, "equalizer-preamp",
@@ -855,7 +800,7 @@ void VlcProc::init_equalizer()
     pVarPreamp->set( (preamp + 20.0) / 40.0 );
 
     if( pAout )
-        aout_Release(pAout);
+        vlc_object_release( pAout);
 }
 
 void VlcProc::setFullscreenVar( bool b_fullscreen )

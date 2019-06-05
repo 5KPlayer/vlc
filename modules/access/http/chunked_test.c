@@ -39,10 +39,9 @@ static const char *stream_content;
 static size_t stream_length;
 static bool stream_bad;
 
-static int fd_callback(struct vlc_tls *tls, short *restrict events)
+static int fd_callback(struct vlc_tls *tls)
 {
     (void) tls;
-    (void) events;
     return -1;
 }
 
@@ -77,16 +76,11 @@ static void close_callback(struct vlc_tls *tls)
     (void) tls;
 }
 
-static const struct vlc_tls_operations chunked_ops =
+static struct vlc_tls chunked_tls =
 {
     .get_fd = fd_callback,
     .readv = recv_callback,
     .close = close_callback,
-};
-
-static struct vlc_tls chunked_tls =
-{
-    .ops = &chunked_ops,
 };
 
 static void stream_close_callback(struct vlc_http_stream *stream, bool bad)

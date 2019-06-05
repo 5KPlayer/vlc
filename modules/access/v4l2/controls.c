@@ -390,15 +390,15 @@ static vlc_v4l2_ctrl_t *ControlAddInteger (vlc_object_t *obj, int fd,
         msg_Dbg (obj, "  current: %3"PRId32", default: %3"PRId32,
                  ctrl.value, query->default_value);
         val.i_int = ctrl.value;
-        var_Change(obj, c->name, VLC_VAR_SETVALUE, val);
+        var_Change (obj, c->name, VLC_VAR_SETVALUE, &val, NULL);
     }
     var_Change (obj, c->name, VLC_VAR_SETMINMAX,
-        (vlc_value_t){ .i_int = query->minimum },
-        (vlc_value_t){ .i_int = query->maximum } );
+        &(vlc_value_t){ .i_int = query->minimum },
+        &(vlc_value_t){ .i_int = query->maximum } );
     if (query->step != 1)
     {
         val.i_int = query->step;
-        var_Change(obj, c->name, VLC_VAR_SETSTEP, val);
+        var_Change (obj, c->name, VLC_VAR_SETSTEP, &val, NULL);
     }
     return c;
 }
@@ -429,7 +429,7 @@ static vlc_v4l2_ctrl_t *ControlAddBoolean (vlc_object_t *obj, int fd,
                  ctrl.value ? " true" : "false",
                  query->default_value ? " true" : "false");
         val.b_bool = ctrl.value;
-        var_Change(obj, c->name, VLC_VAR_SETVALUE, val);
+        var_Change (obj, c->name, VLC_VAR_SETVALUE, &val, NULL);
     }
     return c;
 }
@@ -459,11 +459,11 @@ static vlc_v4l2_ctrl_t *ControlAddMenu (vlc_object_t *obj, int fd,
         msg_Dbg (obj, "  current: %"PRId32", default: %"PRId32,
                  ctrl.value, query->default_value);
         val.i_int = ctrl.value;
-        var_Change(obj, c->name, VLC_VAR_SETVALUE, val);
+        var_Change (obj, c->name, VLC_VAR_SETVALUE, &val, NULL);
     }
     var_Change (obj, c->name, VLC_VAR_SETMINMAX,
-        (vlc_value_t){ .i_int = query->minimum },
-        (vlc_value_t){ .i_int = query->maximum } );
+        &(vlc_value_t){ .i_int = query->minimum },
+        &(vlc_value_t){ .i_int = query->maximum } );
 
     /* Import menu choices */
     for (uint_fast32_t idx = query->minimum;
@@ -476,9 +476,10 @@ static vlc_v4l2_ctrl_t *ControlAddMenu (vlc_object_t *obj, int fd,
             continue;
         msg_Dbg (obj, "  choice %"PRIu32") %s", menu.index, menu.name);
 
+        vlc_value_t text;
         val.i_int = menu.index;
-        var_Change(obj, c->name, VLC_VAR_ADDCHOICE, val,
-                   (const char *)menu.name);
+        text.psz_string = (char *)menu.name;
+        var_Change (obj, c->name, VLC_VAR_ADDCHOICE, &val, &text);
     }
     return c;
 }
@@ -532,7 +533,7 @@ static vlc_v4l2_ctrl_t *ControlAddInteger64 (vlc_object_t *obj, int fd,
         vlc_value_t val = { .i_int = ext_ctrl.value64 };
 
         msg_Dbg (obj, "  current: %"PRId64, val.i_int);
-        var_Change(obj, c->name, VLC_VAR_SETVALUE, val);
+        var_Change (obj, c->name, VLC_VAR_SETVALUE, &val, NULL);
     }
 
     return c;
@@ -584,7 +585,7 @@ static vlc_v4l2_ctrl_t *ControlAddString (vlc_object_t *obj, int fd,
             vlc_value_t val = { .psz_string = buf };
 
             msg_Dbg (obj, "  current: \"%s\"", buf);
-            var_Change(obj, c->name, VLC_VAR_SETVALUE, val);
+            var_Change (obj, c->name, VLC_VAR_SETVALUE, &val, NULL);
         }
         free (buf);
     }
@@ -617,11 +618,11 @@ static vlc_v4l2_ctrl_t *ControlAddBitMask (vlc_object_t *obj, int fd,
         msg_Dbg (obj, "  current: 0x%08"PRIX32", default: 0x%08"PRIX32,
                  ctrl.value, query->default_value);
         val.i_int = ctrl.value;
-        var_Change(obj, c->name, VLC_VAR_SETVALUE, val);
+        var_Change (obj, c->name, VLC_VAR_SETVALUE, &val, NULL);
     }
     var_Change (obj, c->name, VLC_VAR_SETMINMAX,
-        (vlc_value_t){ .i_int = 0 },
-        (vlc_value_t){ .i_int = (uint32_t)query->maximum } );
+        &(vlc_value_t){ .i_int = 0 },
+        &(vlc_value_t){ .i_int = (uint32_t)query->maximum } );
     return c;
 }
 
@@ -650,11 +651,11 @@ static vlc_v4l2_ctrl_t *ControlAddIntMenu (vlc_object_t *obj, int fd,
         msg_Dbg (obj, "  current: %"PRId32", default: %"PRId32,
                  ctrl.value, query->default_value);
         val.i_int = ctrl.value;
-        var_Change(obj, c->name, VLC_VAR_SETVALUE, &val);
+        var_Change (obj, c->name, VLC_VAR_SETVALUE, &val, NULL);
     }
     var_Change (obj, c->name, VLC_VAR_SETMINMAX,
-        (vlc_value_t){ .i_int = query->minimum },
-        (vlc_value_t){ .i_int = query->maximum } );
+        &(vlc_value_t){ .i_int = query->minimum },
+        &(vlc_value_t){ .i_int = query->maximum } );
 
     /* Import menu choices */
     for (uint_fast32_t idx = query->minimum;
@@ -669,10 +670,11 @@ static vlc_v4l2_ctrl_t *ControlAddIntMenu (vlc_object_t *obj, int fd,
         msg_Dbg (obj, "  choice %"PRIu32") %"PRId64, menu.index,
                  (uint64_t)menu.value);
 
+        vlc_value_t text;
         val.i_int = menu.index;
-        sprintf(name, "%"PRId64, (int64_t)menu.value);
-        var_Change(obj, c->name, VLC_VAR_ADDCHOICE, val,
-                   (const char *)name);
+        sprintf (name, "%"PRId64, (int64_t)menu.value);
+        text.psz_string = name;
+        var_Change (obj, c->name, VLC_VAR_ADDCHOICE, &val, &text);
     }
     return c;
 }
@@ -727,14 +729,14 @@ vlc_v4l2_ctrl_t *ControlsInit (vlc_object_t *obj, int fd)
         vlc_v4l2_ctrl_t *c = handler (obj, fd, &query);
         if (c != NULL)
         {
-            vlc_value_t val;
+            vlc_value_t val, text;
 
             var_AddCallback (obj, c->name, ControlSetCallback, c);
-            var_Change(obj, c->name, VLC_VAR_SETTEXT,
-                       (const char *)query.name);
+            text.psz_string = (char *)query.name;
+            var_Change (obj, c->name, VLC_VAR_SETTEXT, &text, NULL);
             val.i_int = query.id;
-            var_Change(obj, "controls", VLC_VAR_ADDCHOICE, val,
-                       (const char *)c->name);
+            text.psz_string = (char *)c->name;
+            var_Change (obj, "controls", VLC_VAR_ADDCHOICE, &val, &text);
 
             c->next = list;
             list = c;
@@ -762,13 +764,15 @@ vlc_v4l2_ctrl_t *ControlsInit (vlc_object_t *obj, int fd)
 
     /* Add a control to reset all controls to their default values */
     {
-        vlc_value_t val;
+        vlc_value_t val, text;
 
         var_Create (obj, "reset", VLC_VAR_VOID | VLC_VAR_ISCOMMAND);
-        var_Change(obj, "reset", VLC_VAR_SETTEXT, _("Reset defaults"));
+        val.psz_string = _("Reset defaults");
+        var_Change (obj, "reset", VLC_VAR_SETTEXT, &val, NULL);
         val.i_int = -1;
 
-        var_Change(obj, "controls", VLC_VAR_ADDCHOICE, val, "reset");
+        text.psz_string = (char *)"reset";
+        var_Change (obj, "controls", VLC_VAR_ADDCHOICE, &val, &text);
         var_AddCallback (obj, "reset", ControlsResetCallback, list);
     }
     if (var_InheritBool (obj, CFG_PREFIX"controls-reset"))

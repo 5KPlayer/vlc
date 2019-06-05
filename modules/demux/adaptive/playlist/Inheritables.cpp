@@ -23,9 +23,20 @@
 #endif
 
 #include "Inheritables.hpp"
+#include "SegmentTimeline.h"
 
 using namespace adaptive::playlist;
 using namespace adaptive;
+
+Timelineable::Timelineable()
+{
+    segmentTimeline.Set(NULL);
+}
+
+Timelineable::~Timelineable()
+{
+    delete segmentTimeline.Get();
+}
 
 TimescaleAble::TimescaleAble(TimescaleAble *parent)
 {

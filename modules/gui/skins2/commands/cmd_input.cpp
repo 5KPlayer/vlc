@@ -2,6 +2,7 @@
  * cmd_input.cpp
  *****************************************************************************
  * Copyright (C) 2003 the VideoLAN team
+ * $Id: e0a6ecf93905c649d521c65fa945ffda1aee6779 $
  *
  * Authors: Cyril Deguet     <asmax@via.ecp.fr>
  *          Olivier Teulière <ipkiss@via.ecp.fr>
@@ -24,7 +25,7 @@
 #include "cmd_input.hpp"
 #include "cmd_dialogs.hpp"
 #include <vlc_input.h>
-#include <vlc_playlist_legacy.h>
+#include <vlc_playlist.h>
 
 void CmdPlay::execute()
 {
@@ -35,7 +36,7 @@ void CmdPlay::execute()
     if( pInput )
     {
         var_SetFloat( getPL(), "rate", 1.0 );
-        input_Release(pInput);
+        vlc_object_release( pInput );
     }
 
     playlist_Lock( pPlaylist );

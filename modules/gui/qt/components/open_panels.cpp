@@ -5,6 +5,7 @@
  * Copyright (C) 2007 Société des arts technologiques
  * Copyright (C) 2007 Savoir-faire Linux
  *
+ * $Id: 92b3522cc00a03e6c75a30b6dbdc469ce7fd2cce $
  *
  * Authors: Clément Stenac <zorglub@videolan.org>
  *          Jean-Baptiste Kempf <jb@videolan.org>
@@ -330,8 +331,7 @@ DiscOpenPanel::DiscOpenPanel( QWidget *_parent, intf_thread_t *_p_intf ) :
     /* Get the default configuration path for the devices */
     psz_dvddiscpath = var_InheritString( p_intf, "dvd" );
     psz_vcddiscpath = var_InheritString( p_intf, "vcd" );
-    psz_cddadiscpath = config_GetType("cd-audio") ?
-                       var_InheritString( p_intf, "cd-audio" ) : NULL;
+    psz_cddadiscpath = var_InheritString( p_intf, "cd-audio" );
 
     /* State to avoid overwritting the users changes with the configuration */
     m_discType = None;
@@ -350,7 +350,7 @@ DiscOpenPanel::DiscOpenPanel( QWidget *_parent, intf_thread_t *_p_intf ) :
     };
     QComboBox *discCombo = ui.deviceCombo; /* avoid namespacing in macro */
     POPULATE_WITH_DEVS( ppsz_discdevices, discCombo );
-    char *psz_config = config_GetPsz( "dvd" );
+    char *psz_config = config_GetPsz( p_intf, "dvd" );
     int temp = ui.deviceCombo->findData( psz_config, Qt::UserRole, Qt::MatchStartsWith );
     free( psz_config );
     if( temp != -1 )
@@ -388,8 +388,7 @@ void DiscOpenPanel::onFocus()
     if( GetLogicalDriveStringsW( sizeof( szDrives ) / sizeof( *szDrives ) - 1, szDrives ) )
     {
         wchar_t *drive = szDrives;
-        DWORD oldMode;
-        SetThreadErrorMode( SEM_FAILCRITICALERRORS, &oldMode );
+        UINT oldMode = SetErrorMode( SEM_FAILCRITICALERRORS );
         while( *drive )
         {
             if( GetDriveTypeW(drive) == DRIVE_CDROM )
@@ -412,10 +411,10 @@ void DiscOpenPanel::onFocus()
             /* go to next drive */
             while( *(drive++) );
         }
-        SetThreadErrorMode(oldMode, NULL);
+        SetErrorMode(oldMode);
     }
 
-    char *psz_config = config_GetPsz( "dvd" );
+    char *psz_config = config_GetPsz( p_intf, "dvd" );
     int temp = ui.deviceCombo->findData( psz_config, Qt::UserRole, Qt::MatchStartsWith );
     free( psz_config );
     if( temp != -1 )
@@ -680,9 +679,6 @@ NetOpenPanel::NetOpenPanel( QWidget *_parent, intf_thread_t *_p_intf ) :
 
     /* Use a simple validator for URLs */
     ui.urlComboBox->setValidator( new UrlValidator( this ) );
-
-    /* QComboBox is by default case insensitive when editable */
-    ui.urlComboBox->completer()->setCaseSensitivity( Qt::CaseSensitive );
     ui.urlComboBox->setFocus();
 }
 
@@ -856,7 +852,7 @@ void CaptureOpenPanel::initialize()
     v4l2PropLayout->addWidget( v4l2StdLabel, 0 , 0 );
 
     v4l2StdBox = new QComboBox;
-    setfillVLCConfigCombo( "v4l2-standard", v4l2StdBox );
+    setfillVLCConfigCombo( "v4l2-standard", p_intf, v4l2StdBox );
     v4l2PropLayout->addWidget( v4l2StdBox, 0 , 1 );
     v4l2PropLayout->addItem( new QSpacerItem( 20, 20, QSizePolicy::Expanding ),
             1, 0, 3, 2 );
@@ -1001,7 +997,7 @@ void CaptureOpenPanel::initialize()
     dvbPropLayout->addWidget( dvbBandLabel, 2, 0 );
 
     dvbBandBox = new QComboBox;
-    setfillVLCConfigCombo( "dvb-bandwidth", dvbBandBox );
+    setfillVLCConfigCombo( "dvb-bandwidth", p_intf, dvbBandBox );
     dvbPropLayout->addWidget( dvbBandBox, 2, 1 );
 
     dvbBandLabel->hide();
@@ -1077,7 +1073,7 @@ void CaptureOpenPanel::initialize()
     pvrPropLayout->addWidget( pvrNormLabel, 0, 0 );
 
     pvrNormBox = new QComboBox;
-    setfillVLCConfigCombo( "v4l2-standard", pvrNormBox );
+    setfillVLCConfigCombo( "v4l2-standard", p_intf, pvrNormBox );
     pvrPropLayout->addWidget( pvrNormBox, 0, 1 );
 
     QLabel *pvrFreqLabel = new QLabel( qtr( "Frequency" ) );

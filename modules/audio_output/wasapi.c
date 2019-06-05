@@ -18,6 +18,11 @@
  * Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
+#if !defined(_WIN32_WINNT) || _WIN32_WINNT < _WIN32_WINNT_VISTA
+# undef _WIN32_WINNT
+# define _WIN32_WINNT _WIN32_WINNT_VISTA
+#endif
+
 #ifdef HAVE_CONFIG_H
 # include <config.h>
 #endif
@@ -76,7 +81,7 @@ static BOOL CALLBACK InitFreq(INIT_ONCE *once, void *param, void **context)
 
 static LARGE_INTEGER freq; /* performance counters frequency */
 
-static msftime_t GetQPC(void)
+static UINT64 GetQPC(void)
 {
     LARGE_INTEGER counter;
 
@@ -103,7 +108,7 @@ typedef struct aout_stream_sys
 
 
 /*** VLC audio output callbacks ***/
-static HRESULT TimeGet(aout_stream_t *s, vlc_tick_t *restrict delay)
+static HRESULT TimeGet(aout_stream_t *s, mtime_t *restrict delay)
 {
     aout_stream_sys_t *sys = s->sys;
     void *pv;
@@ -129,13 +134,15 @@ static HRESULT TimeGet(aout_stream_t *s, vlc_tick_t *restrict delay)
         return hr;
     }
 
-    vlc_tick_t written = vlc_tick_from_frac(sys->written, sys->rate);
-    vlc_tick_t tick_pos = vlc_tick_from_frac(pos, freq);
+    lldiv_t w = lldiv(sys->written, sys->rate);
+    lldiv_t r = lldiv(pos, freq);
 
     static_assert((10000000 % CLOCK_FREQ) == 0, "Frequency conversion broken");
 
-    *delay = written - tick_pos
-           - VLC_TICK_FROM_MSFTIME(GetQPC() - qpcpos);
+    *delay = ((w.quot - r.quot) * CLOCK_FREQ)
+           + ((w.rem * CLOCK_FREQ) / sys->rate)
+           - ((r.rem * CLOCK_FREQ) / freq)
+           - ((GetQPC() - qpcpos) / (10000000 / CLOCK_FREQ));
 
     return hr;
 }
@@ -200,7 +207,7 @@ static HRESULT Play(aout_stream_t *s, block_t *block)
             break; /* done */
 
         /* Out of buffer space, sleep */
-        vlc_tick_sleep(sys->frames * VLC_TICK_FROM_MS(500) / sys->rate);
+        msleep(sys->frames * (CLOCK_FREQ / 2) / sys->rate);
     }
     IAudioRenderClient_Release(render);
 out:
@@ -350,14 +357,12 @@ static void vlc_ToWave(WAVEFORMATEXTENSIBLE *restrict wf,
     {
         case VLC_CODEC_FL64:
             audio->i_format = VLC_CODEC_FL32;
-            /* fall through */
         case VLC_CODEC_FL32:
             wf->SubFormat = KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
             break;
 
         case VLC_CODEC_U8:
             audio->i_format = VLC_CODEC_S16N;
-            /* fall through */
         case VLC_CODEC_S16N:
             wf->SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
             break;
@@ -482,7 +487,7 @@ static HRESULT Start(aout_stream_t *s, audio_sample_format_t *restrict pfmt,
 
     if (fmt.i_format == VLC_CODEC_DTS)
     {
-        b_dtshd = var_GetBool(vlc_object_parent(s), "dtshd");
+        b_dtshd = var_GetBool(s->obj.parent, "dtshd");
         if (b_dtshd)
         {
             b_hdmi = true;
@@ -503,15 +508,15 @@ static HRESULT Start(aout_stream_t *s, audio_sample_format_t *restrict pfmt,
     {
         vlc_SpdifToWave(pwfe, &fmt);
         shared_mode = AUDCLNT_SHAREMODE_EXCLUSIVE;
-        /* The max buffer duration in exclusive mode is 200ms */
-        buffer_duration = MSFTIME_FROM_MS(200);
+        /* The max buffer duration in exclusive mode is 2 seconds */
+        buffer_duration = AOUT_MAX_PREPARE_TIME;
     }
     else if (b_hdmi)
     {
         vlc_HdmiToWave(&wf_iec61937, &fmt);
         shared_mode = AUDCLNT_SHAREMODE_EXCLUSIVE;
-        /* The max buffer duration in exclusive mode is 200ms */
-        buffer_duration = MSFTIME_FROM_MS(200);
+        /* The max buffer duration in exclusive mode is 2 seconds */
+        buffer_duration = AOUT_MAX_PREPARE_TIME;
     }
     else if (AOUT_FMT_LINEAR(&fmt))
     {
@@ -530,12 +535,12 @@ static HRESULT Start(aout_stream_t *s, audio_sample_format_t *restrict pfmt,
 
             /* Setup low latency in order to quickly react to ambisonics filters
              * viewpoint changes. */
-            buffer_duration = MSFTIME_FROM_MS(200);
+            buffer_duration = AOUT_MIN_PREPARE_TIME;
         }
         else
         {
             vlc_ToWave(pwfe, &fmt);
-            buffer_duration = MSFTIME_FROM_VLC_TICK(AOUT_MAX_PREPARE_TIME);
+            buffer_duration = AOUT_MAX_PREPARE_TIME * 10;
         }
     }
     else
@@ -555,7 +560,7 @@ static HRESULT Start(aout_stream_t *s, audio_sample_format_t *restrict pfmt,
                      "fallback to 48kHz (S/PDIF) (error 0x%lx)", hr);
             IAudioClient_Release(sys->client);
             free(sys);
-            var_SetBool(vlc_object_parent(s), "dtshd", false);
+            var_SetBool(s->obj.parent, "dtshd", false);
             return Start(s, pfmt, sid);
         }
         msg_Err(s, "cannot negotiate audio format (error 0x%lx)%s", hr,

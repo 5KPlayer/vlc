@@ -2,6 +2,7 @@
  * mosaic.c : Mosaic video plugin for vlc
  *****************************************************************************
  * Copyright (C) 2004-2008 VLC authors and VideoLAN
+ * $Id: b76166414a0d0b9b8edeccb28ef44c0695a9a8b5 $
  *
  * Authors: Antoine Cellerier <dionoea at videolan dot org>
  *          Christophe Massiot <massiot@via.ecp.fr>
@@ -39,14 +40,14 @@
 
 #include "mosaic.h"
 
-#define BLANK_DELAY  VLC_TICK_FROM_SEC(1)
+#define BLANK_DELAY INT64_C(1000000)
 
 /*****************************************************************************
  * Local prototypes
  *****************************************************************************/
 static int  CreateFilter    ( vlc_object_t * );
 static void DestroyFilter   ( vlc_object_t * );
-static subpicture_t *Filter ( filter_t *, vlc_tick_t );
+static subpicture_t *Filter ( filter_t *, mtime_t );
 
 static int MosaicCallback   ( vlc_object_t *, char const *, vlc_value_t,
                               vlc_value_t, void * );
@@ -54,7 +55,7 @@ static int MosaicCallback   ( vlc_object_t *, char const *, vlc_value_t,
 /*****************************************************************************
  * filter_sys_t : filter descriptor
  *****************************************************************************/
-typedef struct
+struct filter_sys_t
 {
     vlc_mutex_t lock;         /* Internal filter lock */
 
@@ -77,8 +78,8 @@ typedef struct
     int *pi_y_offsets;        /* List of substreams y offsets */
     int i_offsets_length;
 
-    vlc_tick_t i_delay;
-} filter_sys_t;
+    mtime_t i_delay;
+};
 
 /*****************************************************************************
  * Module descriptor
@@ -316,10 +317,9 @@ static int CreateFilter( vlc_object_t *p_this )
     GET_VAR( cols, 1, INT_MAX );
     GET_VAR( alpha, 0, 255 );
     GET_VAR( position, 0, 2 );
+    GET_VAR( delay, 100, INT_MAX );
 #undef GET_VAR
-    i_command = var_CreateGetIntegerCommand( p_filter, CFG_PREFIX "delay" );
-    p_sys->i_delay = VLC_TICK_FROM_MS(VLC_CLIP( i_command, 0, INT_MAX ));
-    var_AddCallback( p_filter, CFG_PREFIX "delay", MosaicCallback, p_sys );
+    p_sys->i_delay *= 1000;
 
     p_sys->b_ar = var_CreateGetBoolCommand( p_filter,
                                             CFG_PREFIX "keep-aspect-ratio" );
@@ -428,7 +428,7 @@ static void DestroyFilter( vlc_object_t *p_this )
 /*****************************************************************************
  * Filter
  *****************************************************************************/
-static subpicture_t *Filter( filter_t *p_filter, vlc_tick_t date )
+static subpicture_t *Filter( filter_t *p_filter, mtime_t date )
 {
     filter_sys_t *p_sys = p_filter->p_sys;
     bridge_t *p_bridge;

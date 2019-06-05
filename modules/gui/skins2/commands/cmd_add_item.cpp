@@ -2,6 +2,7 @@
  * cmd_add_item.cpp
  *****************************************************************************
  * Copyright (C) 2003 the VideoLAN team
+ * $Id: e1eba6f9e7de76ae1806c90ecf135fe265241997 $
  *
  * Authors: Cyril Deguet     <asmax@via.ecp.fr>
  *          Olivier Teulière <ipkiss@via.ecp.fr>
@@ -26,7 +27,7 @@
 #endif
 
 #include <vlc_common.h>
-#include <vlc_playlist_legacy.h>
+#include <vlc_playlist.h>
 #include <vlc_url.h>
 #include "cmd_add_item.hpp"
 

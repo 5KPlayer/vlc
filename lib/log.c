@@ -3,6 +3,7 @@
  *****************************************************************************
  * Copyright (C) 2005 VLC authors and VideoLAN
  *
+ * $Id: f3a769a9ba21ee635c172afbeb8fe51074975c4a $
  *
  * Authors: Damien Fouilleul <damienf@videolan.org>
  *
@@ -76,10 +77,6 @@ static void libvlc_logf (void *data, int level, const vlc_log_t *item,
     inst->log.cb (inst->log.data, level, item, fmt, ap);
 }
 
-static const struct vlc_logger_operations libvlc_log_ops = {
-    libvlc_logf, NULL
-};
-
 void libvlc_log_unset (libvlc_instance_t *inst)
 {
     vlc_LogSet (inst->p_libvlc_int, NULL, NULL);
@@ -90,7 +87,7 @@ void libvlc_log_set (libvlc_instance_t *inst, libvlc_log_cb cb, void *data)
     libvlc_log_unset (inst); /* <- Barrier before modifying the callback */
     inst->log.cb = cb;
     inst->log.data = data;
-    vlc_LogSet(inst->p_libvlc_int, &libvlc_log_ops, inst);
+    vlc_LogSet (inst->p_libvlc_int, libvlc_logf, inst);
 }
 
 /*** Helpers for logging to files ***/
@@ -109,4 +106,62 @@ static void libvlc_log_file (void *data, int level, const libvlc_log_t *log,
 void libvlc_log_set_file (libvlc_instance_t *inst, FILE *stream)
 {
     libvlc_log_set (inst, libvlc_log_file, stream);
+}
+
+/*** Stubs for the old interface ***/
+unsigned libvlc_get_log_verbosity( const libvlc_instance_t *p_instance )
+{
+    (void) p_instance;
+    return -1;
+}
+
+void libvlc_set_log_verbosity( libvlc_instance_t *p_instance, unsigned level )
+{
+    (void) p_instance;
+    (void) level;
+}
+
+libvlc_log_t *libvlc_log_open( libvlc_instance_t *p_instance )
+{
+    (void) p_instance;
+    return malloc(sizeof(libvlc_log_t));
+}
+
+void libvlc_log_close( libvlc_log_t *p_log )
+{
+    free(p_log);
+}
+
+unsigned libvlc_log_count( const libvlc_log_t *p_log )
+{
+    (void) p_log;
+    return 0;
+}
+
+void libvlc_log_clear( libvlc_log_t *p_log )
+{
+    (void) p_log;
+}
+
+libvlc_log_iterator_t *libvlc_log_get_iterator( const libvlc_log_t *p_log )
+{
+    return (p_log != NULL) ? malloc(1) : NULL;
+}
+
+void libvlc_log_iterator_free( libvlc_log_iterator_t *p_iter )
+{
+    free( p_iter );
+}
+
+int libvlc_log_iterator_has_next( const libvlc_log_iterator_t *p_iter )
+{
+    (void) p_iter;
+    return 0;
+}
+
+libvlc_log_message_t *libvlc_log_iterator_next( libvlc_log_iterator_t *p_iter,
+                                                libvlc_log_message_t *buffer )
+{
+    (void) p_iter; (void) buffer;
+    return NULL;
 }

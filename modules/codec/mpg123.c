@@ -50,13 +50,13 @@ static vlc_mutex_t mpg123_mutex = VLC_STATIC_MUTEX;
 /*****************************************************************************
  * Local structures
  *****************************************************************************/
-typedef struct
+struct decoder_sys_t
 {
     mpg123_handle * p_handle;
     date_t          end_date;
     block_t       * p_out;
     bool            b_opened;
-} decoder_sys_t;
+};
 
 /*****************************************************************************
  * Module descriptor
@@ -141,7 +141,7 @@ static void Flush( decoder_t *p_dec )
 {
     decoder_sys_t *p_sys = p_dec->p_sys;
 
-    date_Set( &p_sys->end_date, VLC_TICK_INVALID );
+    date_Set( &p_sys->end_date, VLC_TS_INVALID );
 
     mpg123_close( p_sys->p_handle );
     mpg123_delete( p_sys->p_handle );
@@ -190,6 +190,7 @@ static int UpdateAudioFormat( decoder_t *p_dec )
     {
         p_dec->fmt_out.audio.i_rate = (unsigned int)frame_info.rate;
         date_Init( &p_sys->end_date, p_dec->fmt_out.audio.i_rate, 1 );
+        date_Set( &p_sys->end_date, 0 );
     }
 
     return decoder_UpdateAudioFormat( p_dec );
@@ -202,7 +203,7 @@ static int DecodeBlock( decoder_t *p_dec, block_t *p_block )
 {
     int i_err;
     decoder_sys_t *p_sys = p_dec->p_sys;
-    vlc_tick_t i_pts = VLC_TICK_INVALID;
+    mtime_t i_pts = VLC_TS_INVALID;
 
     if( !p_sys->b_opened )
     {
@@ -214,7 +215,7 @@ static int DecodeBlock( decoder_t *p_dec, block_t *p_block )
     /* Feed input block */
     if( p_block != NULL )
     {
-        i_pts = p_block->i_pts != VLC_TICK_INVALID ? p_block->i_pts : p_block->i_dts;
+        i_pts = p_block->i_pts > VLC_TS_INVALID ? p_block->i_pts : p_block->i_dts;
 
         if( p_block->i_flags & (BLOCK_FLAG_DISCONTINUITY|BLOCK_FLAG_CORRUPTED) )
         {
@@ -226,8 +227,7 @@ static int DecodeBlock( decoder_t *p_dec, block_t *p_block )
             }
         }
 
-        if( i_pts == VLC_TICK_INVALID &&
-            date_Get( &p_sys->end_date ) == VLC_TICK_INVALID )
+        if( !date_Get( &p_sys->end_date ) && i_pts <= VLC_TS_INVALID )
         {
             /* We've just started the stream, wait for the first PTS. */
             msg_Dbg( p_dec, "waiting for PTS" );
@@ -290,7 +290,7 @@ static int DecodeBlock( decoder_t *p_dec, block_t *p_block )
             {
                 msg_Err( p_dec, "mpg123_decode_frame error: %s",
                          mpg123_plain_strerror( i_err ) );
-                date_Set( &p_sys->end_date, VLC_TICK_INVALID );
+                date_Set( &p_sys->end_date, VLC_TS_INVALID );
                 break;
             }
         }
@@ -302,7 +302,7 @@ static int DecodeBlock( decoder_t *p_dec, block_t *p_block )
         {
             if( UpdateAudioFormat( p_dec ) != VLC_SUCCESS )
             {
-                date_Set( &p_sys->end_date, VLC_TICK_INVALID );
+                date_Set( &p_sys->end_date, VLC_TS_INVALID );
                 break;
             }
         }
@@ -310,9 +310,9 @@ static int DecodeBlock( decoder_t *p_dec, block_t *p_block )
         block_t *p_out = p_sys->p_out;
         p_sys->p_out = NULL;
 
-        if( date_Get( &p_sys->end_date ) == VLC_TICK_INVALID )
+        if( date_Get( &p_sys->end_date ) == VLC_TS_INVALID )
         {
-            if( i_pts != VLC_TICK_INVALID )
+            if( i_pts != VLC_TS_INVALID )
             {
                 date_Set( &p_sys->end_date, i_pts );
             }
@@ -396,7 +396,7 @@ static int OpenDecoder( vlc_object_t *p_this )
         return VLC_ENOMEM;
 
     p_sys->p_out = NULL;
-    date_Set( &p_sys->end_date, VLC_TICK_INVALID );
+    date_Set( &p_sys->end_date, VLC_TS_INVALID );
 
     if( MPG123Open( p_dec ) )
         goto error;

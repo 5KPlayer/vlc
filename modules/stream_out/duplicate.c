@@ -2,6 +2,7 @@
  * duplicate.c: duplicate stream output module
  *****************************************************************************
  * Copyright (C) 2003-2004 the VideoLAN team
+ * $Id: 983004d82f03960a695340adf2b08762437dd92e $
  *
  * Author: Laurent Aimar <fenrir@via.ecp.fr>
  *
@@ -52,11 +53,12 @@ vlc_module_end ()
 /*****************************************************************************
  * Exported prototypes
  *****************************************************************************/
-static void *Add( sout_stream_t *, const es_format_t * );
-static void  Del( sout_stream_t *, void * );
-static int   Send( sout_stream_t *, void *, block_t * );
+static sout_stream_id_sys_t *Add( sout_stream_t *, const es_format_t * );
+static void              Del ( sout_stream_t *, sout_stream_id_sys_t * );
+static int               Send( sout_stream_t *, sout_stream_id_sys_t *,
+                               block_t* );
 
-typedef struct
+struct sout_stream_sys_t
 {
     int             i_nb_streams;
     sout_stream_t   **pp_streams;
@@ -66,42 +68,15 @@ typedef struct
 
     int             i_nb_select;
     char            **ppsz_select;
-} sout_stream_sys_t;
+};
 
-typedef struct
+struct sout_stream_id_sys_t
 {
     int                 i_nb_ids;
     void                **pp_ids;
-} sout_stream_id_sys_t;
+};
 
 static bool ESSelected( const es_format_t *fmt, char *psz_select );
-
-/*****************************************************************************
- * Control
- *****************************************************************************/
-static int Control( sout_stream_t *p_stream, int i_query, va_list args )
-{
-    sout_stream_sys_t *p_sys = p_stream->p_sys;
-
-    /* Fanout controls */
-    switch( i_query )
-    {
-        case SOUT_STREAM_ID_SPU_HIGHLIGHT:
-        {
-            sout_stream_id_sys_t *id = va_arg(args, void *);
-            void *spu_hl = va_arg(args, void *);
-            for( int i = 0; i < id->i_nb_ids; i++ )
-            {
-                if( id->pp_ids[i] )
-                    sout_StreamControl( p_sys->pp_streams[i], i_query,
-                                        id->pp_ids[i], spu_hl );
-            }
-            return VLC_SUCCESS;
-        }
-    }
-
-    return VLC_EGENERIC;
-}
 
 /*****************************************************************************
  * Open:
@@ -176,7 +151,6 @@ static int Open( vlc_object_t *p_this )
     p_stream->pf_add    = Add;
     p_stream->pf_del    = Del;
     p_stream->pf_send   = Send;
-    p_stream->pf_control = Control;
 
     p_stream->p_sys     = p_sys;
 
@@ -207,7 +181,7 @@ static void Close( vlc_object_t * p_this )
 /*****************************************************************************
  * Add:
  *****************************************************************************/
-static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
+static sout_stream_id_sys_t * Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
 {
     sout_stream_sys_t *p_sys = p_stream->p_sys;
     sout_stream_id_sys_t  *id;
@@ -263,10 +237,9 @@ static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
 /*****************************************************************************
  * Del:
  *****************************************************************************/
-static void Del( sout_stream_t *p_stream, void *_id )
+static void Del( sout_stream_t *p_stream, sout_stream_id_sys_t *id )
 {
     sout_stream_sys_t *p_sys = p_stream->p_sys;
-    sout_stream_id_sys_t *id = (sout_stream_id_sys_t *)_id;
     int               i_stream;
 
     for( i_stream = 0; i_stream < p_sys->i_nb_streams; i_stream++ )
@@ -285,10 +258,10 @@ static void Del( sout_stream_t *p_stream, void *_id )
 /*****************************************************************************
  * Send:
  *****************************************************************************/
-static int Send( sout_stream_t *p_stream, void *_id, block_t *p_buffer )
+static int Send( sout_stream_t *p_stream, sout_stream_id_sys_t *id,
+                 block_t *p_buffer )
 {
     sout_stream_sys_t *p_sys = p_stream->p_sys;
-    sout_stream_id_sys_t *id = (sout_stream_id_sys_t *)_id;
     sout_stream_t     *p_dup_stream;
     int               i_stream;
 

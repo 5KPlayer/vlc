@@ -2,6 +2,7 @@
  * libvlc_media_list.h:  libvlc_media_list API
  *****************************************************************************
  * Copyright (C) 1998-2008 VLC authors and VideoLAN
+ * $Id: fa3b90932be8c3a9cce27925d4867aeddde748d7 $
  *
  * Authors: Pierre d'Herbemont
  *
@@ -158,10 +159,12 @@ LIBVLC_API int
  * This indicates if this media list is read-only from a user point of view
  *
  * \param p_ml media list instance
- * \retval true read-only
- * \retval false read/write
+ * \return 1 on readonly, 0 on readwrite
+ *
+ * \libvlc_return_bool
  */
-LIBVLC_API bool libvlc_media_list_is_readonly(libvlc_media_list_t *p_ml);
+LIBVLC_API int
+    libvlc_media_list_is_readonly( libvlc_media_list_t * p_ml );
 
 /**
  * Get lock on media list items

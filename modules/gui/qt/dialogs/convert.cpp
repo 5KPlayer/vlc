@@ -2,6 +2,7 @@
  * convert.cpp : Convertion dialogs
  ****************************************************************************
  * Copyright (C) 2009 the VideoLAN team
+ * $Id: 8a87518fa9429a57bc6d07ff1986cda14ab20f96 $
  *
  * Authors: Jean-Baptiste Kempf <jb (at) videolan.org>
  *
@@ -191,6 +192,10 @@ void ConvertDialog::close()
                 mrl += ",deinterlace}";
             }
             mrl += ":";
+            if( displayBox->isChecked() )
+            {
+                mrl += "duplicate{dst=display,dst=";
+            }
 
             QString newFileName;
 
@@ -229,12 +234,11 @@ void ConvertDialog::close()
 
             newFileName.replace( QChar('\''), "\\\'" );
 
-            QString chain = QString("std{access=file{no-overwrite},mux=%1,dst='%2'}")
-                                    .arg( profile->getMux() ).arg( newFileName );
+            mrl += "std{access=file{no-overwrite},mux=" + profile->getMux()
+                 + ",dst='" + newFileName
+                 + "'}";
             if( displayBox->isChecked() )
-                mrl += QString( "duplicate{dst=display,dst=%1}" ).arg( chain );
-            else
-                mrl += chain;
+                mrl += "}";
         }
         msg_Dbg( p_intf, "Transcode MRL: %s", qtu( mrl ) );
         mrls.append(mrl);

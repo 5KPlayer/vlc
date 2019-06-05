@@ -65,21 +65,6 @@ static void LogText(void *opaque, int type, const vlc_log_t *meta,
     funlockfile(stream);
 }
 
-static void Close(void *opaque)
-{
-    vlc_logger_sys_t *sys = opaque;
-
-    fputs(sys->footer, sys->stream);
-    fclose(sys->stream);
-    free(sys);
-}
-
-static const struct vlc_logger_operations text_ops =
-{
-    LogText,
-    Close
-};
-
 #define HTML_FILENAME "vlc-log.html"
 #define HTML_HEADER \
     "<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01//EN\"\n" \
@@ -120,14 +105,7 @@ static void LogHtml(void *opaque, int type, const vlc_log_t *meta,
     funlockfile(stream);
 }
 
-static const struct vlc_logger_operations html_ops =
-{
-    LogHtml,
-    Close
-};
-
-static const struct vlc_logger_operations *Open(vlc_object_t *obj,
-                                                void **restrict sysp)
+static vlc_log_cb Open(vlc_object_t *obj, void **restrict sysp)
 {
     if (!var_InheritBool(obj, "file-logging"))
         return NULL;
@@ -147,7 +125,7 @@ static const struct vlc_logger_operations *Open(vlc_object_t *obj,
     const char *filename = TEXT_FILENAME;
     const char *header = TEXT_HEADER;
 
-    const struct vlc_logger_operations *ops = &text_ops;
+    vlc_log_cb cb = LogText;
     sys->footer = TEXT_FOOTER;
     sys->verbosity = verbosity;
 
@@ -158,7 +136,7 @@ static const struct vlc_logger_operations *Open(vlc_object_t *obj,
         {
             filename = HTML_FILENAME;
             header = HTML_HEADER;
-            ops = &html_ops;
+            cb = LogHtml;
             sys->footer = HTML_FOOTER;
         }
         else if (strcmp(mode, "text"))
@@ -199,7 +177,16 @@ static const struct vlc_logger_operations *Open(vlc_object_t *obj,
     fputs(header, sys->stream);
 
     *sysp = sys;
-    return ops;
+    return cb;
+}
+
+static void Close(void *opaque)
+{
+    vlc_logger_sys_t *sys = opaque;
+
+    fputs(sys->footer, sys->stream);
+    fclose(sys->stream);
+    free(sys);
 }
 
 static const char *const mode_list[] = { "text", "html" };
@@ -234,10 +221,11 @@ vlc_module_begin()
     set_category(CAT_ADVANCED)
     set_subcategory(SUBCAT_ADVANCED_MISC)
     set_capability("logger", 15)
-    set_callbacks(Open, NULL)
+    set_callbacks(Open, Close)
 
     add_bool("file-logging", false, FILE_LOG_TEXT, FILE_LOG_LONGTEXT, false)
-    add_savefile("logfile", NULL, LOGFILE_NAME_TEXT, LOGFILE_NAME_LONGTEXT)
+    add_savefile("logfile", NULL,
+                 LOGFILE_NAME_TEXT, LOGFILE_NAME_LONGTEXT, false)
     add_string("logmode", "text", LOGMODE_TEXT, LOGMODE_LONGTEXT, false)
         change_string_list(mode_list, mode_list_text)
     add_integer("log-verbose", -1, LOGVERBOSE_TEXT, LOGVERBOSE_LONGTEXT, false)

@@ -2,6 +2,7 @@
  * open.hpp : advanced open dialog
  ****************************************************************************
  * Copyright (C) 2006-2007 the VideoLAN team
+ * $Id: 0ce6f815a4267a981d42363c9e09db1e5f6ad8a1 $
  *
  * Authors: Jean-Baptiste Kempf <jb@videolan.org>
  *
@@ -59,7 +60,7 @@ class OpenDialog : public QVLCDialog
 public:
     static OpenDialog * getInstance( QWidget *parent, intf_thread_t *p_intf,
                                 bool b_rawInstance = false, int _action_flag = 0,
-                                bool b_selectMode = false );
+                                bool b_selectMode = false, bool b_pl = true );
 
     static void killInstance()
     {
@@ -70,7 +71,7 @@ public:
     void showTab( int = OPEN_FILE_TAB );
     QString getMRL( bool b = true );
 
-    QStringList getMRLs();
+    QStringList getMRLs( bool b = true );
     QString getOptions();
 
 public slots:
@@ -82,10 +83,11 @@ public slots:
 
 private:
     OpenDialog( QWidget *parent, intf_thread_t *, bool b_selectMode,
-                int _action_flag = 0 );
+                int _action_flag = 0, bool b_pl = true );
     virtual ~OpenDialog();
 
     static OpenDialog *instance;
+    input_thread_t *p_input;
 
     QString optionsMRL;
     QString storedMethod;
@@ -98,6 +100,7 @@ private:
     CaptureOpenPanel *captureOpenPanel;
 
     int i_action_flag;
+    bool b_pl;
     QStringList SeparateEntries( const QString& );
 
     QPushButton *cancelButton, *selectButton;

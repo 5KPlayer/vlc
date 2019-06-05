@@ -91,7 +91,7 @@ processcommands = function ()
         --]]
         vlc.playlist.add({{path=vlc.strings.make_uri(input),options=options,name=name,duration=duration}})
     elseif command == "addsubtitle" then
-        vlc.player.add_subtitle(val)
+        vlc.input.add_subtitle (val)
     elseif command == "in_enqueue" then
         vlc.playlist.enqueue({{path=vlc.strings.make_uri(input),options=options,name=name,duration=duration}})
     elseif command == "pl_play" then
@@ -133,13 +133,21 @@ processcommands = function ()
     elseif command == "pl_random" then
         vlc.playlist.random()
     elseif command == "pl_loop" then
-        vlc.playlist.loop()
+        --if loop is set true, then repeat needs to be set false
+        if vlc.playlist.loop() then
+            vlc.playlist.repeat_("off")
+        end
     elseif command == "pl_repeat" then
-        vlc.playlist.repeat_()
-    elseif command == "pl_sd_add" then
-        vlc.sd.add(val)
-    elseif command == "pl_sd_remove" then
-        vlc.sd.remove(val)
+        --if repeat is set true, then loop needs to be set false
+        if vlc.playlist.repeat_() then
+            vlc.playlist.loop("off")
+        end
+    elseif command == "pl_sd" then
+        if vlc.sd.is_loaded(val) then
+            vlc.sd.remove(val)
+        else
+            vlc.sd.add(val)
+        end
     elseif command == "fullscreen" then
         if vlc.object.vout() then
             vlc.video.fullscreen()
@@ -153,16 +161,20 @@ processcommands = function ()
     elseif command == "key" then
         common.hotkey("key-"..val)
     elseif command == "audiodelay" then
-        val = common.us_tonumber(val)
-        vlc.player.set_audio_delay(val)
+        if vlc.object.input() and val then
+            val = common.us_tonumber(val)
+            vlc.var.set(vlc.object.input(),"audio-delay",val * 1000000)
+        end
     elseif command == "rate" then
         val = common.us_tonumber(val)
-        if val >= 0 then
-            vlc.player.set_rate(val)
+        if vlc.object.input() and val >= 0 then
+            vlc.var.set(vlc.object.input(),"rate",val)
         end
     elseif command == "subdelay" then
-        val = common.us_tonumber(val)
-        vlc.player.set_subtitle_delay(val)
+        if vlc.object.input() then
+            val = common.us_tonumber(val)
+            vlc.var.set(vlc.object.input(),"spu-delay",val * 1000000)
+        end
     elseif command == "aspectratio" then
         if vlc.object.vout() then
             vlc.var.set(vlc.object.vout(),"aspect-ratio",val)
@@ -178,15 +190,15 @@ processcommands = function ()
     elseif command == "setpreset" then
         vlc.equalizer.setpreset(val)
     elseif command == "title" then
-        vlc.player.title_goto(val)
+        vlc.var.set(vlc.object.input(), "title", val)
     elseif command == "chapter" then
-        vlc.player.chapter_goto(val)
+        vlc.var.set(vlc.object.input(), "chapter", val)
     elseif command == "audio_track" then
-        vlc.player.toggle_audio_track(val)
+        vlc.var.set(vlc.object.input(), "audio-es", val)
     elseif command == "video_track" then
-        vlc.player.toggle_video_track(val)
+        vlc.var.set(vlc.object.input(), "video-es", val)
     elseif command == "subtitle_track" then
-        vlc.player.toggle_spu_track(val)
+        vlc.var.set(vlc.object.input(), "spu-es", val)
     end
 
     local input = nil
@@ -430,7 +442,8 @@ end
 getstatus = function (includecategories)
 
 
-    local item = vlc.player.item()
+    local input = vlc.object.input()
+    local item = vlc.input.item()
     local playlist = vlc.object.playlist()
     local vout = vlc.object.vout()
     local aout = vlc.object.aout()
@@ -442,12 +455,21 @@ getstatus = function (includecategories)
     s.version=vlc.misc.version()
     s.volume=vlc.volume.get()
 
-    s.time = vlc.player.get_time() / 1000000
-    s.position = vlc.player.get_position()
-    s.currentplid = vlc.playlist.current()
-    s.audiodelay = vlc.player.get_audio_delay()
-    s.rate = vlc.player.get_rate()
-    s.subtitledelay = vlc.player.get_subtitle_delay()
+    if input then
+        s.time=math.floor(vlc.var.get(input,"time") / 1000000)
+        s.position=vlc.var.get(input,"position")
+        s.currentplid=vlc.playlist.current()
+        s.audiodelay=vlc.var.get(input,"audio-delay") / 1000000
+        s.rate=vlc.var.get(input,"rate")
+        s.subtitledelay=vlc.var.get(input,"spu-delay") / 1000000
+    else
+        s.time=0
+        s.position=0
+        s.currentplid=-1
+        s.audiodelay=0
+        s.rate=1
+        s.subtitledelay=0
+    end
 
     if item then
         s.length=math.floor(item:duration())
@@ -482,9 +504,9 @@ getstatus = function (includecategories)
     s.videoeffects.gamma=round(vlc.config.get("gamma"),2)
 
     s.state=vlc.playlist.status()
-    s.random = vlc.playlist.get_random()
-    s.loop = vlc.playlist.get_loop()
-    s["repeat"] = vlc.playlist.get_repeat()
+    s.random=vlc.var.get(playlist,"random")
+    s.loop=vlc.var.get(playlist,"loop")
+    s["repeat"]=vlc.var.get(playlist,"repeat")
 
     s.equalizer={}
     s.equalizer.preamp=round(vlc.equalizer.preampget(),2)
@@ -518,11 +540,11 @@ getstatus = function (includecategories)
             s.stats[tag]=v
         end
 
-        s.information.chapter = vlc.player.get_chapter_index()
-        s.information.title = vlc.player.get_title_index()
+        s.information.chapter=vlc.var.get(input, "chapter")
+        s.information.title=vlc.var.get(input, "title")
 
-        s.information.chapters_count = vlc.player.get_chapters_count()
-        s.information.titles_count = vlc.player.get_titles_count()
+        s.information.chapters=vlc.var.get_list(input, "chapter")
+        s.information.titles=vlc.var.get_list(input, "title")
 
     end
     return s

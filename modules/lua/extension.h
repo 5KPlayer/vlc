@@ -2,6 +2,7 @@
  * extension.h: Lua Extensions (meta data, web information, ...)
  *****************************************************************************
  * Copyright (C) 2009-2010 VideoLAN and authors
+ * $Id: 2897991297609f4a3edbab58dce3fdc9c741ab2d $
  *
  * Authors: Jean-Philippe André < jpeg # videolan.org >
  *
@@ -27,7 +28,7 @@
 #include <vlc_arrays.h>
 #include <vlc_dialog.h>
 
-#define WATCH_TIMER_PERIOD    VLC_TICK_FROM_SEC(10) ///< 10s period for the timer
+#define WATCH_TIMER_PERIOD    (10 * CLOCK_FREQ) ///< 10s period for the timer
 
 /* List of available commands */
 typedef enum
@@ -66,9 +67,9 @@ struct extension_sys_t
     vlc_mutex_t running_lock;
     vlc_cond_t wait;
 
-    /* The item this extension should use for vlc.input
+    /* The input this extension should use for vlc.input
      * or NULL if it should use playlist's current input */
-    struct input_item_t *p_item;
+    struct input_thread_t *p_input;
 
     extensions_manager_t *p_mgr;     ///< Parent
     /* Queue of commands to execute */

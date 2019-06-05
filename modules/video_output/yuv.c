@@ -2,6 +2,7 @@
  * yuv.c : yuv video output
  *****************************************************************************
  * Copyright (C) 2008, M2X BV
+ * $Id: ff2f73743071f628c0e0fe26f73aef2609649a46 $
  *
  * Authors: Jean-Paul Saman <jpsaman@videolan.org>
  *
@@ -31,6 +32,7 @@
 #include <vlc_common.h>
 #include <vlc_plugin.h>
 #include <vlc_vout_display.h>
+#include <vlc_picture_pool.h>
 #include <vlc_fs.h>
 
 /*****************************************************************************
@@ -49,9 +51,8 @@
 
 #define CFG_PREFIX "yuv-"
 
-static int Open(vout_display_t *vd, const vout_display_cfg_t *cfg,
-                video_format_t *fmtp, vlc_video_context *context);
-static void Close(vout_display_t *vd);
+static int  Open (vlc_object_t *);
+static void Close(vlc_object_t *);
 
 vlc_module_begin()
     set_shortname(N_("YUV output"))
@@ -75,7 +76,8 @@ vlc_module_end()
  *****************************************************************************/
 
 /* */
-static void           Display(vout_display_t *, picture_t *);
+static picture_pool_t *Pool  (vout_display_t *, unsigned);
+static void           Display(vout_display_t *, picture_t *, subpicture_t *subpicture);
 static int            Control(vout_display_t *, int, va_list);
 
 /*****************************************************************************
@@ -85,12 +87,14 @@ struct vout_display_sys_t {
     FILE *f;
     bool  is_first;
     bool  is_yuv4mpeg2;
+
+    picture_pool_t *pool;
 };
 
 /* */
-static int Open(vout_display_t *vd, const vout_display_cfg_t *cfg,
-                video_format_t *fmtp, vlc_video_context *context)
+static int Open(vlc_object_t *object)
 {
+    vout_display_t *vd = (vout_display_t *)object;
     vout_display_sys_t *sys;
 
     /* Allocate instance and initialize some members */
@@ -100,6 +104,7 @@ static int Open(vout_display_t *vd, const vout_display_cfg_t *cfg,
 
     sys->is_first = false;
     sys->is_yuv4mpeg2 = var_InheritBool(vd, CFG_PREFIX "yuv4mpeg2");
+    sys->pool = NULL;
 
     /* */
     char *psz_fcc = var_InheritString(vd, CFG_PREFIX "chroma");
@@ -144,25 +149,29 @@ static int Open(vout_display_t *vd, const vout_display_cfg_t *cfg,
 
     /* */
     video_format_t fmt;
-    video_format_ApplyRotation(&fmt, fmtp);
+    video_format_ApplyRotation(&fmt, &vd->fmt);
     fmt.i_chroma = chroma;
     video_format_FixRgb(&fmt);
 
     /* */
-    *fmtp = fmt;
+    vd->fmt     = fmt;
+    vd->pool    = Pool;
     vd->prepare = NULL;
     vd->display = Display;
     vd->control = Control;
 
-    (void) cfg; (void) context;
+    vout_display_DeleteWindow(vd, NULL);
     return VLC_SUCCESS;
 }
 
 /* */
-static void Close(vout_display_t *vd)
+static void Close(vlc_object_t *object)
 {
+    vout_display_t *vd = (vout_display_t *)object;
     vout_display_sys_t *sys = vd->sys;
 
+    if (sys->pool)
+        picture_pool_Release(sys->pool);
     fclose(sys->f);
     free(sys);
 }
@@ -170,7 +179,15 @@ static void Close(vout_display_t *vd)
 /*****************************************************************************
  *
  *****************************************************************************/
-static void Display(vout_display_t *vd, picture_t *picture)
+static picture_pool_t *Pool(vout_display_t *vd, unsigned count)
+{
+    vout_display_sys_t *sys = vd->sys;
+    if (!sys->pool)
+        sys->pool = picture_pool_NewFromFormat(&vd->fmt, count);
+    return sys->pool;
+}
+
+static void Display(vout_display_t *vd, picture_t *picture, subpicture_t *subpicture)
 {
     vout_display_sys_t *sys = vd->sys;
 
@@ -246,19 +263,14 @@ static void Display(vout_display_t *vd, picture_t *picture)
         }
     }
     fflush(sys->f);
+
+    /* */
+    picture_Release(picture);
+    VLC_UNUSED(subpicture);
 }
 
 static int Control(vout_display_t *vd, int query, va_list args)
 {
-    (void) vd; (void) args;
-
-    switch (query) {
-        case VOUT_DISPLAY_CHANGE_DISPLAY_SIZE:
-        case VOUT_DISPLAY_CHANGE_DISPLAY_FILLED:
-        case VOUT_DISPLAY_CHANGE_ZOOM:
-        case VOUT_DISPLAY_CHANGE_SOURCE_ASPECT:
-        case VOUT_DISPLAY_CHANGE_SOURCE_CROP:
-            return VLC_SUCCESS;
-    }
+    (void) vd; (void) query; (void) args;
     return VLC_EGENERIC;
 }

@@ -2,6 +2,7 @@
  * wave.c : Wave video effect plugin for vlc
  *****************************************************************************
  * Copyright (C) 2000-2008 VLC authors and VideoLAN
+ * $Id: c3ba3921b1e4a26c74bdfa161bac37f70aa9fc64 $
  *
  * Authors: Samuel Hocevar <sam@zoy.org>
  *          Antoine Cellerier <dionoea -at- videolan -dot- org>
@@ -41,6 +42,7 @@
  * Local prototypes
  *****************************************************************************/
 static int  Create    ( vlc_object_t * );
+static void Destroy   ( vlc_object_t * );
 
 static picture_t *Filter( filter_t *, picture_t * );
 
@@ -55,7 +57,7 @@ vlc_module_begin ()
     set_subcategory( SUBCAT_VIDEO_VFILTER )
 
     add_shortcut( "wave" )
-    set_callbacks( Create, NULL )
+    set_callbacks( Create, Destroy )
 vlc_module_end ()
 
 /*****************************************************************************
@@ -64,11 +66,11 @@ vlc_module_end ()
  * This structure is part of the video output thread descriptor.
  * It describes the Distort specific properties of an output thread.
  *****************************************************************************/
-typedef struct
+struct filter_sys_t
 {
     double  f_angle;
-    vlc_tick_t last_date;
-} filter_sys_t;
+    mtime_t last_date;
+};
 
 /*****************************************************************************
  * Create: allocates Distort video thread output method
@@ -85,17 +87,27 @@ static int Create( vlc_object_t *p_this )
         return VLC_EGENERIC;
 
     /* Allocate structure */
-    filter_sys_t *p_sys = p_filter->p_sys =
-        vlc_obj_malloc( p_this, sizeof(*p_sys) );
-    if( !p_sys )
+    p_filter->p_sys = malloc( sizeof( filter_sys_t ) );
+    if( p_filter->p_sys == NULL )
         return VLC_ENOMEM;
 
     p_filter->pf_video_filter = Filter;
 
-    p_sys->f_angle = 0.0;
-    p_sys->last_date = 0;
+    p_filter->p_sys->f_angle = 0.0;
+    p_filter->p_sys->last_date = 0;
 
     return VLC_SUCCESS;
+}
+
+/*****************************************************************************
+ * Destroy: destroy Distort video thread output method
+ *****************************************************************************
+ * Terminate an output method created by DistortCreateOutputMethod
+ *****************************************************************************/
+static void Destroy( vlc_object_t *p_this )
+{
+    filter_t *p_filter = (filter_t *)p_this;
+    free( p_filter->p_sys );
 }
 
 /*****************************************************************************
@@ -109,7 +121,7 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
 {
     picture_t *p_outpic;
     double f_angle;
-    vlc_tick_t new_date = vlc_tick_now();
+    mtime_t new_date = mdate();
 
     if( !p_pic ) return NULL;
 
@@ -120,11 +132,9 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
         return NULL;
     }
 
-    filter_sys_t *p_sys = p_filter->p_sys;
-
-    p_sys->f_angle += 5.0f * secf_from_vlc_tick(new_date - p_sys->last_date);
-    p_sys->last_date = new_date;
-    f_angle = p_sys->f_angle;
+    p_filter->p_sys->f_angle += (new_date - p_filter->p_sys->last_date) / 200000.0;
+    p_filter->p_sys->last_date = new_date;
+    f_angle = p_filter->p_sys->f_angle;
 
     for( int i_index = 0 ; i_index < p_pic->i_planes ; i_index++ )
     {
@@ -176,7 +186,9 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
                 {
                     memcpy( p_out, p_in - i_offset,
                                 i_visible_pitch + i_offset );
-                    p_black_out = &p_out[i_visible_pitch + i_offset];
+                    p_in += p_pic->p[i_index].i_pitch;
+                    p_out += p_outpic->p[i_index].i_pitch;
+                    p_black_out = &p_out[i_offset];
                     i_offset = -i_offset;
                 }
                 else
@@ -184,6 +196,8 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
                     memcpy( p_out + i_offset, p_in,
                                 i_visible_pitch - i_offset );
                     p_black_out = p_out;
+                    p_in += p_pic->p[i_index].i_pitch;
+                    p_out += p_outpic->p[i_index].i_pitch;
                 }
                 if (black_pixel > 0xFF)
                 {
@@ -197,9 +211,10 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
             else
             {
                 memcpy( p_out, p_in, i_visible_pitch );
+                p_in += p_pic->p[i_index].i_pitch;
+                p_out += p_outpic->p[i_index].i_pitch;
             }
-            p_in += p_pic->p[i_index].i_pitch;
-            p_out += p_outpic->p[i_index].i_pitch;
+
         }
     }
 

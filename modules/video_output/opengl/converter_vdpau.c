@@ -32,7 +32,6 @@
 #include <vlc_common.h>
 #include <vlc_vout_window.h>
 #include <vlc_xlib.h>
-#include <vlc_codec.h>
 
 #include "../../hw/vdpau/vlc_vdpau.h"
 #include "internal.h"
@@ -43,10 +42,16 @@
         GLenum ret = tc->vt->GetError(); \
         if (ret != GL_NO_ERROR) \
         { \
-            msg_Err(tc->gl, #fct " failed: 0x%x", ret); \
+            msg_Err(tc->gl, #fct " failed: 0x%x\n", ret); \
             return VLC_EGENERIC; \
         } \
     }
+
+struct  priv
+{
+    vdp_t *vdp;
+    VdpDevice vdp_device;
+};
 
 static PFNGLVDPAUINITNVPROC                     _glVDPAUInitNV;
 static PFNGLVDPAUFININVPROC                     _glVDPAUFiniNV;
@@ -58,13 +63,61 @@ static PFNGLVDPAUSURFACEACCESSNVPROC            _glVDPAUSurfaceAccessNV;
 static PFNGLVDPAUMAPSURFACESNVPROC              _glVDPAUMapSurfacesNV;
 static PFNGLVDPAUUNMAPSURFACESNVPROC            _glVDPAUUnmapSurfacesNV;
 
+static void
+pool_pic_destroy_cb(picture_t *pic)
+{
+    vdp_output_surface_destroy(pic->p_sys->vdp, pic->p_sys->surface);
+    vdp_release_x11(pic->p_sys->vdp);
+    free(pic->p_sys);
+    free(pic);
+}
+
 static picture_pool_t *
 tc_vdpau_gl_get_pool(opengl_tex_converter_t const *tc,
                      unsigned int requested_count)
 {
-    return vlc_vdp_output_pool_create(tc->dec_device->opaque,
-                                      VDP_RGBA_FORMAT_B8G8R8A8,
-                                      &tc->fmt, requested_count);
+    struct priv *priv = tc->priv;
+    picture_t *pics[requested_count];
+
+    unsigned int i;
+    for (i = 0; i < requested_count; ++i)
+    {
+        VdpOutputSurface surface;
+
+        VdpStatus st;
+        if ((st = vdp_output_surface_create(priv->vdp, priv->vdp_device,
+                                            VDP_RGBA_FORMAT_B8G8R8A8,
+                                            tc->fmt.i_visible_width,
+                                            tc->fmt.i_visible_height,
+                                            &surface)) != VDP_STATUS_OK)
+            goto error;
+
+        picture_sys_t *picsys = calloc(1, sizeof(*picsys));
+        if (!picsys)
+            goto error;
+
+        picsys->vdp = vdp_hold_x11(priv->vdp, NULL);
+        picsys->device = priv->vdp_device;
+        picsys->surface = surface;
+
+        picture_resource_t rsc = { .p_sys = picsys,
+                                   .pf_destroy = pool_pic_destroy_cb };
+
+        pics[i] = picture_NewFromResource(&tc->fmt, &rsc);
+        if (!pics[i])
+            goto error;
+    }
+
+    picture_pool_t *pool = picture_pool_New(requested_count, pics);
+    if (!pool)
+        goto error;
+
+    return pool;
+
+error:
+    while (i--)
+        picture_Release(pics[i]);
+    return NULL;
 }
 
 static int
@@ -76,34 +129,30 @@ tc_vdpau_gl_update(opengl_tex_converter_t const *tc, GLuint textures[],
     VLC_UNUSED(tex_heights);
     VLC_UNUSED(plane_offsets);
 
-    vlc_vdp_output_surface_t *p_sys = pic->p_sys;
-    GLvdpauSurfaceNV gl_nv_surface = p_sys->gl_nv_surface;
+    GLvdpauSurfaceNV *p_gl_nv_surface =
+        (GLvdpauSurfaceNV *)&pic->p_sys->gl_nv_surface;
 
-    static_assert (sizeof (gl_nv_surface) <= sizeof (p_sys->gl_nv_surface),
-                   "Type too small");
-
-    if (gl_nv_surface)
+    if (*p_gl_nv_surface)
     {
-        assert(_glVDPAUIsSurfaceNV(gl_nv_surface) == GL_TRUE);
+        assert(_glVDPAUIsSurfaceNV(*p_gl_nv_surface) == GL_TRUE);
 
         GLint state;
         GLsizei num_val;
-        INTEROP_CALL(glVDPAUGetSurfaceivNV, gl_nv_surface,
+        INTEROP_CALL(glVDPAUGetSurfaceivNV, *p_gl_nv_surface,
                      GL_SURFACE_STATE_NV, 1, &num_val, &state);
         assert(num_val == 1); assert(state == GL_SURFACE_MAPPED_NV);
 
-        INTEROP_CALL(glVDPAUUnmapSurfacesNV, 1, &gl_nv_surface);
-        INTEROP_CALL(glVDPAUUnregisterSurfaceNV, gl_nv_surface);
+        INTEROP_CALL(glVDPAUUnmapSurfacesNV, 1, p_gl_nv_surface);
+        INTEROP_CALL(glVDPAUUnregisterSurfaceNV, *p_gl_nv_surface);
     }
 
-    gl_nv_surface =
+    *p_gl_nv_surface =
         INTEROP_CALL(glVDPAURegisterOutputSurfaceNV,
-                     (void *)(size_t)p_sys->surface,
+                     (void *)(size_t)pic->p_sys->surface,
                      GL_TEXTURE_2D, tc->tex_count, textures);
-    INTEROP_CALL(glVDPAUSurfaceAccessNV, gl_nv_surface, GL_READ_ONLY);
-    INTEROP_CALL(glVDPAUMapSurfacesNV, 1, &gl_nv_surface);
+    INTEROP_CALL(glVDPAUSurfaceAccessNV, *p_gl_nv_surface, GL_READ_ONLY);
+    INTEROP_CALL(glVDPAUMapSurfacesNV, 1, p_gl_nv_surface);
 
-    p_sys->gl_nv_surface = gl_nv_surface;
     return VLC_SUCCESS;
 }
 
@@ -112,34 +161,45 @@ Close(vlc_object_t *obj)
 {
     opengl_tex_converter_t *tc = (void *)obj;
     _glVDPAUFiniNV(); assert(tc->vt->GetError() == GL_NO_ERROR);
-    vdp_release_x11(tc->dec_device->opaque);
+    vdp_release_x11(((struct priv *)tc->priv)->vdp);
+    free(tc->priv);
 }
 
 static int
 Open(vlc_object_t *obj)
 {
     opengl_tex_converter_t *tc = (void *) obj;
-    if (tc->dec_device == NULL
-     || tc->dec_device->type != VLC_DECODER_DEVICE_VDPAU
-     || (tc->fmt.i_chroma != VLC_CODEC_VDPAU_VIDEO_420
-      && tc->fmt.i_chroma != VLC_CODEC_VDPAU_VIDEO_422
-      && tc->fmt.i_chroma != VLC_CODEC_VDPAU_VIDEO_444)
-     || !vlc_gl_StrHasToken(tc->glexts, "GL_NV_vdpau_interop")
-     || tc->gl->surface->type != VOUT_WINDOW_TYPE_XID)
+    if ((tc->fmt.i_chroma != VLC_CODEC_VDPAU_VIDEO_420 &&
+         tc->fmt.i_chroma != VLC_CODEC_VDPAU_VIDEO_422 &&
+         tc->fmt.i_chroma != VLC_CODEC_VDPAU_VIDEO_444) ||
+        !HasExtension(tc->glexts, "GL_NV_vdpau_interop") ||
+        tc->gl->surface->type != VOUT_WINDOW_TYPE_XID)
         return VLC_EGENERIC;
 
     tc->fmt.i_chroma = VLC_CODEC_VDPAU_OUTPUT;
 
-    VdpDevice device;
-    vdp_t *vdp = tc->dec_device->opaque;
-    vdp_hold_x11(vdp, &device);
+    if (!vlc_xlib_init(VLC_OBJECT(tc->gl)))
+        return VLC_EGENERIC;
+
+    struct priv *priv = calloc(1, sizeof(*priv));
+    if (!priv)
+        return VLC_EGENERIC;
+    tc->priv = priv;
+
+    if (vdp_get_x11(tc->gl->surface->display.x11, -1,
+                    &priv->vdp, &priv->vdp_device) != VDP_STATUS_OK)
+    {
+        free(priv);
+        return VLC_EGENERIC;
+    }
 
     void *vdp_gpa;
-    if (vdp_get_proc_address(vdp, device,
+    if (vdp_get_proc_address(priv->vdp, priv->vdp_device,
                              VDP_FUNC_ID_GET_PROC_ADDRESS, &vdp_gpa)
         != VDP_STATUS_OK)
     {
-        vdp_release_x11(vdp);
+        vdp_release_x11(priv->vdp);
+        free(priv);
         return VLC_EGENERIC;
     }
 
@@ -147,7 +207,8 @@ Open(vlc_object_t *obj)
     _##fct = vlc_gl_GetProcAddress(tc->gl, #fct); \
     if (!_##fct) \
     { \
-        vdp_release_x11(vdp); \
+        vdp_release_x11(priv->vdp); \
+        free(priv); \
         return VLC_EGENERIC; \
     }
     SAFE_GPA(glVDPAUInitNV);
@@ -161,7 +222,7 @@ Open(vlc_object_t *obj)
     SAFE_GPA(glVDPAUUnmapSurfacesNV);
 #undef SAFE_GPA
 
-    INTEROP_CALL(glVDPAUInitNV, (void *)(uintptr_t)device, vdp_gpa);
+    INTEROP_CALL(glVDPAUInitNV, (void *)(size_t)priv->vdp_device, vdp_gpa);
 
     tc->fshader = opengl_fragment_shader_init(tc, GL_TEXTURE_2D,
                                               VLC_CODEC_RGB32,
@@ -178,29 +239,6 @@ Open(vlc_object_t *obj)
     return VLC_SUCCESS;
 }
 
-static void
-DecoderContextClose(vlc_decoder_device *device)
-{
-    vdp_release_x11(device->opaque);
-}
-
-static int
-DecoderContextOpen(vlc_decoder_device *device, vout_window_t *window)
-{
-    if (!window || !vlc_xlib_init(VLC_OBJECT(window)))
-        return VLC_EGENERIC;
-
-    vdp_t *vdp;
-    VdpDevice vdpdevice;
-
-    if (vdp_get_x11(window->display.x11, -1, &vdp, &vdpdevice) != VDP_STATUS_OK)
-        return VLC_EGENERIC;
-
-    device->type = VLC_DECODER_DEVICE_VDPAU;
-    device->opaque = vdp;
-    return VLC_SUCCESS;
-}
-
 vlc_module_begin ()
     set_description("VDPAU OpenGL surface converter")
     set_capability("glconv", 2)
@@ -208,7 +246,4 @@ vlc_module_begin ()
     set_category(CAT_VIDEO)
     set_subcategory(SUBCAT_VIDEO_VOUT)
     add_shortcut("vdpau")
-    add_submodule()
-        set_capability("decoder device", 3)
-        set_callbacks(DecoderContextOpen, DecoderContextClose)
 vlc_module_end ()

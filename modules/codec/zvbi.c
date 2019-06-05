@@ -2,6 +2,7 @@
  * zvbi.c : VBI and Teletext PES demux and decoder using libzvbi
  *****************************************************************************
  * Copyright (C) 2007, M2X
+ * $Id: ffef4dcc7731233c1cd93b49d15799b5aec6ee22 $
  *
  * Authors: Derk-Jan Hartman <djhartman at m2x dot nl>
  *          Jean-Paul Saman <jpsaman at m2x dot nl>
@@ -149,7 +150,7 @@ typedef enum {
 
 #define MAX_SLICES 32
 
-typedef struct
+struct decoder_sys_t
 {
     vbi_decoder *     p_vbi_dec;
     vbi_sliced        p_vbi_sliced[MAX_SLICES];
@@ -170,14 +171,14 @@ typedef struct
         int pgno, subno;
     }                 nav_link[6];
     int               i_key[3];
-} decoder_sys_t;
+};
 
 static int Decode( decoder_t *, block_t * );
 
 static subpicture_t *Subpicture( decoder_t *p_dec, video_format_t *p_fmt,
                                  bool b_text,
                                  int i_columns, int i_rows,
-                                 int i_align, vlc_tick_t i_pts );
+                                 int i_align, mtime_t i_pts );
 
 static void EventHandler( vbi_event *ev, void *user_data );
 static int OpaquePage( picture_t *p_src, const vbi_page *p_page,
@@ -190,6 +191,8 @@ static int RequestPage( vlc_object_t *p_this, char const *psz_cmd,
                         vlc_value_t oldval, vlc_value_t newval, void *p_data );
 static int Opaque( vlc_object_t *p_this, char const *psz_cmd,
                    vlc_value_t oldval, vlc_value_t newval, void *p_data );
+static int EventKey( vlc_object_t *p_this, char const *psz_cmd,
+                     vlc_value_t oldval, vlc_value_t newval, void *p_data );
 
 /*****************************************************************************
  * Open: probe the decoder and return score
@@ -270,6 +273,9 @@ static int Open( vlc_object_t *p_this )
 
     p_sys->i_level = var_CreateGetInteger( p_dec, "vbi-level" );
 
+    /* Listen for keys */
+    var_AddCallback( p_dec->obj.libvlc, "key-pressed", EventKey, p_dec );
+
     p_dec->fmt_out.i_codec = p_sys->b_text ? VLC_CODEC_TEXT : VLC_CODEC_RGBA;
 
     p_dec->pf_decode = Decode;
@@ -286,6 +292,7 @@ static void Close( vlc_object_t *p_this )
 
     var_DelCallback( p_dec, "vbi-opaque", Opaque, p_sys );
     var_DelCallback( p_dec, "vbi-page", RequestPage, p_sys );
+    var_DelCallback( p_dec->obj.libvlc, "key-pressed", EventKey, p_dec );
 
     vlc_mutex_destroy( &p_sys->lock );
 
@@ -392,7 +399,7 @@ static int Decode( decoder_t *p_dec, block_t *p_block )
                                 i_align, p_block->i_pts );
             if( !p_spu )
                 goto error;
-            subtext_updater_sys_t *p_spu_sys = p_spu->updater.p_sys;
+            subpicture_updater_sys_t *p_spu_sys = p_spu->updater.p_sys;
             p_spu_sys->region.p_segments = text_segment_New("");
 
             p_sys->b_update = true;
@@ -449,7 +456,7 @@ static int Decode( decoder_t *p_dec, block_t *p_block )
         while( offset < i_total && isspace( p_text[offset] ) )
            offset++;
 
-        subtext_updater_sys_t *p_spu_sys = p_spu->updater.p_sys;
+        subpicture_updater_sys_t *p_spu_sys = p_spu->updater.p_sys;
         p_spu_sys->region.p_segments = text_segment_New( &p_text[offset] );
         if( p_spu_sys->region.p_segments && b_opaque )
         {
@@ -509,7 +516,7 @@ error:
 static subpicture_t *Subpicture( decoder_t *p_dec, video_format_t *p_fmt,
                                  bool b_text,
                                  int i_columns, int i_rows, int i_align,
-                                 vlc_tick_t i_pts )
+                                 mtime_t i_pts )
 {
     video_format_t fmt;
     subpicture_t *p_spu=NULL;
@@ -552,7 +559,7 @@ static subpicture_t *Subpicture( decoder_t *p_dec, video_format_t *p_fmt,
     p_spu->p_region->i_y = 0;
 
     p_spu->i_start = i_pts;
-    p_spu->i_stop = b_text ? i_pts + VLC_TICK_FROM_SEC(10): 0;
+    p_spu->i_stop = b_text ? i_pts + (10*CLOCK_FREQ): 0;
     p_spu->b_ephemer = true;
     p_spu->b_absolute = b_text ? false : true;
 
@@ -732,6 +739,63 @@ static int Opaque( vlc_object_t *p_this, char const *psz_cmd,
     p_sys->b_opaque = newval.b_bool;
     p_sys->b_update = true;
     vlc_mutex_unlock( &p_sys->lock );
+
+    return VLC_SUCCESS;
+}
+
+static int EventKey( vlc_object_t *p_this, char const *psz_cmd,
+                        vlc_value_t oldval, vlc_value_t newval, void *p_data )
+{
+    decoder_t *p_dec = p_data;
+    decoder_sys_t *p_sys = p_dec->p_sys;
+
+    VLC_UNUSED(psz_cmd); VLC_UNUSED(oldval); VLC_UNUSED( p_this );
+
+    /* FIXME: Capture + and - key for subpage browsing */
+    if( newval.i_int == '-' || newval.i_int == '+' )
+    {
+        vlc_mutex_lock( &p_sys->lock );
+        if( p_sys->i_wanted_subpage == VBI_ANY_SUBNO && newval.i_int == '+' )
+            p_sys->i_wanted_subpage = vbi_dec2bcd(1);
+        else if ( newval.i_int == '+' )
+            p_sys->i_wanted_subpage = vbi_add_bcd( p_sys->i_wanted_subpage, 1);
+        else if( newval.i_int == '-')
+            p_sys->i_wanted_subpage = vbi_add_bcd( p_sys->i_wanted_subpage, 0xF9999999); /* BCD complement - 1 */
+
+        if ( !vbi_bcd_digits_greater( p_sys->i_wanted_subpage, 0x00 ) || vbi_bcd_digits_greater( p_sys->i_wanted_subpage, 0x99 ) )
+                p_sys->i_wanted_subpage = VBI_ANY_SUBNO;
+        else
+            msg_Info( p_dec, "subpage: %d",
+                      vbi_bcd2dec( p_sys->i_wanted_subpage) );
+
+        p_sys->b_update = true;
+        vlc_mutex_unlock( &p_sys->lock );
+    }
+
+    /* Capture 0-9 for page selection */
+    if( newval.i_int < '0' || newval.i_int > '9' )
+        return VLC_SUCCESS;
+
+    vlc_mutex_lock( &p_sys->lock );
+    p_sys->i_key[0] = p_sys->i_key[1];
+    p_sys->i_key[1] = p_sys->i_key[2];
+    p_sys->i_key[2] = (int)(newval.i_int - '0');
+    msg_Info( p_dec, "page: %c%c%c", (char)(p_sys->i_key[0]+'0'),
+              (char)(p_sys->i_key[1]+'0'), (char)(p_sys->i_key[2]+'0') );
+
+    int i_new_page = 0;
+
+    if( p_sys->i_key[0] > 0 && p_sys->i_key[0] <= 8 &&
+        p_sys->i_key[1] >= 0 && p_sys->i_key[1] <= 9 &&
+        p_sys->i_key[2] >= 0 && p_sys->i_key[2] <= 9 )
+    {
+        i_new_page = p_sys->i_key[0]*100 + p_sys->i_key[1]*10 + p_sys->i_key[2];
+        p_sys->i_key[0] = p_sys->i_key[1] = p_sys->i_key[2] = '*' - '0';
+    }
+    vlc_mutex_unlock( &p_sys->lock );
+
+    if( i_new_page > 0 )
+        var_SetInteger( p_dec, "vbi-page", i_new_page );
 
     return VLC_SUCCESS;
 }

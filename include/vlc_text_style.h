@@ -2,6 +2,7 @@
  * vlc_text_style.h: text_style_t definition and helpers.
  *****************************************************************************
  * Copyright (C) 1999-2010 VLC authors and VideoLAN
+ * $Id: c24d76adcfedf63514255bb31483acb9325df1b1 $
  *
  * Authors: Derk-Jan Hartman <hartman _AT_ videolan _DOT_ org>
  *          basOS G <noxelia 4t gmail , com>
@@ -115,19 +116,6 @@ typedef struct
 
 
 typedef struct text_segment_t text_segment_t;
-typedef struct text_segment_ruby_t text_segment_ruby_t;
-
-/**
- * Text segment ruby for subtitles
- * Each ruby has an anchor to the segment char.
- */
-struct text_segment_ruby_t
-{
-    char *psz_base;
-    char *psz_rt;
-    text_segment_ruby_t *p_next;
-};
-
 /**
  * Text segment for subtitles
  *
@@ -144,7 +132,6 @@ struct text_segment_t {
     char *psz_text;                   /**< text string of the segment */
     text_style_t *style;              /**< style applied to this segment */
     text_segment_t *p_next;           /**< next segment */
-    text_segment_ruby_t *p_ruby;      /**< ruby descriptions */
 };
 
 /**
@@ -155,11 +142,7 @@ VLC_API text_style_t * text_style_New( void );
 /**
  * Create a text style
  *
- * Give STYLE_NO_DEFAULTS as the argument if you want only the zero-filled
- * object. Give STYLE_FULLY_SET (or anything other than STYLE_NO_DEFAULTS)
- * if you want an object with sensible defaults. (The value is not stored,
- * the only effect is to determine whether to return a zero-filled or
- * sensible-defaults-filled object).
+ * Set feature flags as argument if you want to set style defaults
  */
 VLC_API text_style_t * text_style_Create( int );
 
@@ -226,24 +209,6 @@ VLC_API void text_segment_ChainDelete( text_segment_t * );
  * You may give it NULL, but it will return NULL.
  */
 VLC_API text_segment_t * text_segment_Copy( text_segment_t * );
-
-/**
- * This function will create a ruby section for a text_segment
- *
- */
-VLC_API text_segment_ruby_t *text_segment_ruby_New( const char *psz_base,
-                                                    const char *psz_rt );
-
-/**
- * Deletes a ruby sections chain
- */
-VLC_API void text_segment_ruby_ChainDelete( text_segment_ruby_t *p_ruby );
-
-/**
- * This function creates a text segment from a ruby section,
- * and creates fallback string.
- */
-VLC_API text_segment_t *text_segment_FromRuby( text_segment_ruby_t *p_ruby );
 
 static const struct {
     const char *psz_name;

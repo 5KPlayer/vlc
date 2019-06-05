@@ -2,6 +2,7 @@
  * filter.c : filter_t helpers.
  *****************************************************************************
  * Copyright (C) 2009 Laurent Aimar
+ * $Id: 505b0eddc7905cf713bc52ba86a412d8c1bae482 $
  *
  * Author: Laurent Aimar <fenrir _AT_ videolan _DOT_ org>
  *
@@ -55,7 +56,7 @@ void filter_AddProxyCallbacks( vlc_object_t *obj, filter_t *filter,
     {
         char *name = *pname;
         int var_type = var_Type(filter, name);
-        if (var_Type(obj, name) || config_GetType(name) == 0)
+        if (var_Type(obj, name))
         {
             free(name);
             continue;
@@ -117,6 +118,12 @@ filter_t *filter_NewBlend( vlc_object_t *p_this,
     p_blend->fmt_out.video.i_rmask  = p_dst_chroma->i_rmask;
     p_blend->fmt_out.video.i_gmask  = p_dst_chroma->i_gmask;
     p_blend->fmt_out.video.i_bmask  = p_dst_chroma->i_bmask;
+    p_blend->fmt_out.video.i_rrshift= p_dst_chroma->i_rrshift;
+    p_blend->fmt_out.video.i_rgshift= p_dst_chroma->i_rgshift;
+    p_blend->fmt_out.video.i_rbshift= p_dst_chroma->i_rbshift;
+    p_blend->fmt_out.video.i_lrshift= p_dst_chroma->i_lrshift;
+    p_blend->fmt_out.video.i_lgshift= p_dst_chroma->i_lgshift;
+    p_blend->fmt_out.video.i_lbshift= p_dst_chroma->i_lbshift;
 
     /* The blend module will be loaded when needed with the real
     * input format */
@@ -173,7 +180,7 @@ void filter_DeleteBlend( filter_t *p_blend )
     if( p_blend->p_module )
         module_unneed( p_blend, p_blend->p_module );
 
-    vlc_object_delete(p_blend);
+    vlc_object_release( p_blend );
 }
 
 /* */
@@ -207,6 +214,7 @@ void video_splitter_Delete( video_splitter_t *p_splitter )
         module_unneed( p_splitter, p_splitter->p_module );
 
     video_format_Clean( &p_splitter->fmt );
-    vlc_object_delete(p_splitter);
+
+    vlc_object_release( p_splitter );
 }
 

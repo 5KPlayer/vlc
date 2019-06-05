@@ -2,6 +2,7 @@
  * win32_factory.hpp
  *****************************************************************************
  * Copyright (C) 2003 the VideoLAN team
+ * $Id: c5bf1b08decba27a19e1c97501000697de4b3dee $
  *
  * Authors: Cyril Deguet     <asmax@via.ecp.fr>
  *          Olivier Teulière <ipkiss@via.ecp.fr>
@@ -101,7 +102,7 @@ public:
     virtual int getScreenHeight() const;
 
     /// Get Monitor Information
-    virtual void getMonitorInfo( OSWindow *pWindow,
+    virtual void getMonitorInfo( const GenericWindow &rWindow,
                                  int* x, int* y,
                                  int* width, int* height ) const;
     virtual void getMonitorInfo( int numScreen,

@@ -560,18 +560,20 @@ int SetupFormat (vlc_object_t *obj, int fd, uint32_t fourcc,
     return 0;
 }
 
-vlc_tick_t GetBufferPTS (const struct v4l2_buffer *buf)
+mtime_t GetBufferPTS (const struct v4l2_buffer *buf)
 {
-    vlc_tick_t pts;
+    mtime_t pts;
 
     switch (buf->flags & V4L2_BUF_FLAG_TIMESTAMP_MASK)
     {
         case V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC:
-            pts = vlc_tick_from_timeval( &buf->timestamp );
+            pts = (buf->timestamp.tv_sec * CLOCK_FREQ)
+                 + buf->timestamp.tv_usec;
+            static_assert (CLOCK_FREQ == 1000000, "Clock unit mismatch");
             break;
         case V4L2_BUF_FLAG_TIMESTAMP_UNKNOWN:
         default:
-            pts = vlc_tick_now ();
+            pts = mdate ();
             break;
     }
     return pts;

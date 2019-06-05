@@ -36,7 +36,7 @@
     "Video will be embedded in this pre-existing window. " \
     "If zero, a new window will be created.")
 
-static int Open(vout_window_t *);
+static int  Open (vout_window_t *, const vout_window_cfg_t *);
 static void Close(vout_window_t *);
 
 /*
@@ -48,27 +48,29 @@ vlc_module_begin ()
     set_category (CAT_VIDEO)
     set_subcategory (SUBCAT_VIDEO_VOUT)
     set_capability ("vout window", 70)
-    set_callbacks (Open, NULL)
+    set_callbacks (Open, Close)
     add_shortcut ("embed-hwnd")
 
     add_integer ("drawable-hwnd", 0, HWND_TEXT, HWND_LONGTEXT, true)
         change_volatile ()
 vlc_module_end ()
 
+static int Control (vout_window_t *, int, va_list);
+
 /* Keep a list of busy drawables, so we don't overlap videos if there are
  * more than one video track in the stream. */
 static vlc_mutex_t serializer = VLC_STATIC_MUTEX;
 static uintptr_t *used = NULL;
 
-static const struct vout_window_operations ops = {
-    .destroy = Close,
-};
-
 /**
  * Find the drawable set by libvlc application.
  */
-static int Open(vout_window_t *wnd)
+static int Open (vout_window_t *wnd, const vout_window_cfg_t *cfg)
 {
+    if (cfg->type != VOUT_WINDOW_TYPE_INVALID
+     && cfg->type != VOUT_WINDOW_TYPE_HWND)
+        return VLC_EGENERIC;
+
     uintptr_t val = var_InheritInteger (wnd, "drawable-hwnd");
     if (val == 0)
         return VLC_EGENERIC;
@@ -81,7 +83,7 @@ static int Open(vout_window_t *wnd)
         for (/*n = 0*/; used[n]; n++)
             if (used[n] == val)
             {
-                msg_Warn (wnd, "HWND 0x%" PRIXPTR " is busy", val);
+                msg_Warn (wnd, "HWND 0x%zX is busy", val);
                 val = 0;
                 goto skip;
             }
@@ -103,7 +105,7 @@ skip:
 
     wnd->type = VOUT_WINDOW_TYPE_HWND;
     wnd->handle.hwnd = (void *)val;
-    wnd->ops = &ops;
+    wnd->control = Control;
     wnd->sys = (void *)val;
     return VLC_SUCCESS;
 }
@@ -134,4 +136,20 @@ static void Close (vout_window_t *wnd)
          used = NULL;
     }
     vlc_mutex_unlock (&serializer);
+}
+
+
+static int Control (vout_window_t *wnd, int query, va_list ap)
+{
+    VLC_UNUSED( ap );
+
+    switch (query)
+    {
+        case VOUT_WINDOW_SET_SIZE:   /* not allowed */
+        case VOUT_WINDOW_SET_STATE: /* not allowed either, would be ugly */
+            return VLC_EGENERIC;
+        default:
+            msg_Warn (wnd, "unsupported control query %d", query);
+            return VLC_EGENERIC;
+    }
 }

@@ -27,12 +27,7 @@ struct background_worker_config {
      * a positive value denotes the maximum number of milliseconds a task can
      * run before \ref pf_stop is called to kill it.
      **/
-    vlc_tick_t default_timeout;
-
-    /**
-     * Maximum number of threads used to execute tasks.
-     */
-    int max_threads;
+    mtime_t default_timeout;
 
     /**
      * Release an entity
@@ -41,9 +36,6 @@ struct background_worker_config {
      * entity within the background-worker. It will happen either when \ref
      * pf_stop has finished executing, or if the entity is removed from the
      * queue (through \ref background_worker_Cancel)
-     *
-     * \warning As each task might be executed in parallel by different threads,
-     *          this callback must be thread-safe.
      *
      * \param entity the entity to release
      **/
@@ -55,9 +47,6 @@ struct background_worker_config {
      * This callback will be called in order to increment the ref-count of an
      * entity. It will happen when the entity is pushed into the queue of
      * pending tasks as part of \ref background_worker_Push.
-     *
-     * \warning As each task might be executed in parallel by different threads,
-     *          this callback must be thread-safe.
      *
      * \param entity the entity to hold
      **/
@@ -74,9 +63,6 @@ struct background_worker_config {
      * The value of `*out` will then be the value of the argument named `handle`
      * in terms of \ref pf_probe and \ref pf_stop.
      *
-     * \warning As each task might be executed in parallel by different threads,
-     *          this callback must be thread-safe.
-     *
      * \param owner the owner of the background-worker
      * \param entity the entity for which a task is to be created
      * \param out [out] `*out` shall, on success, refer to the handle associated
@@ -91,9 +77,6 @@ struct background_worker_config {
      * This callback is called in order to see whether or not a running task has
      * finished or not. It can be called anytime between a successful call to
      * \ref pf_start, and the corresponding call to \ref pf_stop.
-     *
-     * \warning As each task might be executed in parallel by different threads,
-     *          this callback must be thread-safe.
      *
      * \param owner the owner of the background-worker
      * \param handle the handle associated with the running task
@@ -111,9 +94,6 @@ struct background_worker_config {
      * \warning This function is called either after \ref pf_probe has stated
      *          that the task has finished, or if the timeout (if any) for the
      *          task has been reached.
-     *
-     * \warning As each task might be executed in parallel by different threads,
-     *          this callback must be thread-safe.
      *
      * \param owner the owner of the background-worker
      * \parma handle the handle associated with the task to be stopped

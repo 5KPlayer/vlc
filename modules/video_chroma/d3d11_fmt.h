@@ -59,7 +59,7 @@ typedef struct
 } d3d11_handle_t;
 
 /* owned by the vout for VLC_CODEC_D3D11_OPAQUE */
-typedef struct
+struct picture_sys_t
 {
     ID3D11VideoDecoderOutputView  *decoder; /* may be NULL for pictures from the pool */
     union {
@@ -70,17 +70,13 @@ typedef struct
     unsigned                      slice_index;
     ID3D11VideoProcessorInputView  *processorInput;  /* when used as processor input */
     ID3D11VideoProcessorOutputView *processorOutput; /* when used as processor output */
-    ID3D11ShaderResourceView      *renderSrc[D3D11_MAX_SHADER_VIEW];
+    ID3D11ShaderResourceView      *resourceView[D3D11_MAX_SHADER_VIEW];
     DXGI_FORMAT                   formatTexture;
-} picture_sys_t;
+};
 
 #include "../codec/avcodec/va_surface.h"
 
-static inline picture_sys_t *ActivePictureSys(picture_t *p_pic)
-{
-    struct va_pic_context *pic_ctx = (struct va_pic_context*)p_pic->context;
-    return pic_ctx ? &pic_ctx->picsys : p_pic->p_sys;
-}
+picture_sys_t *ActivePictureSys(picture_t *p_pic);
 
 /* index to use for texture/resource that use a known DXGI format
  * (ie not DXGI_FORMAT_UNKNWON) */
@@ -89,9 +85,7 @@ static inline picture_sys_t *ActivePictureSys(picture_t *p_pic)
 static inline bool is_d3d11_opaque(vlc_fourcc_t chroma)
 {
     return chroma == VLC_CODEC_D3D11_OPAQUE ||
-           chroma == VLC_CODEC_D3D11_OPAQUE_10B ||
-           chroma == VLC_CODEC_D3D11_OPAQUE_RGBA ||
-           chroma == VLC_CODEC_D3D11_OPAQUE_BGRA;
+           chroma == VLC_CODEC_D3D11_OPAQUE_10B;
 }
 
 void AcquirePictureSys(picture_sys_t *p_sys);
@@ -99,19 +93,15 @@ void AcquirePictureSys(picture_sys_t *p_sys);
 void ReleasePictureSys(picture_sys_t *p_sys);
 
 /* map texture planes to resource views */
-int D3D11_AllocateResourceView(vlc_object_t *obj, ID3D11Device *d3ddevice,
+int D3D11_AllocateShaderView(vlc_object_t *obj, ID3D11Device *d3ddevice,
                              const d3d_format_t *format,
                              ID3D11Texture2D *p_texture[D3D11_MAX_SHADER_VIEW], UINT slice_index,
-                             ID3D11ShaderResourceView *output[D3D11_MAX_SHADER_VIEW]);
-#define D3D11_AllocateResourceView(a,b,c,d,e,f)  D3D11_AllocateResourceView(VLC_OBJECT(a),b,c,d,e,f)
+                             ID3D11ShaderResourceView *resourceView[D3D11_MAX_SHADER_VIEW]);
+#define D3D11_AllocateShaderView(a,b,c,d,e,f)  D3D11_AllocateShaderView(VLC_OBJECT(a),b,c,d,e,f)
 
-HRESULT D3D11_CreateDevice(vlc_object_t *obj, d3d11_handle_t *, IDXGIAdapter *,
+HRESULT D3D11_CreateDevice(vlc_object_t *obj, d3d11_handle_t *,
                            bool hw_decoding, d3d11_device_t *out);
-#define D3D11_CreateDevice(a,b,c,d,e)  D3D11_CreateDevice( VLC_OBJECT(a), b, c, d, e )
-HRESULT D3D11_CreateDeviceExternal(vlc_object_t *obj, ID3D11DeviceContext *,
-                                   bool hw_decoding, d3d11_device_t *out);
-#define D3D11_CreateDeviceExternal(a,b,c,d) \
-    D3D11_CreateDeviceExternal( VLC_OBJECT(a), b, c, d )
+#define D3D11_CreateDevice(a,b,c,d)  D3D11_CreateDevice( VLC_OBJECT(a), b, c, d )
 
 void D3D11_ReleaseDevice(d3d11_device_t *);
 
@@ -152,6 +142,11 @@ const d3d_format_t *FindD3D11Format(vlc_object_t *,
 int AllocateTextures(vlc_object_t *, d3d11_device_t *, const d3d_format_t *,
                      const video_format_t *, unsigned pool_size, ID3D11Texture2D *textures[]);
 #define AllocateTextures(a,b,c,d,e,f)  AllocateTextures(VLC_OBJECT(a),b,c,d,e,f)
+
+#ifndef NDEBUG
+void D3D11_LogProcessorSupport(vlc_object_t*, ID3D11VideoProcessorEnumerator*);
+#define D3D11_LogProcessorSupport(a,b) D3D11_LogProcessorSupport( VLC_OBJECT(a), b )
+#endif
 
 static inline void d3d11_device_lock(d3d11_device_t *d3d_dev)
 {

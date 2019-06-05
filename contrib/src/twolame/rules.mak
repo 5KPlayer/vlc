@@ -24,6 +24,6 @@ twolame: twolame-$(TWOLAME_VERSION).tar.gz .sum-twolame
 	$(RECONF)
 	cd $< && $(HOSTVARS) CFLAGS="${CFLAGS} -DLIBTWOLAME_STATIC" ./configure $(HOSTCONF)
 	cd $< && $(MAKE)
-	cd $< && $(MAKE) -C libtwolame install
+	cd $</libtwolame && $(MAKE) install
 	cd $< && $(MAKE) install-data
 	touch $@

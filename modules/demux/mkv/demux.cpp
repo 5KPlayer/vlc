@@ -3,6 +3,7 @@
  * mkv.cpp : matroska demuxer
  *****************************************************************************
  * Copyright (C) 2003-2004 VLC authors and VideoLAN
+ * $Id: f95d9b9c078a98f0c76cc3d9247889d82e56ac05 $
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *          Steve Lhomme <steve.lhomme@free.fr>
@@ -28,10 +29,408 @@
 
 #include <vlc_actions.h>
 
-namespace mkv {
+event_thread_t::event_thread_t(demux_t *p_demux) : p_demux(p_demux)
+{
+    vlc_mutex_init( &lock );
+    vlc_cond_init( &wait );
+    is_running = false;
+}
+event_thread_t::~event_thread_t()
+{
+    ResetPci();
+    vlc_cond_destroy( &wait );
+    vlc_mutex_destroy( &lock );
+}
+
+void event_thread_t::SetPci(const pci_t *data)
+{
+    vlc_mutex_locker l(&lock);
+
+    pci_packet = *data;
+
+#ifndef WORDS_BIGENDIAN
+    for( uint8_t button = 1; button <= pci_packet.hli.hl_gi.btn_ns; button++) {
+        btni_t *button_ptr = &(pci_packet.hli.btnit[button-1]);
+        binary *p_data = (binary*) button_ptr;
+
+        uint16 i_x_start = ((p_data[0] & 0x3F) << 4 ) + ( p_data[1] >> 4 );
+        uint16 i_x_end   = ((p_data[1] & 0x03) << 8 ) + p_data[2];
+        uint16 i_y_start = ((p_data[3] & 0x3F) << 4 ) + ( p_data[4] >> 4 );
+        uint16 i_y_end   = ((p_data[4] & 0x03) << 8 ) + p_data[5];
+        button_ptr->x_start = i_x_start;
+        button_ptr->x_end   = i_x_end;
+        button_ptr->y_start = i_y_start;
+        button_ptr->y_end   = i_y_end;
+
+    }
+    for ( uint8_t i = 0; i<3; i++ )
+        for ( uint8_t j = 0; j<2; j++ )
+            pci_packet.hli.btn_colit.btn_coli[i][j] = U32_AT( &pci_packet.hli.btn_colit.btn_coli[i][j] );
+#endif
+    if( !is_running )
+    {
+        b_abort = false;
+        is_running = !vlc_clone( &thread, EventThread, this, VLC_THREAD_PRIORITY_LOW );
+    }
+}
+void event_thread_t::ResetPci()
+{
+    if( !is_running )
+        return;
+
+    vlc_mutex_lock( &lock );
+    b_abort = true;
+    vlc_cond_signal( &wait );
+    vlc_mutex_unlock( &lock );
+
+    vlc_join( thread, NULL );
+    is_running = false;
+}
+int event_thread_t::EventMouse( vlc_object_t *p_this, char const *psz_var,
+                                vlc_value_t, vlc_value_t, void *p_data )
+{
+    event_thread_t *p_ev = (event_thread_t *) p_data;
+    vlc_mutex_lock( &p_ev->lock );
+    if( psz_var[6] == 'c' )
+    {
+        p_ev->b_clicked = true;
+        msg_Dbg( p_this, "Event Mouse: clicked");
+    }
+    else if( psz_var[6] == 'm' )
+        p_ev->b_moved = true;
+    vlc_cond_signal( &p_ev->wait );
+    vlc_mutex_unlock( &p_ev->lock );
+
+    return VLC_SUCCESS;
+}
+
+int event_thread_t::EventKey( vlc_object_t *p_this, char const *,
+                              vlc_value_t, vlc_value_t newval, void *p_data )
+{
+    event_thread_t *p_ev = (event_thread_t *) p_data;
+    vlc_mutex_lock( &p_ev->lock );
+    p_ev->i_key_action = newval.i_int;
+    vlc_cond_signal( &p_ev->wait );
+    vlc_mutex_unlock( &p_ev->lock );
+    msg_Dbg( p_this, "Event Key");
+
+    return VLC_SUCCESS;
+}
+
+int event_thread_t::EventInput( vlc_object_t *p_this, char const *,
+                                vlc_value_t, vlc_value_t newval, void *p_data )
+{
+    VLC_UNUSED( p_this );
+    event_thread_t *p_ev = (event_thread_t *) p_data;
+    vlc_mutex_lock( &p_ev->lock );
+    if( newval.i_int == INPUT_EVENT_VOUT )
+    {
+        p_ev->b_vout |= true;
+        vlc_cond_signal( &p_ev->wait );
+    }
+    vlc_mutex_unlock( &p_ev->lock );
+
+    return VLC_SUCCESS;
+}
+
+void event_thread_t::EventThread()
+{
+    demux_sys_t    *p_sys = p_demux->p_sys;
+    vlc_object_t   *p_vout = NULL;
+    int canc = vlc_savecancel ();
+
+    b_moved      = false;
+    b_clicked    = false;
+    i_key_action = 0;
+    b_vout       = true;
+
+    /* catch all key event */
+    var_AddCallback( p_demux->obj.libvlc, "key-action", EventKey, this );
+    /* catch input event */
+    var_AddCallback( p_demux->p_input, "intf-event", EventInput, this );
+
+    /* main loop */
+    for( ;; )
+    {
+        vlc_mutex_lock( &lock );
+        while( !b_abort && !i_key_action && !b_moved && !b_clicked && !b_vout)
+            vlc_cond_wait( &wait, &lock );
+
+        if( b_abort )
+        {
+            vlc_mutex_unlock( &lock );
+            break;
+        }
+
+        /* KEY part */
+        if( i_key_action )
+        {
+            msg_Dbg( p_demux, "Handle Key Event");
+
+            pci_t *pci = &pci_packet;
+
+            uint16 i_curr_button = p_sys->dvd_interpretor.GetSPRM( 0x88 );
+
+            switch( i_key_action )
+            {
+            case ACTIONID_NAV_LEFT:
+                if ( i_curr_button > 0 && i_curr_button <= pci->hli.hl_gi.btn_ns )
+                {
+                    btni_t *p_button_ptr = &(pci->hli.btnit[i_curr_button-1]);
+                    if ( p_button_ptr->left > 0 && p_button_ptr->left <= pci->hli.hl_gi.btn_ns )
+                    {
+                        i_curr_button = p_button_ptr->left;
+                        p_sys->dvd_interpretor.SetSPRM( 0x88, i_curr_button );
+                        btni_t button_ptr = pci->hli.btnit[i_curr_button-1];
+                        if ( button_ptr.auto_action_mode )
+                        {
+                            vlc_mutex_unlock( &lock );
+                            vlc_mutex_lock( &p_sys->lock_demuxer );
+
+                            // process the button action
+                            p_sys->dvd_interpretor.Interpret( button_ptr.cmd.bytes, 8 );
+
+                            vlc_mutex_unlock( &p_sys->lock_demuxer );
+                            vlc_mutex_lock( &lock );
+                        }
+                    }
+                }
+                break;
+            case ACTIONID_NAV_RIGHT:
+                if ( i_curr_button > 0 && i_curr_button <= pci->hli.hl_gi.btn_ns )
+                {
+                    btni_t *p_button_ptr = &(pci->hli.btnit[i_curr_button-1]);
+                    if ( p_button_ptr->right > 0 && p_button_ptr->right <= pci->hli.hl_gi.btn_ns )
+                    {
+                        i_curr_button = p_button_ptr->right;
+                        p_sys->dvd_interpretor.SetSPRM( 0x88, i_curr_button );
+                        btni_t button_ptr = pci->hli.btnit[i_curr_button-1];
+                        if ( button_ptr.auto_action_mode )
+                        {
+                            vlc_mutex_unlock( &lock );
+                            vlc_mutex_lock( &p_sys->lock_demuxer );
+
+                            // process the button action
+                            p_sys->dvd_interpretor.Interpret( button_ptr.cmd.bytes, 8 );
+
+                            vlc_mutex_unlock( &p_sys->lock_demuxer );
+                            vlc_mutex_lock( &lock );
+                        }
+                    }
+                }
+                break;
+            case ACTIONID_NAV_UP:
+                if ( i_curr_button > 0 && i_curr_button <= pci->hli.hl_gi.btn_ns )
+                {
+                    btni_t *p_button_ptr = &(pci->hli.btnit[i_curr_button-1]);
+                    if ( p_button_ptr->up > 0 && p_button_ptr->up <= pci->hli.hl_gi.btn_ns )
+                    {
+                        i_curr_button = p_button_ptr->up;
+                        p_sys->dvd_interpretor.SetSPRM( 0x88, i_curr_button );
+                        btni_t button_ptr = pci->hli.btnit[i_curr_button-1];
+                        if ( button_ptr.auto_action_mode )
+                        {
+                            vlc_mutex_unlock( &lock );
+                            vlc_mutex_lock( &p_sys->lock_demuxer );
+
+                            // process the button action
+                            p_sys->dvd_interpretor.Interpret( button_ptr.cmd.bytes, 8 );
+
+                            vlc_mutex_unlock( &p_sys->lock_demuxer );
+                            vlc_mutex_lock( &lock );
+                        }
+                    }
+                }
+                break;
+            case ACTIONID_NAV_DOWN:
+                if ( i_curr_button > 0 && i_curr_button <= pci->hli.hl_gi.btn_ns )
+                {
+                    btni_t *p_button_ptr = &(pci->hli.btnit[i_curr_button-1]);
+                    if ( p_button_ptr->down > 0 && p_button_ptr->down <= pci->hli.hl_gi.btn_ns )
+                    {
+                        i_curr_button = p_button_ptr->down;
+                        p_sys->dvd_interpretor.SetSPRM( 0x88, i_curr_button );
+                        btni_t button_ptr = pci->hli.btnit[i_curr_button-1];
+                        if ( button_ptr.auto_action_mode )
+                        {
+                            vlc_mutex_unlock( &lock );
+                            vlc_mutex_lock( &p_sys->lock_demuxer );
+
+                            // process the button action
+                            p_sys->dvd_interpretor.Interpret( button_ptr.cmd.bytes, 8 );
+
+                            vlc_mutex_unlock( &p_sys->lock_demuxer );
+                            vlc_mutex_lock( &lock );
+                        }
+                    }
+                }
+                break;
+            case ACTIONID_NAV_ACTIVATE:
+                if ( i_curr_button > 0 && i_curr_button <= pci->hli.hl_gi.btn_ns )
+                {
+                    btni_t button_ptr = pci->hli.btnit[i_curr_button-1];
+
+                    vlc_mutex_unlock( &lock );
+                    vlc_mutex_lock( &p_sys->lock_demuxer );
+
+                    // process the button action
+                    p_sys->dvd_interpretor.Interpret( button_ptr.cmd.bytes, 8 );
+
+                    vlc_mutex_unlock( &p_sys->lock_demuxer );
+                    vlc_mutex_lock( &lock );
+                }
+                break;
+            default:
+                break;
+            }
+            i_key_action = 0;
+        }
+
+        /* MOUSE part */
+        if( p_vout && ( b_moved || b_clicked ) )
+        {
+            int x, y;
+
+            var_GetCoords( p_vout, "mouse-moved", &x, &y );
+            pci_t *pci = &pci_packet;
+
+            if( b_clicked )
+            {
+                int32_t button;
+                int32_t best,dist,d;
+                int32_t mx,my,dx,dy;
+
+                msg_Dbg( p_demux, "Handle Mouse Event: Mouse clicked x(%d)*y(%d)", x, y);
+
+                // get current button
+                best = 0;
+                dist = 0x08000000; /* >> than  (720*720)+(567*567); */
+                for(button = 1; button <= pci->hli.hl_gi.btn_ns; button++)
+                {
+                    btni_t *button_ptr = &(pci->hli.btnit[button-1]);
+
+                    if(((unsigned)x >= button_ptr->x_start)
+                     && ((unsigned)x <= button_ptr->x_end)
+                     && ((unsigned)y >= button_ptr->y_start)
+                     && ((unsigned)y <= button_ptr->y_end))
+                    {
+                        mx = (button_ptr->x_start + button_ptr->x_end)/2;
+                        my = (button_ptr->y_start + button_ptr->y_end)/2;
+                        dx = mx - x;
+                        dy = my - y;
+                        d = (dx*dx) + (dy*dy);
+                        /* If the mouse is within the button and the mouse is closer
+                        * to the center of this button then it is the best choice. */
+                        if(d < dist) {
+                            dist = d;
+                            best = button;
+                        }
+                    }
+                }
+
+                if ( best != 0)
+                {
+                    btni_t button_ptr = pci->hli.btnit[best-1];
+                    uint16 i_curr_button = p_sys->dvd_interpretor.GetSPRM( 0x88 );
+
+                    msg_Dbg( &p_sys->demuxer, "Clicked button %d", best );
+                    vlc_mutex_unlock( &lock );
+                    vlc_mutex_lock( &p_sys->lock_demuxer );
+
+                    // process the button action
+                    p_sys->dvd_interpretor.SetSPRM( 0x88, best );
+                    p_sys->dvd_interpretor.Interpret( button_ptr.cmd.bytes, 8 );
+
+                    msg_Dbg( &p_sys->demuxer, "Processed button %d", best );
+
+                    // select new button
+                    if ( best != i_curr_button )
+                    {
+                        uint32_t i_palette;
+
+                        if(button_ptr.btn_coln != 0) {
+                            i_palette = pci->hli.btn_colit.btn_coli[button_ptr.btn_coln-1][1];
+                        } else {
+                            i_palette = 0;
+                        }
+
+                        for( int i = 0; i < 4; i++ )
+                        {
+                            uint32_t i_yuv = 0xFF;//p_sys->clut[(hl.palette>>(16+i*4))&0x0f];
+                            uint8_t i_alpha = (i_palette>>(i*4))&0x0f;
+                            i_alpha = i_alpha == 0xf ? 0xff : i_alpha << 4;
+
+                            p_sys->palette[i][0] = (i_yuv >> 16) & 0xff;
+                            p_sys->palette[i][1] = (i_yuv >> 0) & 0xff;
+                            p_sys->palette[i][2] = (i_yuv >> 8) & 0xff;
+                            p_sys->palette[i][3] = i_alpha;
+                        }
+
+                        vlc_global_lock( VLC_HIGHLIGHT_MUTEX );
+                        var_SetInteger( p_demux->p_input, "x-start",
+                                        button_ptr.x_start );
+                        var_SetInteger( p_demux->p_input, "x-end",
+                                        button_ptr.x_end );
+                        var_SetInteger( p_demux->p_input, "y-start",
+                                        button_ptr.y_start );
+                        var_SetInteger( p_demux->p_input, "y-end",
+                                        button_ptr.y_end );
+                        var_SetAddress( p_demux->p_input, "menu-palette",
+                                        p_sys->palette );
+                        var_SetBool( p_demux->p_input, "highlight", true );
+                        vlc_global_unlock( VLC_HIGHLIGHT_MUTEX );
+                    }
+                    vlc_mutex_unlock( &p_sys->lock_demuxer );
+                    vlc_mutex_lock( &lock );
+                }
+            }
+            else if( b_moved )
+            {
+//                dvdnav_mouse_select( NULL, pci, x, y );
+            }
+
+            b_moved = false;
+            b_clicked = false;
+        }
+
+        b_vout = false;
+        vlc_mutex_unlock( &lock );
+
+        /* Always check vout */
+        if( p_vout == NULL )
+        {
+            p_vout = (vlc_object_t*) input_GetVout(p_demux->p_input);
+            if( p_vout)
+            {
+                var_AddCallback( p_vout, "mouse-moved", EventMouse, this );
+                var_AddCallback( p_vout, "mouse-clicked", EventMouse, this );
+            }
+        }
+    }
+
+    /* Release callback */
+    if( p_vout )
+    {
+        var_DelCallback( p_vout, "mouse-moved", EventMouse, this );
+        var_DelCallback( p_vout, "mouse-clicked", EventMouse, this );
+        vlc_object_release( p_vout );
+    }
+    var_DelCallback( p_demux->p_input, "intf-event", EventInput, this );
+    var_DelCallback( p_demux->obj.libvlc, "key-action", EventKey, this );
+
+    vlc_restorecancel (canc);
+}
+
+void *event_thread_t::EventThread(void *data)
+{
+    static_cast<event_thread_t*>(data)->EventThread();
+    return NULL;
+}
+
 
 demux_sys_t::~demux_sys_t()
 {
+    CleanUi();
     size_t i;
     for ( i=0; i<streams.size(); i++ )
         delete streams[i];
@@ -50,11 +449,11 @@ demux_sys_t::~demux_sys_t()
 }
 
 
-bool demux_sys_t::AnalyseAllSegmentsFound( demux_t *p_demux, matroska_stream_c *p_stream1 )
+bool demux_sys_t::AnalyseAllSegmentsFound( demux_t *p_demux, matroska_stream_c *p_stream1, bool b_initial )
 {
     int i_upper_lvl = 0;
     EbmlElement *p_l0;
-    bool b_keep_stream = false;
+    bool b_keep_stream = false, b_keep_segment = false;
 
     /* verify the EBML Header... it shouldn't be bigger than 1kB */
     p_l0 = p_stream1->estream.FindNextID(EBML_INFO(EbmlHead), 1024);
@@ -111,7 +510,7 @@ bool demux_sys_t::AnalyseAllSegmentsFound( demux_t *p_demux, matroska_stream_c *
             p_segment1->Preload();
 
             if ( !p_segment1->p_segment_uid ||
-                 FindSegment( *p_segment1->p_segment_uid ) == NULL)
+                 (b_keep_segment = (FindSegment( *p_segment1->p_segment_uid ) == NULL)))
             {
                 opened_segments.push_back( p_segment1 );
                 b_keep_stream = true;
@@ -126,12 +525,12 @@ bool demux_sys_t::AnalyseAllSegmentsFound( demux_t *p_demux, matroska_stream_c *
             b_l0_handled = true;
         }
 
-        if ( !b_seekable )
-            break;
-
         EbmlElement* p_l0_prev = p_l0;
 
-        if (p_l0->IsFiniteSize() )
+        bool b_seekable;
+        vlc_stream_Control( demuxer.s, STREAM_CAN_SEEK, &b_seekable );
+
+        if (p_l0->IsFiniteSize() && b_seekable )
         {
             p_l0->SkipData(p_stream1->estream, KaxMatroska_Context);
             p_l0 = p_stream1->estream.FindNextID(EBML_INFO(KaxSegment), UINT64_MAX);
@@ -149,6 +548,47 @@ bool demux_sys_t::AnalyseAllSegmentsFound( demux_t *p_demux, matroska_stream_c *
         return false;
 
     return true;
+}
+
+void demux_sys_t::InitUi()
+{
+    msg_Dbg( &demuxer, "Starting the UI Hook" );
+
+    /* FIXME hack hack hack hack FIXME */
+    /* Get p_input and create variable */
+    p_input = demuxer.p_input;
+    if( p_input )
+    {
+        var_Create( p_input, "x-start", VLC_VAR_INTEGER );
+        var_Create( p_input, "y-start", VLC_VAR_INTEGER );
+        var_Create( p_input, "x-end", VLC_VAR_INTEGER );
+        var_Create( p_input, "y-end", VLC_VAR_INTEGER );
+        var_Create( p_input, "color", VLC_VAR_ADDRESS );
+        var_Create( p_input, "menu-palette", VLC_VAR_ADDRESS );
+        var_Create( p_input, "highlight", VLC_VAR_BOOL );
+    }
+
+    /* Now create our event thread catcher */
+    p_ev = new event_thread_t(&demuxer);
+}
+
+void demux_sys_t::CleanUi()
+{
+    delete p_ev;
+    p_ev = NULL;
+
+    if( p_input )
+    {
+        var_Destroy( p_input, "highlight" );
+        var_Destroy( p_input, "x-start" );
+        var_Destroy( p_input, "x-end" );
+        var_Destroy( p_input, "y-start" );
+        var_Destroy( p_input, "y-end" );
+        var_Destroy( p_input, "color" );
+        var_Destroy( p_input, "menu-palette" );
+    }
+
+    msg_Dbg( &demuxer, "Stopping the UI Hook" );
 }
 
 void demux_sys_t::PreloadFamily( const matroska_segment_c & of_segment )
@@ -261,31 +701,27 @@ bool demux_sys_t::PreloadLinked()
 
 void demux_sys_t::FreeUnused()
 {
-    for (std::vector<matroska_stream_c*>::reverse_iterator i = streams.rbegin();
-         i != streams.rend(); ++i)
+    size_t i;
+    for( i = 0; i < streams.size(); i++ )
     {
-        matroska_stream_c *p_s = *i;
+        struct matroska_stream_c *p_s = streams[i];
         if( !p_s->isUsed() )
         {
-            std::advance(i, 1);
-            streams.erase( i.base() );
+            streams[i] = NULL;
             delete p_s;
         }
     }
-    for (std::vector<matroska_segment_c*>::reverse_iterator i = opened_segments.rbegin();
-         i != opened_segments.rend(); ++i)
+    for( i = 0; i < opened_segments.size(); i++)
     {
-        matroska_segment_c *p_sg = *i;
-        if( !p_sg->b_preloaded )
+        if( !opened_segments[i]->b_preloaded )
         {
-            std::advance(i, 1);
-            opened_segments.erase( i.base() );
-            delete p_sg;
+            delete opened_segments[i];
+            opened_segments[i] = NULL;
         }
     }
 }
 
-bool demux_sys_t::PreparePlayback( virtual_segment_c & new_vsegment, vlc_tick_t i_mk_date )
+bool demux_sys_t::PreparePlayback( virtual_segment_c & new_vsegment, mtime_t i_mk_date )
 {
     if ( p_current_vsegment != &new_vsegment )
     {
@@ -301,7 +737,7 @@ bool demux_sys_t::PreparePlayback( virtual_segment_c & new_vsegment, vlc_tick_t 
     if( !p_current_vsegment->CurrentSegment()->b_cues )
         msg_Warn( &p_current_vsegment->CurrentSegment()->sys.demuxer, "no cues/empty cues found->seek won't be precise" );
 
-    i_duration = p_current_vsegment->Duration();
+    f_duration = p_current_vsegment->Duration();
 
     /* add information */
     p_current_vsegment->CurrentSegment()->InformationCreate( );
@@ -367,4 +803,3 @@ virtual_chapter_c *demux_sys_t::FindChapter( int64_t i_find_uid, virtual_segment
     return p_result;
 }
 
-} // namespace

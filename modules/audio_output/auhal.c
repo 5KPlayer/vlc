@@ -28,7 +28,6 @@
 
 #import <vlc_plugin.h>
 #import <vlc_dialog.h>                      // vlc_dialog_display_error
-#import <vlc_charset.h>                     // FromCFString
 
 #import <CoreAudio/CoreAudio.h>             // AudioDeviceID
 #import <CoreServices/CoreServices.h>
@@ -75,7 +74,7 @@ vlc_module_end ()
  * This structure is part of the audio output thread descriptor.
  * It describes the CoreAudio specific properties of an output thread.
  *****************************************************************************/
-typedef struct
+struct aout_sys_t
 {
     struct aout_sys_common c;
 
@@ -122,7 +121,7 @@ typedef struct
     bool                        b_mute;
 
     bool                        b_ignore_streams_changed_callback;
-} aout_sys_t;
+};
 
 #pragma mark -
 #pragma mark helpers
@@ -457,7 +456,7 @@ AudioDeviceHasOutput(audio_output_t *p_aout, AudioDeviceID i_dev_id)
 static void
 RebuildDeviceList(audio_output_t * p_aout, UInt32 *p_id_exists)
 {
-    aout_sys_t *p_sys = p_aout->sys;
+    struct aout_sys_t   *p_sys = p_aout->sys;
 
     msg_Dbg(p_aout, "Rebuild device list");
 
@@ -506,7 +505,16 @@ RebuildDeviceList(audio_output_t * p_aout, UInt32 *p_id_exists)
             continue;
         }
 
-        psz_name = FromCFString(device_name_ref, kCFStringEncodingUTF8);
+        length = CFStringGetLength(device_name_ref);
+        length++;
+        psz_name = malloc(length);
+        if (!psz_name)
+        {
+            CFRelease(device_name_ref);
+            return;
+        }
+        CFStringGetCString(device_name_ref, psz_name, length,
+                           kCFStringEncodingUTF8);
         CFRelease(device_name_ref);
 
         msg_Dbg(p_aout, "DevID: %i DevName: %s", i_id, psz_name);
@@ -628,7 +636,7 @@ DefaultDeviceChangedListener(AudioObjectID inObjectID, UInt32 inNumberAddresses,
 
     aout_sys_t *p_sys = p_aout->sys;
 
-    if (!p_sys->b_selected_dev_is_default)
+    if (!p_aout->sys->b_selected_dev_is_default)
         return noErr;
 
     AudioObjectID defaultDeviceID;
@@ -643,7 +651,7 @@ DefaultDeviceChangedListener(AudioObjectID inObjectID, UInt32 inNumberAddresses,
 
     /* Default device is changed by the os to allow other apps to play sound
      * while in digital mode. But this should not affect ourself. */
-    if (p_sys->b_digital)
+    if (p_aout->sys->b_digital)
     {
         msg_Dbg(p_aout, "ignore, as digital mode is active");
         return noErr;
@@ -651,7 +659,7 @@ DefaultDeviceChangedListener(AudioObjectID inObjectID, UInt32 inNumberAddresses,
 
     vlc_mutex_lock(&p_sys->selected_device_lock);
     /* Also ignore events which announce the same device id */
-    if (defaultDeviceID != p_sys->i_selected_dev)
+    if (defaultDeviceID != p_aout->sys->i_selected_dev)
     {
         msg_Dbg(p_aout, "default device actually changed, resetting aout");
         aout_RestartRequest(p_aout, AOUT_RESTART_OUTPUT);
@@ -834,7 +842,7 @@ AudioStreamChangeFormat(audio_output_t *p_aout, AudioStreamID i_stream_id,
          * set. */
         if (i > 0)
         {
-            vlc_tick_t timeout = vlc_tick_now() + VLC_TICK_FROM_MS(500);
+            mtime_t timeout = mdate() + 500000;
             if (vlc_cond_timedwait(&w.cond, &w.lock, timeout))
                 msg_Dbg(p_aout, "reached timeout");
         }
@@ -884,7 +892,7 @@ out:
 static int
 SwitchAudioDevice(audio_output_t *p_aout, const char *name)
 {
-    aout_sys_t *p_sys = p_aout->sys;
+    struct aout_sys_t *p_sys = p_aout->sys;
 
     if (name)
         p_sys->i_new_selected_dev = atoi(name);
@@ -902,7 +910,7 @@ SwitchAudioDevice(audio_output_t *p_aout, const char *name)
 static int
 VolumeSet(audio_output_t * p_aout, float volume)
 {
-    aout_sys_t *p_sys = p_aout->sys;
+    struct aout_sys_t *p_sys = p_aout->sys;
     OSStatus ostatus = 0;
 
     if (p_sys->b_digital)
@@ -923,7 +931,8 @@ VolumeSet(audio_output_t * p_aout, float volume)
     }
 
     if (var_InheritBool(p_aout, "volume-save"))
-        config_PutInt("auhal-volume", lroundf(volume * AOUT_VOLUME_DEFAULT));
+        config_PutInt(p_aout, "auhal-volume",
+                      lroundf(volume * AOUT_VOLUME_DEFAULT));
 
     return ostatus;
 }
@@ -931,7 +940,7 @@ VolumeSet(audio_output_t * p_aout, float volume)
 static int
 MuteSet(audio_output_t * p_aout, bool mute)
 {
-    aout_sys_t *p_sys = p_aout->sys;
+    struct aout_sys_t *p_sys = p_aout->sys;
 
     if(p_sys->b_digital)
         return VLC_EGENERIC;
@@ -989,7 +998,7 @@ RenderCallbackSPDIF(AudioDeviceID inDevice, const AudioTimeStamp * inNow,
 static void
 WarnConfiguration(audio_output_t *p_aout)
 {
-    aout_sys_t *p_sys = p_aout->sys;
+    struct aout_sys_t *p_sys = p_aout->sys;
     char *warned_devices = var_CreateGetNonEmptyString(p_aout, "auhal-warned-devices");
     bool dev_is_warned = false;
     unsigned dev_count = 0;
@@ -1043,7 +1052,7 @@ WarnConfiguration(audio_output_t *p_aout)
                      warned_devices ? ";" : "",
                      warned_devices ? warned_devices : "") != -1)
         {
-            config_PutPsz("auhal-warned-devices", new_warned_devices);
+            config_PutPsz(p_aout, "auhal-warned-devices", new_warned_devices);
             var_SetString(p_aout, "auhal-warned-devices", new_warned_devices);
             free(new_warned_devices);
         }
@@ -1056,9 +1065,9 @@ WarnConfiguration(audio_output_t *p_aout)
  */
 static int
 StartAnalog(audio_output_t *p_aout, audio_sample_format_t *fmt,
-            vlc_tick_t i_latency_us)
+            mtime_t i_latency_us)
 {
-    aout_sys_t                  *p_sys = p_aout->sys;
+    struct aout_sys_t           *p_sys = p_aout->sys;
     OSStatus                    err = noErr;
     UInt32                      i_param_size;
     AudioChannelLayout          *layout = NULL;
@@ -1144,9 +1153,9 @@ error:
  */
 static int
 StartSPDIF(audio_output_t * p_aout, audio_sample_format_t *fmt,
-           vlc_tick_t i_latency_us)
+           mtime_t i_latency_us)
 {
-    aout_sys_t *p_sys = p_aout->sys;
+    struct aout_sys_t *p_sys = p_aout->sys;
     int ret;
 
     /* Check if device supports digital */
@@ -1412,7 +1421,7 @@ StartSPDIF(audio_output_t * p_aout, audio_sample_format_t *fmt,
 static void
 Stop(audio_output_t *p_aout)
 {
-    aout_sys_t          *p_sys = p_aout->sys;
+    struct aout_sys_t   *p_sys = p_aout->sys;
     OSStatus            err = noErr;
 
     msg_Dbg(p_aout, "Stopping the auhal module");
@@ -1499,7 +1508,7 @@ static int
 Start(audio_output_t *p_aout, audio_sample_format_t *restrict fmt)
 {
     UInt32                  i_param_size = 0;
-    aout_sys_t              *p_sys = NULL;
+    struct aout_sys_t       *p_sys = NULL;
 
     /* Use int here, to match kAudioDevicePropertyDeviceIsAlive
      * property size */
@@ -1601,7 +1610,7 @@ Start(audio_output_t *p_aout, audio_sample_format_t *restrict fmt)
     UInt32 i_latency_samples;
     AO_GET1PROP(p_sys->i_selected_dev, UInt32, &i_latency_samples,
                 kAudioDevicePropertyLatency, kAudioObjectPropertyScopeOutput);
-    vlc_tick_t i_latency_us = vlc_tick_from_samples(i_latency_samples, fmt->i_rate);
+    mtime_t i_latency_us = i_latency_samples * CLOCK_FREQ / fmt->i_rate;
 
     /* Check for Digital mode or Analog output mode */
     if (do_spdif)
@@ -1677,7 +1686,7 @@ static void Close(vlc_object_t *obj)
     CFRelease(p_sys->device_list);
 
     char *psz_device = aout_DeviceGet(p_aout);
-    config_PutPsz("auhal-audio-device", psz_device);
+    config_PutPsz(p_aout, "auhal-audio-device", psz_device);
     free(psz_device);
 
     vlc_mutex_destroy(&p_sys->selected_device_lock);

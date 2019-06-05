@@ -28,10 +28,10 @@ class IsoTime
 {
     public:
         IsoTime(const std::string&);
-        operator vlc_tick_t() const;
+        operator time_t() const;
 
     private:
-        vlc_tick_t time;
+        time_t time;
 };
 
 class UTCTime
@@ -39,10 +39,10 @@ class UTCTime
     public:
         UTCTime(const std::string&);
         time_t  time() const;
-        vlc_tick_t mtime() const;
+        mtime_t mtime() const;
 
     private:
-        vlc_tick_t t;
+        mtime_t t;
 };
 
 template<typename T> class Integer
@@ -55,9 +55,7 @@ template<typename T> class Integer
                 std::istringstream in(str);
                 in.imbue(std::locale("C"));
                 in >> value;
-                if (in.fail() || in.bad())
-                    value = 0;
-            } catch (...) {
+            } catch (int) {
                 value = 0;
             }
         }

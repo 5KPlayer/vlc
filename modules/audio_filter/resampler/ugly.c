@@ -2,6 +2,7 @@
  * ugly.c : zero-order hold "ugly" resampler
  *****************************************************************************
  * Copyright (C) 2002, 2006 VLC authors and VideoLAN
+ * $Id: fd72e85691a5a3fb12932711aa7f90acd6f2b68b $
  *
  * Authors: Samuel Hocevar <sam@zoy.org>
  *
@@ -110,7 +111,8 @@ static block_t *DoWork( filter_t * p_filter, block_t * p_in_buf )
     p_out_buf->i_nb_samples = i_out_nb;
     p_out_buf->i_buffer = i_out_nb * framesize;
     p_out_buf->i_pts = p_in_buf->i_pts;
-    p_out_buf->i_length = vlc_tick_from_samples(p_out_buf->i_nb_samples, p_filter->fmt_out.audio.i_rate);
+    p_out_buf->i_length = p_out_buf->i_nb_samples *
+        1000000 / p_filter->fmt_out.audio.i_rate;
 
     while( i_out_nb )
     {

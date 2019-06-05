@@ -86,6 +86,20 @@ codec_LTLIBRARIES += $(LTLIBmpg123)
 libuleaddvaudio_plugin_la_SOURCES = codec/uleaddvaudio.c
 codec_LTLIBRARIES += libuleaddvaudio_plugin.la
 
+libwma_fixed_plugin_la_SOURCES = \
+	codec/wmafixed/asf.h codec/wmafixed/bswap.h \
+	codec/wmafixed/fft.c codec/wmafixed/fft.h \
+	codec/wmafixed/mdct.c codec/wmafixed/mdct.h \
+	codec/wmafixed/wma.c codec/wmafixed/wmadeci.c \
+	codec/wmafixed/bitstream.c codec/wmafixed/bitstream.h \
+	codec/wmafixed/wmadata.h codec/wmafixed/wmadec.h \
+	codec/wmafixed/wmafixed.c codec/wmafixed/wmafixed.h
+libwma_fixed_plugin_la_CPPFLAGS = $(AM_CPPFLAGS)
+libwma_fixed_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(codecdir)'
+EXTRA_LTLIBRARIES += libwma_fixed_plugin.la
+codec_LTLIBRARIES += $(LTLIBwma_fixed)
+
+
 ### Video codecs ###
 
 libcdg_plugin_la_SOURCES = codec/cdg.c
@@ -176,7 +190,7 @@ libcc_plugin_la_SOURCES = codec/cc.c codec/cc.h codec/substext.h \
                           codec/cea708.h codec/cea708.c
 codec_LTLIBRARIES += libcc_plugin.la
 
-libcvdsub_plugin_la_SOURCES = codec/cvdsub.c demux/mpeg/timestamps.h
+libcvdsub_plugin_la_SOURCES = codec/cvdsub.c
 codec_LTLIBRARIES += libcvdsub_plugin.la
 
 libdvbsub_plugin_la_SOURCES = codec/dvbsub.c
@@ -211,9 +225,7 @@ codec_LTLIBRARIES += libsubsusf_plugin.la
 
 libttml_plugin_la_SOURCES = codec/ttml/substtml.c \
                             demux/ttml.c \
-                            codec/ttml/ttml.h codec/ttml/ttml.c \
-                            codec/ttml/imageupdater.h \
-                            codec/ttml/ttmlpes.h
+                            codec/ttml/ttml.h codec/ttml/ttml.c
 codec_LTLIBRARIES += libttml_plugin.la
 
 libwebvtt_plugin_la_SOURCES = codec/webvtt/subsvtt.c \
@@ -221,9 +233,6 @@ libwebvtt_plugin_la_SOURCES = codec/webvtt/subsvtt.c \
                               codec/webvtt/webvtt.h \
                               demux/webvtt.c \
                               demux/mp4/minibox.h
-if ENABLE_SOUT
-libwebvtt_plugin_la_SOURCES += codec/webvtt/encvtt.c
-endif
 codec_LTLIBRARIES += libwebvtt_plugin.la
 if ENABLE_CSS
 # dependency: we need grammar build first
@@ -238,7 +247,7 @@ libwebvtt_plugin_la_SOURCES += codec/webvtt/CSSGrammar.y \
                                codec/webvtt/css_bridge.h
 endif
 
-libsvcdsub_plugin_la_SOURCES = codec/svcdsub.c demux/mpeg/timestamps.h
+libsvcdsub_plugin_la_SOURCES = codec/svcdsub.c
 codec_LTLIBRARIES += libsvcdsub_plugin.la
 
 libt140_plugin_la_SOURCES = codec/t140.c
@@ -251,7 +260,7 @@ libtelx_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(codecdir)'
 EXTRA_LTLIBRARIES += libtelx_plugin.la
 codec_LTLIBRARIES += $(LTLIBtelx)
 
-libtextst_plugin_la_SOURCES = codec/textst.c demux/mpeg/timestamps.h
+libtextst_plugin_la_SOURCES = codec/textst.c
 libtextst_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(codecdir)'
 codec_LTLIBRARIES += libtextst_plugin.la
 
@@ -259,6 +268,9 @@ libzvbi_plugin_la_SOURCES = codec/zvbi.c
 libzvbi_plugin_la_CFLAGS = $(AM_CFLAGS) $(ZVBI_CFLAGS) $(CFLAGS_zvbi)
 libzvbi_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(codecdir)'
 libzvbi_plugin_la_LIBADD = $(ZVBI_LIBS) $(SOCKET_LIBS)
+if HAVE_WIN32
+libzvbi_plugin_la_LIBADD += -lpthreadGC2
+endif
 EXTRA_LTLIBRARIES += libzvbi_plugin.la
 codec_LTLIBRARIES += $(LTLIBzvbi)
 
@@ -338,12 +350,14 @@ libvideotoolbox_plugin_la_SOURCES = \
 	packetizer/h264_slice.c packetizer/h264_slice.h \
 	packetizer/h264_nal.c packetizer/h264_nal.h \
 	packetizer/hevc_nal.c packetizer/hevc_nal.h
-libvideotoolbox_plugin_la_OBJCFLAGS = $(AM_OBJCFLAGS) -fobjc-arc
+if HAVE_OSX
+libvideotoolbox_plugin_la_OBJCFLAGS = $(AM_OBJCFLAGS) -mmacosx-version-min=10.8
+endif
 if HAVE_IOS
-libvideotoolbox_plugin_la_OBJCFLAGS += -miphoneos-version-min=8.0
+libvideotoolbox_plugin_la_OBJCFLAGS = $(AM_OBJCFLAGS) -miphoneos-version-min=8.0
 endif
 if HAVE_TVOS
-libvideotoolbox_plugin_la_OBJCFLAGS += -mtvos-version-min=10.2
+libvideotoolbox_plugin_la_OBJCFLAGS = $(AM_OBJCFLAGS) -mtvos-version-min=10.2
 endif
 libvideotoolbox_plugin_la_LIBADD = libchroma_copy.la
 libvideotoolbox_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(codecdir)' -Wl,-framework,Foundation -Wl,-framework,VideoToolbox -Wl,-framework,CoreMedia -Wl,-framework,CoreVideo
@@ -389,12 +403,21 @@ endif
 
 ### avcodec hardware acceleration ###
 
+libvaapi_drm_plugin_la_SOURCES = \
+	codec/avcodec/vaapi.c hw/vaapi/vlc_vaapi.c hw/vaapi/vlc_vaapi.h
+libvaapi_drm_plugin_la_CPPFLAGS = $(AM_CPPFLAGS) -DVLC_VA_BACKEND_DRM
+libvaapi_drm_plugin_la_CFLAGS = $(AM_CFLAGS) \
+	$(LIBVA_DRM_CFLAGS) $(AVCODEC_CFLAGS)
+libvaapi_drm_plugin_la_LIBADD = $(LIBVA_DRM_LIBS)
 libvaapi_plugin_la_SOURCES = \
 	codec/avcodec/vaapi.c hw/vaapi/vlc_vaapi.c hw/vaapi/vlc_vaapi.h
 libvaapi_plugin_la_CPPFLAGS = $(AM_CPPFLAGS)
 libvaapi_plugin_la_CFLAGS = $(AM_CFLAGS) $(AVCODEC_CFLAGS)
 libvaapi_plugin_la_LIBADD = $(LIBVA_LIBS)
 if HAVE_AVCODEC_VAAPI
+if HAVE_VAAPI_DRM
+codec_LTLIBRARIES += libvaapi_drm_plugin.la
+endif
 codec_LTLIBRARIES += libvaapi_plugin.la
 endif
 
@@ -457,25 +480,37 @@ libomxil_plugin_la_SOURCES = \
 	packetizer/hevc_nal.c packetizer/hevc_nal.h \
 	codec/omxil/qcom.c codec/omxil/qcom.h \
 	codec/omxil/omxil.c codec/omxil/omxil.h codec/omxil/omxil_core.c codec/omxil/omxil_core.h
+if HAVE_ANDROID
+libomxil_plugin_la_SOURCES += video_output/android/utils.c video_output/android/utils.h \
+	video_output/android/display.h
+endif
 libomxil_plugin_la_CPPFLAGS = $(AM_CPPFLAGS) -I$(srcdir)/codec/omxil $(CFLAGS_omxil)
 libomxil_plugin_la_LIBADD = libchroma_copy.la $(LIBDL)
 libomxil_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(codecdir)'
 
+libomxil_vout_plugin_la_SOURCES = codec/omxil/vout.c codec/omxil/omxil_core.c codec/omxil/utils.c codec/omxil/qcom.c
+libomxil_vout_plugin_la_CPPFLAGS = $(AM_CPPFLAGS) -I$(srcdir)/codec/omxil $(CFLAGS_omxil_vout)
+libomxil_vout_plugin_la_LIBADD = libchroma_copy.la $(LIBDL)
+libomxil_vout_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(codecdir)'
+
+libiomx_plugin_la_SOURCES = $(libomxil_plugin_la_SOURCES)
+libiomx_plugin_la_CPPFLAGS = $(libomxil_plugin_la_CPPFLAGS) -DUSE_IOMX
+libiomx_plugin_la_LIBADD = $(libomxil_plugin_la_LIBADD)
+
 libmediacodec_plugin_la_CPPFLAGS = $(AM_CPPFLAGS) -I$(srcdir)/codec/omxil
 libmediacodec_plugin_la_SOURCES = codec/omxil/mediacodec.c codec/omxil/mediacodec.h \
 	codec/omxil/mediacodec_jni.c codec/omxil/mediacodec_ndk.c codec/omxil/utils.c \
-	codec/omxil/omxil_utils.h codec/omxil/qcom.c codec/omxil/qcom.h \
 	video_output/android/utils.c video_output/android/utils.h \
 	video_output/android/display.h \
 	codec/hxxx_helper.c codec/hxxx_helper.h \
 	packetizer/hxxx_nal.h packetizer/hxxx_nal.c \
 	packetizer/h264_nal.c packetizer/h264_nal.h \
 	packetizer/hevc_nal.c packetizer/hevc_nal.h
-libmediacodec_plugin_la_LIBADD = libchroma_copy.la
-codec_LTLIBRARIES += $(LTLIBomxil)
-EXTRA_LTLIBRARIES += libomxil_plugin.la
+libmediacodec_plugin_la_LIBADD = libchroma_copy.la 
+codec_LTLIBRARIES += $(LTLIBomxil) $(LTLIBomxil_vout)
+EXTRA_LTLIBRARIES += libomxil_plugin.la libomxil_vout_plugin.la
 if HAVE_ANDROID
-codec_LTLIBRARIES += libmediacodec_plugin.la
+codec_LTLIBRARIES += libiomx_plugin.la libmediacodec_plugin.la
 endif
 
 
@@ -542,7 +577,7 @@ libaom_plugin_la_SOURCES = codec/aom.c \
 libaom_plugin_la_CPPFLAGS = $(AM_CPPFLAGS)
 libaom_plugin_la_CFLAGS = $(AM_CFLAGS) $(AOM_CFLAGS) $(CPPFLAGS_aom)
 libaom_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(codecdir)'
-libaom_plugin_la_LIBADD = $(AOM_LIBS)
+libaom_plugin_la_LIBADD = $(AOM_LIBS) $(LIBPTHREAD)
 EXTRA_LTLIBRARIES += libaom_plugin.la
 codec_LTLIBRARIES += $(LTLIBaom)
 
@@ -571,7 +606,7 @@ libcrystalhd_plugin_la_LIBADD = $(LIBS_crystalhd)
 EXTRA_LTLIBRARIES += libcrystalhd_plugin.la
 codec_LTLIBRARIES += $(LTLIBcrystalhd)
 
-libqsv_plugin_la_SOURCES = codec/qsv.c codec/vlc_fifo_helper.h demux/mpeg/timestamps.h
+libqsv_plugin_la_SOURCES = codec/qsv.c
 libqsv_plugin_la_CFLAGS = $(AM_CFLAGS) $(MFX_CFLAGS)
 libqsv_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(codecdir)'
 libqsv_plugin_la_LIBADD = $(MFX_LIBS)

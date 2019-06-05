@@ -2,6 +2,7 @@
  * chain.c : configuration module chain parsing stuff
  *****************************************************************************
  * Copyright (C) 2002-2007 VLC authors and VideoLAN
+ * $Id: 2cfc58f640911127aed8b9a8a940900a7f15108c $
  *
  * Authors: Christophe Massiot <massiot@via.ecp.fr>
  *          Laurent Aimar <fenrir@via.ecp.fr>
@@ -293,13 +294,13 @@ void config_ChainParse( vlc_object_t *p_this, const char *psz_prefix,
             {
                 case CONFIG_ITEM_INTEGER:
                     var_Change( p_this, name, VLC_VAR_SETMINMAX,
-                        (vlc_value_t){ .i_int = p_conf->min.i },
-                        (vlc_value_t){ .i_int = p_conf->max.i } );
+                        &(vlc_value_t){ .i_int = p_conf->min.i },
+                        &(vlc_value_t){ .i_int = p_conf->max.i } );
                     break;
                 case CONFIG_ITEM_FLOAT:
                     var_Change( p_this, name, VLC_VAR_SETMINMAX,
-                        (vlc_value_t){ .f_float = p_conf->min.f },
-                        (vlc_value_t){ .f_float = p_conf->max.f } );
+                        &(vlc_value_t){ .f_float = p_conf->min.f },
+                        &(vlc_value_t){ .f_float = p_conf->max.f } );
                     break;
             }
         }

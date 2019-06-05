@@ -2,6 +2,7 @@
  * core.c: Core libvlc new API functions : initialization
  *****************************************************************************
  * Copyright (C) 2005 VLC authors and VideoLAN
+ * $Id: 5e8c614c837e49dbfa60f5b2cff74d61bbecc903 $
  *
  * Authors: Clément Stenac <zorglub@videolan.org>
  *
@@ -29,6 +30,7 @@
 #include <vlc/vlc.h>
 
 #include <vlc_interface.h>
+#include <vlc_vlm.h>
 
 #include <stdarg.h>
 #include <limits.h>
@@ -61,6 +63,7 @@ libvlc_instance_t * libvlc_new( int argc, const char *const *argv )
     }
 
     p_new->p_libvlc_int = p_libvlc_int;
+    p_new->vlm = NULL;
     p_new->ref_count = 1;
     p_new->p_callback_list = NULL;
     vlc_mutex_init(&p_new->instance_lock);
@@ -95,6 +98,8 @@ void libvlc_release( libvlc_instance_t *p_instance )
     if( refs == 0 )
     {
         vlc_mutex_destroy( lock );
+        if( p_instance->vlm != NULL )
+            libvlc_vlm_release( p_instance );
         libvlc_Quit( p_instance->p_libvlc_int );
         libvlc_InternalCleanup( p_instance->p_libvlc_int );
         libvlc_InternalDestroy( p_instance->p_libvlc_int );
@@ -108,6 +113,22 @@ void libvlc_set_exit_handler( libvlc_instance_t *p_i, void (*cb) (void *),
 {
     libvlc_int_t *p_libvlc = p_i->p_libvlc_int;
     libvlc_SetExitHandler( p_libvlc, cb, data );
+}
+
+static void libvlc_wait_wakeup( void *data )
+{
+    vlc_sem_post( data );
+}
+
+void libvlc_wait( libvlc_instance_t *p_i )
+{
+    vlc_sem_t sem;
+
+    vlc_sem_init( &sem, 0 );
+    libvlc_set_exit_handler( p_i, libvlc_wait_wakeup, &sem );
+    vlc_sem_wait( &sem );
+    libvlc_set_exit_handler( p_i, NULL, NULL );
+    vlc_sem_destroy( &sem );
 }
 
 void libvlc_set_user_agent (libvlc_instance_t *p_i,
@@ -233,7 +254,7 @@ libvlc_module_description_t *libvlc_video_filter_list_get( libvlc_instance_t *p_
 
 int64_t libvlc_clock(void)
 {
-    return US_FROM_VLC_TICK(vlc_tick_now());
+    return mdate();
 }
 
 const char vlc_module_name[] = "libvlc";

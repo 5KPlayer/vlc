@@ -76,17 +76,13 @@ char *vlc_uri_decode (char *str)
     return str;
 }
 
-static bool isurialnum(int c)
-{
-    return ((unsigned char)(c - 'a') < 26)
-        || ((unsigned char)(c - 'A') < 26)
-        || ((unsigned char)(c - '0') < 10);
-}
-
-static bool isurisafe(int c)
+static bool isurisafe (int c)
 {
     /* These are the _unreserved_ URI characters (RFC3986 §2.3) */
-    return isurialnum(c) || (strchr ("-._~", c) != NULL);
+    return ((unsigned char)(c - 'a') < 26)
+        || ((unsigned char)(c - 'A') < 26)
+        || ((unsigned char)(c - '0') < 10)
+        || (strchr ("-._~", c) != NULL);
 }
 
 static bool isurisubdelim(int c)
@@ -198,8 +194,6 @@ char *vlc_path2uri (const char *path, const char *scheme)
     {   /* Relative path: prepend the current working directory */
         char *cwd, *ret;
 
-        if (path[0] == '\0')
-            return NULL;
         if ((cwd = vlc_getcwd ()) == NULL)
             return NULL;
         if (asprintf (&buf, "%s"DIR_SEP"%s", cwd, path) == -1)
@@ -416,7 +410,6 @@ static int vlc_UrlParseInner(vlc_url_t *restrict url, const char *str)
     url->i_port = 0;
     url->psz_path = NULL;
     url->psz_option = NULL;
-    url->psz_fragment = NULL;
     url->psz_buffer = NULL;
     url->psz_pathbuffer = NULL;
 
@@ -436,7 +429,8 @@ static int vlc_UrlParseInner(vlc_url_t *restrict url, const char *str)
 
     /* URI scheme */
     next = buf;
-    while (isurialnum(*next) || memchr ("+-.", *next, 3) != NULL)
+    while ((*next >= 'A' && *next <= 'Z') || (*next >= 'a' && *next <= 'z')
+        || (*next >= '0' && *next <= '9') || memchr ("+-.", *next, 3) != NULL)
         next++;
 
     if (*next == ':')
@@ -450,9 +444,12 @@ static int vlc_UrlParseInner(vlc_url_t *restrict url, const char *str)
     next = strchr(cur, '#');
     if (next != NULL)
     {
+#if 0  /* TODO */
        *(next++) = '\0';
-       if (vlc_uri_component_validate(next, "/?"))
-           url->psz_fragment = next;
+       url->psz_fragment = next;
+#else
+       *next = '\0';
+#endif
     }
 
     /* Query parameters */
@@ -514,8 +511,7 @@ static int vlc_UrlParseInner(vlc_url_t *restrict url, const char *str)
             if (next != NULL)
                 *(next++) = '\0';
 
-            const char *host = vlc_uri_decode(cur);
-            url->psz_host = (host != NULL) ? vlc_idna_to_ascii(host) : NULL;
+            url->psz_host = vlc_idna_to_ascii(vlc_uri_decode(cur));
         }
 
         if (url->psz_host == NULL)
@@ -756,8 +752,7 @@ char *vlc_uri_compose(const vlc_url_t *uri)
         vlc_memstream_puts(&stream, uri->psz_path);
     if (uri->psz_option != NULL)
         vlc_memstream_printf(&stream, "?%s", uri->psz_option);
-    if (uri->psz_fragment != NULL)
-        vlc_memstream_printf(&stream, "#%s", uri->psz_fragment);
+    /* NOTE: fragment not handled currently */
 
     if (vlc_memstream_close(&stream))
         return NULL;
@@ -865,67 +860,15 @@ static char *vlc_uri_fixup_inner(const char *str, const char *extras)
     return stream.ptr;
 }
 
-static void vlc_uri_putc(struct vlc_memstream *s, int c, const char *extras)
-{
-    if (isurisafe(c) || isurisubdelim(c) || (strchr(extras, c) != NULL))
-        vlc_memstream_putc(s, c);
-    else
-        vlc_memstream_printf(s, "%%%02hhX", (unsigned char)c);
-}
-
 char *vlc_uri_fixup(const char *str)
 {
-    assert(str != NULL);
+    static const char extras[] = ":/?#[]@";
 
-    /* If percent sign is consistently followed by two hexadecimal digits,
-     * then URL encoding must be assumed.
-     * Otherwise, the percent sign itself must be URL-encoded.
-     */
-    bool encode_percent = false;
+    /* Rule number one is do not change a (potentially) valid URI */
+    if (vlc_uri_component_validate(str, extras))
+        return strdup(str);
 
-    for (const char *p = str; *p != '\0'; p++)
-        if (p[0] == '%' && !(isurihex(p[1]) && isurihex(p[2])))
-        {
-            encode_percent = true;
-            break;
-        }
-
-    struct vlc_memstream stream;
-    vlc_memstream_open(&stream);
-
-    /* Handle URI scheme */
-    const char *p = str;
-    bool absolute = false;
-    bool encode_brackets = true;
-
-    while (isurialnum(*p) || memchr("+-.", *p, 3) != NULL)
-        vlc_memstream_putc(&stream, *(p++));
-
-    if (p > str && *p == ':')
-    {   /* There is an URI scheme, assume an absolute URI. */
-        vlc_memstream_putc(&stream, *(p++));
-        absolute = true;
-        encode_brackets = false;
-    }
-
-    /* Handle URI authority */
-    if ((absolute || p == str) && strncmp(p, "//", 2) == 0)
-    {
-        vlc_memstream_write(&stream, p, 2);
-        p += 2;
-        encode_brackets = true;
-
-        while (memchr("/?#", *p, 4) == NULL)
-            vlc_uri_putc(&stream, *(p++), &"%:[]@"[encode_percent]);
-    }
-
-    /* Handle URI path and what follows */
-    const char *extras = encode_brackets ? "%/?#@" : "%:/?#[]@";
-
-    while (*p != '\0')
-        vlc_uri_putc(&stream, *(p++), extras + encode_percent);
-
-    return vlc_memstream_close(&stream) ? NULL : stream.ptr;
+    return vlc_uri_fixup_inner(str, extras);
 }
 
 #if defined (HAVE_IDN)
@@ -933,6 +876,30 @@ char *vlc_uri_fixup(const char *str)
 #elif defined (_WIN32)
 # include <windows.h>
 # include <vlc_charset.h>
+
+# if (_WIN32_WINNT < _WIN32_WINNT_VISTA)
+#  define IDN_ALLOW_UNASSIGNED 0x01
+static int IdnToAscii(DWORD flags, LPCWSTR str, int len, LPWSTR buf, int size)
+{
+    HMODULE h = LoadLibrary(_T("Normaliz.dll"));
+    if (h == NULL)
+    {
+        errno = ENOSYS;
+        return 0;
+    }
+
+    int (WINAPI *IdnToAsciiReal)(DWORD, LPCWSTR, int, LPWSTR, int);
+    int ret = 0;
+
+    IdnToAsciiReal = GetProcAddress(h, "IdnToAscii");
+    if (IdnToAsciiReal != NULL)
+        ret = IdnToAsciiReal(flags, str, len, buf, size);
+    else
+        errno = ENOSYS;
+    FreeLibrary(h);
+    return ret;
+}
+# endif
 #endif
 
 /**

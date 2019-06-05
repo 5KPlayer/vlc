@@ -53,10 +53,8 @@ namespace adaptive
                 void                setBytesRange   (const BytesRange &);
                 const BytesRange &  getBytesRange   () const;
                 virtual std::string getContentType  () const;
-                enum RequestStatus  getRequestStatus() const;
 
             protected:
-                enum RequestStatus  requeststatus;
                 size_t              contentLength;
                 BytesRange          bytesRange;
         };
@@ -67,18 +65,17 @@ namespace adaptive
                 virtual ~AbstractChunk();
 
                 std::string         getContentType          ();
-                enum RequestStatus  getRequestStatus        () const;
                 size_t              getBytesRead            () const;
                 uint64_t            getStartByteInFile      () const;
                 bool                isEmpty                 () const;
 
                 virtual block_t *   readBlock       ();
                 virtual block_t *   read            (size_t);
+                virtual void        onDownload      (block_t **) = 0;
 
             protected:
                 AbstractChunk(AbstractChunkSource *);
                 AbstractChunkSource *source;
-                virtual void        onDownload      (block_t **) = 0;
 
             private:
                 size_t              bytesRead;
@@ -140,7 +137,7 @@ namespace adaptive
                 size_t              buffered; /* read cache size */
                 bool                done;
                 bool                eof;
-                vlc_tick_t          downloadstart;
+                mtime_t             downloadstart;
                 vlc_cond_t          avail;
                 bool                held;
         };
@@ -152,7 +149,6 @@ namespace adaptive
                           const ID &, bool = false);
                 virtual ~HTTPChunk();
 
-            protected:
                 virtual void        onDownload      (block_t **) {} /* impl */
         };
     }

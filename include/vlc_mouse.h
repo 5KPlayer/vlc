@@ -2,6 +2,7 @@
  * vlc_mouse.h: mouse related structures and functions
  *****************************************************************************
  * Copyright (C) 2009 Laurent Aimar
+ * $Id: 481c3598e905db66805cf9a8ca58f6702921e4f0 $
  *
  * Authors: Laurent Aimar <fenrir _AT_ videolan _DOT_ org>
  *
@@ -26,7 +27,7 @@
 /**
  * Mouse buttons
  */
-enum vlc_mouse_button
+enum
 {
     MOUSE_BUTTON_LEFT=0,
     MOUSE_BUTTON_CENTER,
@@ -51,14 +52,6 @@ typedef struct vlc_mouse_t
     /* Is double clicked */
     bool b_double_click;
 } vlc_mouse_t;
-
-/**
- * Mouse event callback
- * @param mouse new mouse event to process, can be NULL for an invalidate state
- * (a new vout is created or restarted).
- * @param user_data
- */
-typedef void (*vlc_mouse_event)(const vlc_mouse_t *mouse, void *user_data);
 
 static inline void vlc_mouse_Init( vlc_mouse_t *p_mouse )
 {

@@ -2,6 +2,7 @@
  * controller.cpp : Controller for the main interface
  ****************************************************************************
  * Copyright (C) 2006-2009 the VideoLAN team
+ * $Id: 04368a73fc141a20649d0a94fa115f2771f358de $
  *
  * Authors: Jean-Baptiste Kempf <jb@videolan.org>
  *          Ilkka Ollakka <ileoo@videolan.org>
@@ -25,6 +26,8 @@
 # include "config.h"
 #endif
 
+#include <vlc_vout.h>                       /* vout_thread_t for FSC */
+
 /* Widgets */
 #include "components/controller.hpp"
 #include "components/controller_widget.hpp"
@@ -34,10 +37,12 @@
 #include "util/buttons/RoundButton.hpp"
 
 #include "dialogs_provider.hpp"                     /* Opening Dialogs */
-#include "components/playlist/playlist_controller.hpp"
+#include "actions_manager.hpp"                             /* *_ACTION */
 
 #include "util/input_slider.hpp"                         /* SeekSlider */
 #include "util/customwidgets.hpp"                       /* qEventToKey */
+
+#include "adapters/seekpoints.hpp"
 
 #include <QToolButton>
 #include <QHBoxLayout>
@@ -54,8 +59,6 @@
  * TEH controls
  **********************************************************************/
 
-using namespace vlc::playlist;
-
 /******
  * This is an abstract Toolbar/Controller
  * This has helper to create any toolbar, any buttons and to manage the actions
@@ -68,41 +71,30 @@ AbstractController::AbstractController( intf_thread_t * _p_i, QWidget *_parent )
     advControls = NULL;
     buttonGroupLayout = NULL;
 
-    connect( THEMIM, &PlayerController::playingStateChanged, this, &AbstractController::setStatus);
+    /* Main action provider */
+    toolbarActionsMapper = new QSignalMapper( this );
+    CONNECT( toolbarActionsMapper, mapped( int ),
+             ActionsManager::getInstance( p_intf  ), doAction( int ) );
+    CONNECT( THEMIM->getIM(), playingStatusChanged( int ), this, setStatus( int ) );
 
     setSizePolicy( QSizePolicy::MinimumExpanding, QSizePolicy::Fixed );
 }
 
 /* Reemit some signals on status Change to activate some buttons */
-void AbstractController::setStatus( PlayerController::PlayingState status )
+void AbstractController::setStatus( int status )
 {
-    bool b_hasInput = THEMIM->hasInput();
+    bool b_hasInput = THEMIM->getIM()->hasInput();
     /* Activate the interface buttons according to the presence of the input */
     emit inputExists( b_hasInput );
 
-    emit inputPlaying( status == PlayerController::PLAYING_STATE_PLAYING );
+    emit inputPlaying( status == PLAYING_S );
 
-    emit inputIsTrickPlayable( b_hasInput && THEMIM->isRewindable() );
+    emit inputIsRecordable( b_hasInput &&
+                            var_GetBool( THEMIM->getInput(), "can-record" ) );
+
+    emit inputIsTrickPlayable( b_hasInput &&
+                            var_GetBool( THEMIM->getInput(), "can-rewind" ) );
 }
-
-void AbstractController::playAction()
-{
-    if( THEMPL->isEmpty() )
-        THEDP->openFileDialog();
-    else
-        THEMPL->togglePlayPause();
-}
-
-void AbstractController::playlistAction()
-{
-
-}
-
-void AbstractController::fullwidthAction()
-{
-
-}
-
 
 /* Generic button setup */
 void AbstractController::setupButton( QAbstractButton *aButton )
@@ -207,6 +199,12 @@ void AbstractController::createAndAddWidget( QBoxLayout *controlLayout_,
     }
 }
 
+
+#define CONNECT_MAP( a ) CONNECT( a, clicked(),  toolbarActionsMapper, map() )
+#define SET_MAPPING( a, b ) toolbarActionsMapper->setMapping( a , b )
+#define CONNECT_MAP_SET( a, b ) \
+    CONNECT_MAP( a ); \
+    SET_MAPPING( a, b );
 #define BUTTON_SET_BAR( a_button ) \
     a_button->setToolTip( qtr( tooltipL[button] ) ); \
     a_button->setIcon( QIcon( iconL[button] ) );
@@ -215,17 +213,17 @@ void AbstractController::createAndAddWidget( QBoxLayout *controlLayout_,
     button->setIcon( QIcon( ":/"#image ".svg" ) );
 
 #define ENABLE_ON_VIDEO( a ) \
-    connect( THEMIM, &PlayerController::hasVideoOutputChanged, a, &QToolButton::setEnabled ); \
-    a->setEnabled( THEMIM->hasVideoOutput() ); /* TODO: is this necessary? when input is started before the interface? */
+    CONNECT( THEMIM->getIM(), voutChanged( bool ), a, setEnabled( bool ) ); \
+    a->setEnabled( THEMIM->getIM()->hasVideo() ); /* TODO: is this necessary? when input is started before the interface? */
 
 #define ENABLE_ON_INPUT( a ) \
-    connect( this, &AbstractController::inputExists, a, &QToolButton::setEnabled ); \
-    a->setEnabled( THEMIM->hasInput() ); /* TODO: is this necessary? when input is started before the interface? */
+    CONNECT( this, inputExists( bool ), a, setEnabled( bool ) ); \
+    a->setEnabled( THEMIM->getIM()->hasInput() ); /* TODO: is this necessary? when input is started before the interface? */
 
-#define NORMAL_BUTTON( name, actionReceiver, actionSlot ) \
+#define NORMAL_BUTTON( name )                           \
     QToolButton * name ## Button = new QToolButton;     \
     setupButton( name ## Button );                      \
-    connect( name ## Button, &QToolButton::clicked, actionReceiver, actionSlot ); \
+    CONNECT_MAP_SET( name ## Button, name ## _ACTION ); \
     BUTTON_SET_BAR( name ## Button );                   \
     widget = name ## Button;
 
@@ -243,39 +241,40 @@ QWidget *AbstractController::createWidget( buttonType_e button, int options )
         PlayButton *playButton = new PlayButton;
         setupButton( playButton );
         BUTTON_SET_BAR(  playButton );
-        connect( playButton, &PlayButton::clicked, this, &AbstractController::playAction  );
-        connect( this, &AbstractController::inputPlaying, playButton, &PlayButton::updateButtonIcons );
-        playButton->updateButtonIcons( THEMIM->getPlayingState() == PlayerController::PLAYING_STATE_PLAYING );
+        CONNECT_MAP_SET( playButton, PLAY_ACTION );
+        CONNECT( this, inputPlaying( bool ),
+                 playButton, updateButtonIcons( bool ));
+        playButton->updateButtonIcons( THEMIM->getIM()->playingStatus() == PLAYING_S );
         widget = playButton;
         }
         break;
     case STOP_BUTTON:{
-        NORMAL_BUTTON( STOP, THEMPL, &PlaylistControllerModel::stop );
+        NORMAL_BUTTON( STOP );
         }
         break;
     case OPEN_BUTTON:{
-        NORMAL_BUTTON( OPEN, THEDP, QOverload<>::of(&DialogsProvider::openDialog));
+        NORMAL_BUTTON( OPEN );
         }
         break;
     case OPEN_SUB_BUTTON:{
-        NORMAL_BUTTON( OPEN_SUB, THEDP, &DialogsProvider::loadSubtitlesFile);
+        NORMAL_BUTTON( OPEN_SUB );
         }
         break;
     case PREVIOUS_BUTTON:{
-        NORMAL_BUTTON( PREVIOUS, THEMPL, &PlaylistControllerModel::prev );
+        NORMAL_BUTTON( PREVIOUS );
         }
         break;
     case NEXT_BUTTON: {
-        NORMAL_BUTTON( NEXT, THEMPL, &PlaylistControllerModel::next);
+        NORMAL_BUTTON( NEXT );
         }
         break;
     case SLOWER_BUTTON:{
-        NORMAL_BUTTON( SLOWER, THEMIM, &PlayerController::slower );
+        NORMAL_BUTTON( SLOWER );
         ENABLE_ON_INPUT( SLOWERButton );
         }
         break;
     case FASTER_BUTTON:{
-        NORMAL_BUTTON( FASTER, THEMIM, &PlayerController::faster );
+        NORMAL_BUTTON( FASTER );
         ENABLE_ON_INPUT( FASTERButton );
         }
         break;
@@ -283,8 +282,8 @@ QWidget *AbstractController::createWidget( buttonType_e button, int options )
         QToolButtonExt *but = new QToolButtonExt;
         setupButton( but );
         BUTTON_SET_BAR( but );
-        connect( but, &QToolButtonExt::shortClicked, THEMPL, &PlaylistControllerModel::prev );
-        connect( but, &QToolButtonExt::longClicked, THEMIM, &PlayerController::jumpBwd );
+        CONNECT( but, shortClicked(), THEMIM, prev() );
+        CONNECT( but, longClicked(), THEAM, skipBackward() );
         widget = but;
         }
         break;
@@ -292,48 +291,49 @@ QWidget *AbstractController::createWidget( buttonType_e button, int options )
         QToolButtonExt *but = new QToolButtonExt;
         setupButton( but );
         BUTTON_SET_BAR( but );
-        connect( but, &QToolButtonExt::shortClicked, THEMPL, &PlaylistControllerModel::next );
-        connect( but, &QToolButtonExt::longClicked, THEMIM, &PlayerController::jumpFwd );
+        CONNECT( but, shortClicked(), THEMIM, next() );
+        CONNECT( but, longClicked(), THEAM, skipForward() );
         widget = but;
         }
         break;
     case FRAME_BUTTON: {
-        NORMAL_BUTTON( FRAME, THEMIM, &PlayerController::frameNext );
+        NORMAL_BUTTON( FRAME );
         ENABLE_ON_VIDEO( FRAMEButton );
         }
         break;
     case FULLSCREEN_BUTTON:
     case DEFULLSCREEN_BUTTON:
         {
-        NORMAL_BUTTON( FULLSCREEN, THEMIM, &PlayerController::toggleFullscreen );
+        NORMAL_BUTTON( FULLSCREEN );
         ENABLE_ON_VIDEO( FULLSCREENButton );
         }
         break;
     case FULLWIDTH_BUTTON: {
-        NORMAL_BUTTON( FULLWIDTH,  this, &AbstractController::fullwidthAction );
+            NORMAL_BUTTON( FULLWIDTH );
         }
         break;
     case EXTENDED_BUTTON:{
-        NORMAL_BUTTON( EXTENDED, THEDP, &DialogsProvider::extendedDialog );
+        NORMAL_BUTTON( EXTENDED );
         }
         break;
     case PLAYLIST_BUTTON:{
-        NORMAL_BUTTON( PLAYLIST, this, &AbstractController::playlistAction );
+        NORMAL_BUTTON( PLAYLIST );
         }
         break;
     case SNAPSHOT_BUTTON:{
-        NORMAL_BUTTON( SNAPSHOT, THEMIM, &PlayerController::snapshot );
+        NORMAL_BUTTON( SNAPSHOT );
         ENABLE_ON_VIDEO( SNAPSHOTButton );
         }
         break;
     case RECORD_BUTTON:{
         QToolButton *recordButton = new QToolButton;
         setupButton( recordButton );
-        recordButton->setCheckable( true );
-        connect( recordButton, &QToolButton::toggled, THEMIM, &PlayerController::setRecording );
-        connect( THEMIM, &PlayerController::recordingChanged, recordButton, &QToolButton::setChecked );
+        CONNECT_MAP_SET( recordButton, RECORD_ACTION );
         BUTTON_SET_BAR(  recordButton );
         ENABLE_ON_INPUT( recordButton );
+        recordButton->setCheckable( true );
+        CONNECT( THEMIM->getIM(), recordingStateChanged( bool ),
+                 recordButton, setChecked( bool ) );
         widget = recordButton;
         }
         break;
@@ -343,25 +343,29 @@ QWidget *AbstractController::createWidget( buttonType_e button, int options )
         ABButton->setShortcut( qtr("Shift+L") );
         BUTTON_SET_BAR( ABButton );
         ENABLE_ON_INPUT( ABButton );
-        connect( ABButton, &AtoB_Button::clicked, THEMIM, &PlayerController::toggleABloopState );
-        connect( THEMIM, &PlayerController::ABLoopStateChanged, ABButton, &AtoB_Button::updateButtonIcons );
+        CONNECT_MAP_SET( ABButton, ATOB_ACTION );
+        CONNECT( THEMIM->getIM(), AtoBchanged( bool, bool),
+                 ABButton, updateButtonIcons( bool, bool ) );
         widget = ABButton;
         }
         break;
     case INPUT_SLIDER: {
         SeekSlider *slider = new SeekSlider( p_intf, Qt::Horizontal, NULL, !b_shiny );
+        SeekPoints *chapters = new SeekPoints( this, p_intf );
+        CONNECT( THEMIM->getIM(), chapterChanged( bool ), chapters, update() );
+        slider->setChapters( chapters );
 
         /* Update the position when the IM has changed */
-        connect( THEMIM, &PlayerController::positionUpdated,
-                slider, &SeekSlider::setPosition );
+        CONNECT( THEMIM->getIM(), positionUpdated( float, int64_t, int ),
+                slider, setPosition( float, int64_t, int ) );
         /* And update the IM, when the position has changed */
-        connect( slider, &SeekSlider::sliderDragged,
-                 THEMIM, &PlayerController::jumpToPos );
-        connect( THEMIM, &PlayerController::bufferingChanged,
-                 slider, &SeekSlider::updateBuffering );
+        CONNECT( slider, sliderDragged( float ),
+                 THEMIM->getIM(), sliderUpdate( float ) );
+        CONNECT( THEMIM->getIM(), cachingChanged( float ),
+                 slider, updateBuffering( float ) );
         /* Give hint to disable slider's interactivity when useless */
-        connect( THEMIM, &PlayerController::seekableChanged,
-                 slider, &SeekSlider::setSeekable );
+        CONNECT( THEMIM->getIM(), inputCanSeek( bool ),
+                 slider, setSeekable( bool ) );
         widget = slider;
         }
         break;
@@ -374,7 +378,6 @@ QWidget *AbstractController::createWidget( buttonType_e button, int options )
         break;
     case VOLUME_SPECIAL:
         b_special = true;
-        /* fallthrough */
     case VOLUME:
         {
             SoundWidget *snd = new SoundWidget( this, p_intf, b_shiny, b_special );
@@ -407,35 +410,36 @@ QWidget *AbstractController::createWidget( buttonType_e button, int options )
     case REVERSE_BUTTON:{
         QToolButton *reverseButton = new QToolButton;
         setupButton( reverseButton );
-        connect( reverseButton, &QToolButton::clicked, THEMIM, &PlayerController::reverse);
+        CONNECT_MAP_SET( reverseButton, REVERSE_ACTION );
         BUTTON_SET_BAR(  reverseButton );
         reverseButton->setCheckable( true );
         /* You should, of COURSE change this to the correct event,
            when/if we have one, that tells us if trickplay is possible . */
-        connect( this, &AbstractController::inputIsTrickPlayable, reverseButton, &QToolButton::setVisible );
+        CONNECT( this, inputIsTrickPlayable( bool ), reverseButton, setVisible( bool ) );
         reverseButton->setVisible( false );
         widget = reverseButton;
         }
         break;
     case SKIP_BACK_BUTTON: {
-        NORMAL_BUTTON( SKIP_BACK, THEMIM, &PlayerController::jumpBwd );
+        NORMAL_BUTTON( SKIP_BACK );
         ENABLE_ON_INPUT( SKIP_BACKButton );
         }
         break;
     case SKIP_FW_BUTTON: {
-        NORMAL_BUTTON( SKIP_FW, THEMIM, &PlayerController::jumpFwd  );
+        NORMAL_BUTTON( SKIP_FW );
         ENABLE_ON_INPUT( SKIP_FWButton );
         }
         break;
     case QUIT_BUTTON: {
-        NORMAL_BUTTON( QUIT, THEDP, &DialogsProvider::quit );
+        NORMAL_BUTTON( QUIT );
         }
         break;
     case RANDOM_BUTTON: {
-        NORMAL_BUTTON( RANDOM, THEMPL, &PlaylistControllerModel::toggleRandom );
+        NORMAL_BUTTON( RANDOM );
         RANDOMButton->setCheckable( true );
-        RANDOMButton->setChecked( THEMPL->isRandom() );
-        connect( THEMPL, &PlaylistControllerModel::randomChanged, RANDOMButton, &QToolButton::setChecked );
+        RANDOMButton->setChecked( var_GetBool( THEPL, "random" ) );
+        CONNECT( THEMIM, randomChanged( bool ),
+                 RANDOMButton, setChecked( bool ) );
         }
         break;
     case LOOP_BUTTON:{
@@ -443,14 +447,20 @@ QWidget *AbstractController::createWidget( buttonType_e button, int options )
         setupButton( loopButton );
         loopButton->setToolTip( qtr( "Click to toggle between loop all, loop one and no loop") );
         loopButton->setCheckable( true );
-        loopButton->updateButtonIcons( THEMPL->getRepeatMode() );
-        connect( THEMPL, &PlaylistControllerModel::repeatModeChanged, loopButton, &LoopButton::updateButtonIcons );
-        connect( loopButton, &LoopButton::clicked, THEMPL, &PlaylistControllerModel::toggleRepeatMode );
+        {
+            int i_state = NORMAL;
+            if( var_GetBool( THEPL, "loop" ) )   i_state = REPEAT_ALL;
+            if( var_GetBool( THEPL, "repeat" ) ) i_state = REPEAT_ONE;
+            loopButton->updateButtonIcons( i_state );
+        }
+
+        CONNECT( THEMIM, repeatLoopChanged( int ), loopButton, updateButtonIcons( int ) );
+        CONNECT( loopButton, clicked(), THEMIM, loopRepeatLoopStatus() );
         widget = loopButton;
         }
         break;
     case INFO_BUTTON: {
-        NORMAL_BUTTON( INFO, THEDP, &DialogsProvider::mediaInfoDialog );
+        NORMAL_BUTTON( INFO );
         }
         break;
     case PLAYBACK_BUTTONS:{
@@ -462,13 +472,13 @@ QWidget *AbstractController::createWidget( buttonType_e button, int options )
         layout->setBackwardButton( prev );
         layout->setForwardButton( next );
         layout->setRoundButton( play );
-        connect( prev, &BrowseButton::clicked, THEMPL, &PlaylistControllerModel::prev );
-        connect( next, &BrowseButton::clicked, THEMPL, &PlaylistControllerModel::next );
-        connect( play, &BrowseButton::clicked, this, &AbstractController::playAction );
+        CONNECT_MAP_SET( prev, PREVIOUS_ACTION );
+        CONNECT_MAP_SET( next, NEXT_ACTION );
+        CONNECT_MAP_SET( play, PLAY_ACTION );
         }
         break;
     case ASPECT_RATIO_COMBOBOX:
-        widget = new AspectRatioComboBox( p_intf, THEMIM->getAspectRatio());
+        widget = new AspectRatioComboBox( p_intf );
         widget->setMinimumHeight( 26 );
         break;
     case SPEED_LABEL:
@@ -562,13 +572,17 @@ QFrame *AbstractController::discFrame()
 
     /* Change the navigation button display when the IM
        navigation changes */
-    connect( THEMIM, &PlayerController::hasTitlesChanged, chapFrame, &QFrame::setVisible );
-    connect( THEMIM, &PlayerController::hasMenuChanged, menuFrame, &QFrame::setVisible );
-
+    CONNECT( THEMIM->getIM(), chapterChanged( bool ),
+            chapFrame, setVisible( bool ) );
+    CONNECT( THEMIM->getIM(), titleChanged( bool ),
+            menuFrame, setVisible( bool ) );
     /* Changes the IM navigation when triggered on the nav buttons */
-    connect( prevSectionButton, &QToolButton::clicked, THEMIM, &PlayerController::sectionPrev );
-    connect( nextSectionButton, &QToolButton::clicked, THEMIM, &PlayerController::sectionNext );
-    connect( menuButton, &QToolButton::clicked, THEMIM, &PlayerController::sectionMenu );
+    CONNECT( prevSectionButton, clicked(), THEMIM->getIM(),
+            sectionPrev() );
+    CONNECT( nextSectionButton, clicked(), THEMIM->getIM(),
+            sectionNext() );
+    CONNECT( menuButton, clicked(), THEMIM->getIM(),
+            sectionMenu() );
 
     return discFrame;
 }
@@ -581,20 +595,23 @@ QFrame *AbstractController::telexFrame()
     QFrame *telexFrame = new QFrame( this );
     QHBoxLayout *telexLayout = new QHBoxLayout( telexFrame );
     telexLayout->setSpacing( 0 ); telexLayout->setMargin( 0 );
-    connect( THEMIM,  &PlayerController::teletextAvailableChanged, telexFrame, &QFrame::setVisible );
+    CONNECT( THEMIM->getIM(), teletextPossible( bool ),
+             telexFrame, setVisible( bool ) );
 
     /* On/Off button */
     QToolButton *telexOn = new QToolButton;
     setupButton( telexOn );
     BUTTON_SET_BAR2( telexOn, toolbar/tv, qtr( "Teletext Activation" ) );
-    telexOn->setEnabled( true );
+    telexOn->setEnabled( false );
     telexOn->setCheckable( true );
 
     telexLayout->addWidget( telexOn );
 
     /* Teletext Activation and set */
-    connect( telexOn, &QToolButton::clicked, THEMIM, &PlayerController::enableTeletext );
-    connect( THEMIM, &PlayerController::teletextEnabledChanged , telexOn, &QToolButton::setChecked );
+    CONNECT( telexOn, clicked( bool ),
+             THEMIM->getIM(), activateTeletext( bool ) );
+    CONNECT( THEMIM->getIM(), teletextPossible( bool ),
+             telexOn, setEnabled( bool ) );
 
     /* Transparency button */
     QToolButton *telexTransparent = new QToolButton;
@@ -606,8 +623,10 @@ QFrame *AbstractController::telexFrame()
     telexLayout->addWidget( telexTransparent );
 
     /* Transparency change and set */
-    connect( telexTransparent, &QToolButton::clicked, THEMIM, &PlayerController::setTeletextTransparency );
-    connect( THEMIM, &PlayerController::teletextTransparencyChanged, telexTransparent, &QToolButton::setChecked );
+    CONNECT( telexTransparent, clicked( bool ),
+            THEMIM->getIM(), telexSetTransparency( bool ) );
+    CONNECT( THEMIM->getIM(), teletextTransparencyActivated( bool ),
+             telexTransparent, setChecked( bool ) );
 
 
     /* Page setting */
@@ -648,9 +667,10 @@ QFrame *AbstractController::telexFrame()
     contextButton->setIcon( iconPixmap );\
     contextButton->setEnabled( false );\
     contextButtonMapper->setMapping( contextButton, key << 16 );\
-    connect( contextButton, &QToolButton::clicked, contextButtonMapper, QOverload<>::of(&QSignalMapper::map) );\
-    connect( contextButtonMapper, QOverload<int>::of(&QSignalMapper::mapped), THEMIM, &PlayerController::setTeletextPage );\
-    connect( THEMIM, &PlayerController::teletextEnabledChanged, contextButton, &QToolButton::setEnabled );\
+    CONNECT( contextButton, clicked(), contextButtonMapper, map() );\
+    CONNECT( contextButtonMapper, mapped( int ),\
+             THEMIM->getIM(), telexSetPage( int ) );\
+    CONNECT( THEMIM->getIM(), teletextActivated( bool ), contextButton, setEnabled( bool ) );\
     telexLayout->addWidget( contextButton )
 
     CREATE_CONTEXT_BUTTON("grey", 'i'); /* index */
@@ -662,13 +682,19 @@ QFrame *AbstractController::telexFrame()
 #undef CREATE_CONTEXT_BUTTON
 
     /* Page change and set */
-    connect( telexPage, QOverload<int>::of(&QSpinBox::valueChanged), THEMIM, &PlayerController::setTeletextPage );
-    connect( THEMIM, &PlayerController::teletextPageChanged, telexPage, &QSpinBox::setValue);
+    CONNECT( telexPage, valueChanged( int ),
+            THEMIM->getIM(), telexSetPage( int ) );
+    CONNECT( THEMIM->getIM(), newTelexPageSet( int ),
+            telexPage, setValue( int ) );
 
-    connect( THEMIM, &PlayerController::teletextEnabledChanged, telexPage, &QSpinBox::setEnabled);
-    connect( THEMIM, &PlayerController::teletextEnabledChanged, telexTransparent, &QSpinBox::setEnabled );
+    CONNECT( THEMIM->getIM(), teletextActivated( bool ), telexPage, setEnabled( bool ) );
+    CONNECT( THEMIM->getIM(), teletextActivated( bool ), telexTransparent, setEnabled( bool ) );
+    CONNECT( THEMIM->getIM(), teletextActivated( bool ), telexOn, setChecked( bool ) );
     return telexFrame;
 }
+#undef CONNECT_MAP
+#undef SET_MAPPING
+#undef CONNECT_MAP_SET
 #undef BUTTON_SET_BAR
 #undef BUTTON_SET_BAR2
 #undef ENABLE_ON_VIDEO
@@ -767,8 +793,10 @@ FullscreenControllerWidget::FullscreenControllerWidget( intf_thread_t *_p_i, QWi
     b_mouse_over        = false;
     i_mouse_last_move_x = -1;
     i_mouse_last_move_y = -1;
+#if HAVE_TRANSPARENCY
     b_slow_hide_begin   = false;
     i_slow_hide_timeout = 1;
+#endif
     b_fullscreen        = false;
     i_hide_timeout      = 1;
     i_screennumber      = -1;
@@ -803,24 +831,28 @@ FullscreenControllerWidget::FullscreenControllerWidget( intf_thread_t *_p_i, QWi
     /* hiding timer */
     p_hideTimer = new QTimer( this );
     p_hideTimer->setSingleShot( true );
-    connect( p_hideTimer, &QTimer::timeout, this, &FullscreenControllerWidget::hideFSC );
+    CONNECT( p_hideTimer, timeout(), this, hideFSC() );
 
     /* slow hiding timer */
+#if HAVE_TRANSPARENCY
     p_slowHideTimer = new QTimer( this );
-    connect( p_slowHideTimer, &QTimer::timeout, this, &FullscreenControllerWidget::slowHideFSC );
+    CONNECT( p_slowHideTimer, timeout(), this, slowHideFSC() );
     f_opacity = var_InheritFloat( p_intf, "qt-fs-opacity" );
+#endif
 
     i_sensitivity = var_InheritInteger( p_intf, "qt-fs-sensitivity" );
 
     vlc_mutex_init_recursive( &lock );
 
-    connect( THEMIM, &PlayerController::voutListChanged,
-              this, &FullscreenControllerWidget::setVoutList, Qt::DirectConnection );
+    DCONNECT( THEMIM->getIM(), voutListChanged( vout_thread_t **, int ),
+              this, setVoutList( vout_thread_t **, int ) );
 
     /* First Move */
     previousPosition = getSettings()->value( "FullScreen/pos" ).toPoint();
     screenRes = getSettings()->value( "FullScreen/screen" ).toRect();
     isWideFSC = getSettings()->value( "FullScreen/wide" ).toBool();
+
+    CONNECT( this, fullscreenChanged( bool ), THEMIM, changeFullscreen( bool ) );
 }
 
 FullscreenControllerWidget::~FullscreenControllerWidget()
@@ -895,7 +927,9 @@ void FullscreenControllerWidget::showFSC()
 {
     restoreFSC();
 
+#if HAVE_TRANSPARENCY
     setWindowOpacity( f_opacity );
+#endif
 
     show();
 }
@@ -911,9 +945,11 @@ void FullscreenControllerWidget::planHideFSC()
 
     p_hideTimer->start( i_timeout );
 
+#if HAVE_TRANSPARENCY
     b_slow_hide_begin = true;
     i_slow_hide_timeout = i_timeout;
     p_slowHideTimer->start( i_slow_hide_timeout / 2 );
+#endif
 }
 
 /**
@@ -923,6 +959,7 @@ void FullscreenControllerWidget::planHideFSC()
  */
 void FullscreenControllerWidget::slowHideFSC()
 {
+#if HAVE_TRANSPARENCY
     if( b_slow_hide_begin )
     {
         b_slow_hide_begin = false;
@@ -944,6 +981,7 @@ void FullscreenControllerWidget::slowHideFSC()
          if ( windowOpacity() <= 0.0 )
              p_slowHideTimer->stop();
     }
+#endif
 }
 
 void FullscreenControllerWidget::updateFullwidthGeometry( int number )
@@ -1009,7 +1047,11 @@ void FullscreenControllerWidget::customEvent( QEvent *event )
             b_fs = b_fullscreen;
             vlc_mutex_unlock( &lock );
 
-            if( b_fs && ( isHidden() || p_slowHideTimer->isActive() ) )
+            if( b_fs && ( isHidden()
+#if HAVE_TRANSPARENCY
+                 || p_slowHideTimer->isActive()
+#endif
+                    ) )
                 showFSC();
 
             break;
@@ -1079,8 +1121,10 @@ void FullscreenControllerWidget::enterEvent( QEvent *event )
     b_mouse_over = true;
 
     p_hideTimer->stop();
+#if HAVE_TRANSPARENCY
     p_slowHideTimer->stop();
     setWindowOpacity( f_opacity );
+#endif
     event->accept();
 }
 
@@ -1113,7 +1157,7 @@ int FullscreenControllerWidget::FullscreenChanged( vlc_object_t *obj,
     FullscreenControllerWidget *p_fs = (FullscreenControllerWidget *)data;
 
     p_fs->fullscreenChanged( p_vout, new_val.b_bool, var_GetInteger( p_vout, "mouse-hide-timeout" ) );
-    emit p_fs->fullscreenChanged( new_val.b_bool );
+    p_fs->emit fullscreenChanged( new_val.b_bool );
 
     return VLC_SUCCESS;
 }
@@ -1162,7 +1206,7 @@ void FullscreenControllerWidget::setVoutList( vout_thread_t **pp_vout, int i_vou
         vout.removeAll( p_vout );
         vlc_mutex_unlock( &lock );
 
-        vout_Release(p_vout);
+        vlc_object_release( VLC_OBJECT(p_vout) );
     }
 
     /* Vout to track */
@@ -1176,7 +1220,7 @@ void FullscreenControllerWidget::setVoutList( vout_thread_t **pp_vout, int i_vou
 
     foreach( vout_thread_t *p_vout, add )
     {
-        vout_Hold(p_vout);
+        vlc_object_hold( VLC_OBJECT(p_vout) );
 
         vlc_mutex_lock( &lock );
         vout.append( p_vout );
@@ -1252,3 +1296,4 @@ void FullscreenControllerWidget::mouseChanged( vout_thread_t *, int i_mousex, in
         QApplication::postEvent( this, eHide );
     }
 }
+

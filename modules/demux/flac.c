@@ -2,6 +2,7 @@
  * flac.c : FLAC demux module for vlc
  *****************************************************************************
  * Copyright (C) 2001-2008 VLC authors and VideoLAN
+ * $Id: a22e51c17daf44b12eba6bd6c1a709aa8c50bae9 $
  *
  * Authors: Gildas Bazin <gbazin@netcourrier.com>
  *          Laurent Aimar <fenrir@via.ecp.fr>
@@ -65,11 +66,11 @@ static int  ParseHeaders( demux_t *, es_format_t * );
 
 typedef struct
 {
-    vlc_tick_t  i_time_offset;
+    mtime_t  i_time_offset;
     uint64_t i_byte_offset;
 } flac_seekpoint_t;
 
-typedef struct
+struct demux_sys_t
 {
     bool  b_start;
     int   i_next_block_flags;
@@ -81,11 +82,11 @@ typedef struct
 
     vlc_meta_t *p_meta;
 
-    vlc_tick_t i_pts;
+    int64_t i_pts;
     struct flac_stream_info stream_info;
     bool b_stream_info;
 
-    vlc_tick_t i_length; /* Length from stream info */
+    int64_t i_length; /* Length from stream info */
     uint64_t i_data_pos;
 
     /* */
@@ -101,11 +102,11 @@ typedef struct
     input_attachment_t **attachments;
     int                i_cover_idx;
     int                i_cover_score;
-} demux_sys_t;
+};
 
 #define FLAC_PACKET_SIZE 16384
-#define FLAC_MAX_PREROLL      VLC_TICK_FROM_SEC(4)
-#define FLAC_MAX_SLOW_PREROLL VLC_TICK_FROM_SEC(45)
+#define FLAC_MAX_PREROLL      (CLOCK_FREQ * 4)
+#define FLAC_MAX_SLOW_PREROLL (CLOCK_FREQ * 45)
 
 /*****************************************************************************
  * Open: initializes ES structures
@@ -143,7 +144,7 @@ static int Open( vlc_object_t * p_this )
     p_sys->p_packetizer = NULL;
     p_sys->p_meta = NULL;
     p_sys->i_length = 0;
-    p_sys->i_pts = VLC_TICK_INVALID;
+    p_sys->i_pts = VLC_TS_INVALID;
     p_sys->b_stream_info = false;
     p_sys->p_es = NULL;
     p_sys->p_current_block = NULL;
@@ -249,7 +250,7 @@ static void FlushPacketizer( decoder_t *p_packetizer )
 
 static void Reset( demux_sys_t *p_sys )
 {
-    p_sys->i_pts = VLC_TICK_INVALID;
+    p_sys->i_pts = VLC_TS_INVALID;
 
     FlushPacketizer( p_sys->p_packetizer );
     if( p_sys->p_current_block )
@@ -259,7 +260,7 @@ static void Reset( demux_sys_t *p_sys )
     }
 }
 
-static int RefineSeek( demux_t *p_demux, vlc_tick_t i_time, double i_bytemicrorate,
+static int RefineSeek( demux_t *p_demux, mtime_t i_time, double i_bytemicrorate,
                        uint64_t i_lowpos, uint64_t i_highpos )
 {
     demux_sys_t *p_sys = p_demux->p_sys;
@@ -307,9 +308,9 @@ static int RefineSeek( demux_t *p_demux, vlc_tick_t i_time, double i_bytemicrora
         /* If we are further than wanted block */
         if( p_block_out->i_dts >= i_time )
         {
-            vlc_tick_t i_diff = p_block_out->i_dts - i_time;
+            mtime_t i_diff = p_block_out->i_dts - i_time;
             /* Not in acceptable approximation range */
-            if( i_diff > VLC_TICK_FROM_MS(100) && i_diff / i_bytemicrorate > i_frame_size )
+            if( i_diff > CLOCK_FREQ / 10 && i_diff / i_bytemicrorate > i_frame_size )
             {
                 i_highpos = i_start_pos;
                 i_start_pos -= ( i_diff / i_bytemicrorate );
@@ -317,9 +318,9 @@ static int RefineSeek( demux_t *p_demux, vlc_tick_t i_time, double i_bytemicrora
             }
             else b_found = true;
         }
-        else
+        else if( p_block_out->i_dts < i_time )
         {
-            vlc_tick_t i_diff = i_time - p_block_out->i_dts;
+            mtime_t i_diff = i_time - p_block_out->i_dts;
             /* Not in acceptable NEXT_TIME demux range */
             if( i_diff >= ((b_canfastseek) ? FLAC_MAX_PREROLL : FLAC_MAX_SLOW_PREROLL) &&
                 i_diff / i_bytemicrorate > i_frame_size )
@@ -371,7 +372,7 @@ static int Demux( demux_t *p_demux )
         p_sys->p_current_block->i_flags = p_sys->i_next_block_flags;
         p_sys->i_next_block_flags = 0;
         p_sys->p_current_block->i_pts =
-        p_sys->p_current_block->i_dts = p_sys->b_start ? VLC_TICK_0 : VLC_TICK_INVALID;
+        p_sys->p_current_block->i_dts = p_sys->b_start ? VLC_TS_0 : VLC_TS_INVALID;
     }
 
     while( (p_block_out = GetPacketizedBlock( p_sys->p_packetizer,
@@ -387,8 +388,8 @@ static int Demux( demux_t *p_demux )
             p_block_out->p_next = NULL;
 
             /* set PCR */
-            if( unlikely(p_sys->i_pts == VLC_TICK_INVALID) )
-                es_out_SetPCR( p_demux->out, __MAX(p_block_out->i_dts - 1, VLC_TICK_0) );
+            if( unlikely(p_sys->i_pts == VLC_TS_INVALID) )
+                es_out_SetPCR( p_demux->out, __MAX(p_block_out->i_dts - 1, VLC_TS_0) );
 
             p_sys->i_pts = p_block_out->i_dts;
 
@@ -407,11 +408,11 @@ static int Demux( demux_t *p_demux )
 /*****************************************************************************
  * Control:
  *****************************************************************************/
-static vlc_tick_t ControlGetLength( demux_t *p_demux )
+static int64_t ControlGetLength( demux_t *p_demux )
 {
     demux_sys_t *p_sys = p_demux->p_sys;
     const uint64_t i_size = stream_Size(p_demux->s) - p_sys->i_data_pos;
-    vlc_tick_t i_length = p_sys->i_length;
+    int64_t i_length = p_sys->i_length;
     int i;
 
     /* Try to fix length using seekpoint and current size for truncated file */
@@ -433,13 +434,13 @@ static vlc_tick_t ControlGetLength( demux_t *p_demux )
     return i_length;
 }
 
-static vlc_tick_t ControlGetTime( demux_t *p_demux )
+static int64_t ControlGetTime( demux_t *p_demux )
 {
     demux_sys_t *p_sys = p_demux->p_sys;
     return p_sys->i_pts;
 }
 
-static int ControlSetTime( demux_t *p_demux, vlc_tick_t i_time )
+static int ControlSetTime( demux_t *p_demux, int64_t i_time )
 {
     demux_sys_t *p_sys = p_demux->p_sys;
     bool b_seekable;
@@ -450,7 +451,7 @@ static int ControlSetTime( demux_t *p_demux, vlc_tick_t i_time )
     if( !b_seekable )
         return VLC_EGENERIC;
 
-    const vlc_tick_t i_length = ControlGetLength( p_demux );
+    const mtime_t i_length = ControlGetLength( p_demux );
     if( i_length <= 0 )
         return VLC_EGENERIC;
 
@@ -508,8 +509,8 @@ static int Control( demux_t *p_demux, int i_query, va_list args )
     if( i_query == DEMUX_GET_META )
     {
         vlc_meta_t *p_meta = va_arg( args, vlc_meta_t * );
-        if( p_sys->p_meta )
-            vlc_meta_Merge( p_meta, p_sys->p_meta );
+        if( p_demux->p_sys->p_meta )
+            vlc_meta_Merge( p_meta, p_demux->p_sys->p_meta );
         return VLC_SUCCESS;
     }
     else if( i_query == DEMUX_HAS_UNSUPPORTED_META )
@@ -520,17 +521,19 @@ static int Control( demux_t *p_demux, int i_query, va_list args )
     }
     else if( i_query == DEMUX_GET_LENGTH )
     {
-        *va_arg( args, vlc_tick_t * ) = ControlGetLength( p_demux );
+        int64_t *pi64 = va_arg( args, int64_t * );
+        *pi64 = ControlGetLength( p_demux );
         return VLC_SUCCESS;
     }
     else if( i_query == DEMUX_SET_TIME )
     {
-        return ControlSetTime( p_demux, va_arg( args, vlc_tick_t ) );
+        int64_t i_time = va_arg( args, int64_t );
+        return ControlSetTime( p_demux, i_time );
     }
     else if( i_query == DEMUX_SET_POSITION )
     {
         const double f = va_arg( args, double );
-        vlc_tick_t i_length = ControlGetLength( p_demux );
+        int64_t i_length = ControlGetLength( p_demux );
         int i_ret;
         if( i_length > 0 )
         {
@@ -549,18 +552,19 @@ static int Control( demux_t *p_demux, int i_query, va_list args )
     }
     else if( i_query == DEMUX_GET_TIME )
     {
-        *va_arg( args, vlc_tick_t * ) = ControlGetTime( p_demux );
+        int64_t *pi64 = va_arg( args, int64_t * );
+        *pi64 = ControlGetTime( p_demux );
         return VLC_SUCCESS;
     }
     else if( i_query == DEMUX_GET_POSITION )
     {
-        const vlc_tick_t i_length = ControlGetLength(p_demux);
+        const int64_t i_length = ControlGetLength(p_demux);
         if( i_length > 0 )
         {
-            vlc_tick_t current = ControlGetTime(p_demux);
+            double current = ControlGetTime(p_demux);
             if( current <= i_length )
             {
-                *(va_arg( args, double * )) = (double)current / (double)i_length;
+                *(va_arg( args, double * )) = current / (double)i_length;
                 return VLC_SUCCESS;
             }
         }
@@ -725,8 +729,8 @@ static int  ParseHeaders( demux_t *p_demux, es_format_t *p_fmt )
             p_fmt->audio.i_channels = p_sys->stream_info.channels;
             p_fmt->audio.i_bitspersample = p_sys->stream_info.bits_per_sample;
             if( p_sys->stream_info.sample_rate > 0 )
-                p_sys->i_length = vlc_tick_from_samples(p_sys->stream_info.total_samples,
-                                  p_sys->stream_info.sample_rate);
+                p_sys->i_length = p_sys->stream_info.total_samples * CLOCK_FREQ
+                                / p_sys->stream_info.sample_rate;
 
             continue;
         }
@@ -783,7 +787,7 @@ static void ParseSeekTable( demux_t *p_demux, const uint8_t *p_data, size_t i_da
             break;
 
         s = xmalloc( sizeof (*s) );
-        s->i_time_offset = vlc_tick_from_samples(i_sample, i_sample_rate);
+        s->i_time_offset = i_sample * CLOCK_FREQ / i_sample_rate;
         s->i_byte_offset = GetQWBE( &p_data[4+18*i+8] );
 
         /* Check for duplicate entry */

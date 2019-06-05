@@ -3,6 +3,7 @@
  *****************************************************************************
  * Copyright (C) 2001-2007 VLC authors and VideoLAN
  * Copyright (C) 2012 KO Myung-Hun
+ * $Id: c57180cfa7e247a74bf95d0929f9569b939f5ed9 $
  *
  * Authors: Sam Hocevar <sam@zoy.org>
  *          Ethan C. Baldridge <BaldridgeE@cadmus.com>
@@ -30,40 +31,69 @@
 #endif
 
 #include <string.h>
-#include <sys/types.h>
-#include <dlfcn.h>
 
 #include <vlc_common.h>
 #include <vlc_charset.h>
 #include "modules/modules.h"
 
-void *vlc_dlopen(const char *psz_file, bool lazy )
+#include <sys/types.h>
+#include <dlfcn.h>
+
+/**
+ * Load a dynamically linked library using a system dependent method.
+ *
+ * \param p_this vlc object
+ * \param psz_file library file
+ * \param p_handle the module handle returned
+ * \return 0 on success as well as the module handle.
+ */
+int module_Load( vlc_object_t *p_this, const char *psz_file,
+                 module_handle_t *p_handle, bool lazy )
 {
     const int flags = lazy ? RTLD_LAZY : RTLD_NOW;
     char *path = ToLocaleDup( psz_file );
-    if (unlikely(path == NULL))
-        return NULL;
 
-    void *handle = dlopen( path, flags );
+    module_handle_t handle = dlopen( path, flags );
+    if( handle == NULL )
+    {
+        msg_Warn( p_this, "cannot load module `%s' (%s)", path, dlerror() );
+        free( path );
+        return -1;
+    }
     free( path );
-    return handle;
+    *p_handle = handle;
+    return 0;
 }
 
-int vlc_dlclose(void *handle)
+/**
+ * CloseModule: unload a dynamic library
+ *
+ * This function unloads a previously opened dynamically linked library
+ * using a system dependent method. No return value is taken in consideration,
+ * since some libraries sometimes refuse to close properly.
+ * \param handle handle of the library
+ * \return nothing
+ */
+void module_Unload( module_handle_t handle )
 {
-    return dlclose( handle );
+    dlclose( handle );
 }
 
-void *vlc_dlsym(void *handle, const char *psz_function)
+/**
+ * Looks up a symbol from a dynamically loaded library
+ *
+ * This function queries a loaded library for a symbol specified in a
+ * string, and returns a pointer to it. We don't check for dlerror() or
+ * similar functions, since we want a non-NULL symbol anyway.
+ *
+ * @param handle handle to the module
+ * @param psz_function function name
+ * @return NULL on error, or the address of the symbol
+ */
+void *module_Lookup( module_handle_t handle, const char *psz_function )
 {
     char buf[strlen(psz_function) + 2];
     buf[0] = '_';
     strcpy(buf + 1, psz_function);
     return dlsym( handle, buf );
-}
-
-char *vlc_dlerror(void)
-{
-    const char *errmsg = dlerror();
-    return (errmsg != NULL) ? FromLocaleDup(errmsg) : NULL;
 }

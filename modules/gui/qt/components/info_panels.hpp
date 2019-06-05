@@ -2,6 +2,7 @@
  * info_panels.hpp : Panels for the information dialogs
  ****************************************************************************
  * Copyright (C) 2006-2007 the VideoLAN team
+ * $Id: 1490425dd3b662bb9f303bd1ae760e8a4f54e5a4 $
  *
  * Authors: Clément Stenac <zorglub@videolan.org>
  *          Jean-Baptiste Kempf <jb@videolan.org>
@@ -137,7 +138,7 @@ private:
 
     VLCStatsView *statsView;
 public slots:
-    void update(const input_stats_t &stats );
+    void update( input_item_t * );
     void clear();
 };
 

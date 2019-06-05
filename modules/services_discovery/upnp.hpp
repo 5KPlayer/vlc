@@ -1,13 +1,13 @@
 /*****************************************************************************
  * upnp.hpp :  UPnP discovery module (libupnp) header
  *****************************************************************************
- * Copyright (C) 2004-2018 VLC authors and VideoLAN
+ * Copyright (C) 2004-2016 VLC authors and VideoLAN
+ * $Id: 9c128905d0f71445a62254f7232f2704321b2178 $
  *
  * Authors: Rémi Denis-Courmont <rem # videolan.org> (original plugin)
  *          Christian Henz <henz # c-lab.de>
  *          Mirsal Ennaime <mirsal dot ennaime at gmail dot com>
  *          Hugo Beauzée-Luyssen <hugo@beauzee.fr>
- *          Shaleen Jain <shaleen@jain.sh>
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU Lesser General Public License as published by
@@ -24,16 +24,63 @@
  * Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
+#ifdef HAVE_CONFIG_H
+# include "config.h"
+#endif
+
 #include <vector>
 #include <string>
 
-#include "upnp-wrapper.hpp"
-#include "../stream_out/dlna/dlna_common.hpp"
+#include <upnp/upnp.h>
+#include <upnp/upnptools.h>
 
+#include <vlc_common.h>
 #include <vlc_url.h>
-#include <vlc_interrupt.h>
-#include <vlc_threads.h>
-#include <vlc_cxx_helpers.hpp>
+
+#if UPNP_VERSION < 10800
+typedef void* UpnpEventPtr;
+#else
+typedef const void* UpnpEventPtr;
+#endif
+
+namespace SD
+{
+    class MediaServerList;
+}
+
+/*
+ * libUpnp allows only one instance per process, so we have to share one for
+ * both SD & Access module
+ * Since the callback is bound to the UpnpClient_Handle, we have to register
+ * a wrapper callback, in order for the access module to be able to initialize
+ * libUpnp first.
+ * When a SD wishes to use libUpnp, it will provide its own callback, that the
+ * wrapper will forward.
+ * This way, we always have a register callback & a client handle.
+ */
+class UpnpInstanceWrapper
+{
+public:
+    // This increases the refcount before returning the instance
+    static UpnpInstanceWrapper* get(vlc_object_t* p_obj, services_discovery_t *p_sd);
+    void release(bool isSd);
+    UpnpClient_Handle handle() const;
+    static SD::MediaServerList *lockMediaServerList();
+    static void unlockMediaServerList();
+
+private:
+    static int Callback( Upnp_EventType event_type, UpnpEventPtr p_event, void* p_user_data );
+
+    UpnpInstanceWrapper();
+    ~UpnpInstanceWrapper();
+
+private:
+    static UpnpInstanceWrapper* s_instance;
+    static vlc_mutex_t s_lock;
+    UpnpClient_Handle m_handle;
+    static SD::MediaServerList* p_server_list;
+    int m_refcount;
+};
 
 namespace SD
 {
@@ -53,7 +100,7 @@ struct MediaServerDesc
 };
 
 
-class MediaServerList : public UpnpInstanceWrapper::Listener
+class MediaServerList
 {
 public:
 
@@ -63,9 +110,7 @@ public:
     bool addServer(MediaServerDesc *desc );
     void removeServer(const std::string &udn );
     MediaServerDesc* getServer( const std::string& udn );
-    int onEvent( Upnp_EventType event_type,
-                 UpnpEventPtr p_event,
-                 void* p_user_data ) override;
+    static int Callback( Upnp_EventType event_type, UpnpEventPtr p_event );
 
 private:
     void parseNewServer( IXML_Document* doc, const std::string& location );
@@ -86,13 +131,13 @@ class Upnp_i11e_cb
 {
 public:
     Upnp_i11e_cb( Upnp_FunPtr callback, void *cookie );
-    ~Upnp_i11e_cb() = default;
+    ~Upnp_i11e_cb();
     void waitAndRelease( void );
     static int run( Upnp_EventType, UpnpEventPtr, void *);
 
 private:
-    vlc::threads::semaphore m_sem;
-    vlc::threads::mutex m_lock;
+    vlc_sem_t       m_sem;
+    vlc_mutex_t     m_lock;
     int             m_refCount;
     Upnp_FunPtr     m_callback;
     void*           m_cookie;
@@ -121,45 +166,6 @@ private:
     char* m_psz_objectId;
     stream_t* m_access;
     input_item_node_t* m_node;
-};
-
-}
-
-namespace RD
-{
-
-struct MediaRendererDesc
-{
-    MediaRendererDesc( const std::string& udn, const std::string& fName,
-                    const std::string& base, const std::string& loc );
-    ~MediaRendererDesc();
-    std::string UDN;
-    std::string friendlyName;
-    std::string base_url;               // base url of the renderer
-    std::string location;               // device description url
-    vlc_renderer_item_t *inputItem;
-};
-
-class MediaRendererList : public UpnpInstanceWrapper::Listener
-{
-public:
-    MediaRendererList( vlc_renderer_discovery_t *p_rd );
-    ~MediaRendererList();
-
-    bool addRenderer(MediaRendererDesc *desc );
-    void removeRenderer(const std::string &udn );
-    MediaRendererDesc* getRenderer( const std::string& udn );
-    int onEvent( Upnp_EventType event_type,
-                 UpnpEventPtr p_event,
-                 void* p_user_data ) override;
-
-private:
-    void parseNewRenderer( IXML_Document* doc, const std::string& location );
-
-private:
-    vlc_renderer_discovery_t* const m_rd;
-    std::vector<MediaRendererDesc*> m_list;
-
 };
 
 }

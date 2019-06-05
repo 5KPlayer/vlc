@@ -103,7 +103,7 @@ static int OpenResampler (vlc_object_t *obj)
         return VLC_EGENERIC;
     }
 
-    filter->p_sys = s;
+    filter->p_sys = (filter_sys_t *)s;
     filter->pf_audio_filter = Resample;
     return VLC_SUCCESS;
 }
@@ -162,7 +162,8 @@ static block_t *Resample (filter_t *filter, block_t *in)
     out->i_buffer = src.output_frames_gen * framesize;
     out->i_nb_samples = src.output_frames_gen;
     out->i_pts = in->i_pts;
-    out->i_length = vlc_tick_from_samples(src.output_frames_gen, filter->fmt_out.audio.i_rate);
+    out->i_length = src.output_frames_gen * CLOCK_FREQ
+                  / filter->fmt_out.audio.i_rate;
 error:
     block_Release (in);
     return out;

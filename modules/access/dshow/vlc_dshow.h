@@ -2,6 +2,7 @@
  * vlc_dshow.h : DirectShow access module for vlc
  *****************************************************************************
  * Copyright (C) 2002, 2004, 2010-2011 VLC authors and VideoLAN
+ * $Id: be98882cc770698449b1158716b2af39b61dae75 $
  *
  * Author: Gildas Bazin <gbazin@videolan.org>
  *
@@ -43,13 +44,12 @@
 
 #include <dshow.h>
 
-namespace dshow {
-
 /*****************************************************************************
  * DirectShow GUIDs.
  *****************************************************************************/
 
 /* IAM */
+DEFINE_GUID(PROPSETID_TUNER ,0x6a2e0605, 0x28e4, 0x11d0, 0xa1, 0x8c, 0x00, 0xa0, 0xc9, 0x11, 0x89, 0x56);
 DEFINE_GUID(IID_IAMBufferNegotiation ,0x56ed71a0, 0xaf5f, 0x11d0, 0xb3, 0xf0, 0x00, 0xaa, 0x00, 0x37, 0x61, 0xc5);
 DEFINE_GUID(IID_IAMTVAudio      ,0x83EC1C30, 0x23D1, 0x11d1, 0x99, 0xE6, 0x00, 0xA0, 0xC9, 0x56, 0x02, 0x66);
 DEFINE_GUID(IID_IAMCrossbar     ,0xC6E13380, 0x30AC, 0x11d0, 0xA1, 0x8C, 0x00, 0xA0, 0xC9, 0x11, 0x89, 0x56);
@@ -369,8 +369,6 @@ DECLARE_INTERFACE_(IAMTVAudio, IUnknown)
     STDMETHOD(RegisterNotificationCallBack) (THIS_ IAMTunerNotification*, long);
     STDMETHOD(UnRegisterNotificationCallBack) (THIS_ IAMTunerNotification*);
 };
-
-} // namespace
 
 #endif /* __MINGW64_VERSION_MAJOR */
 #endif /* VLC_DSHOW_H */

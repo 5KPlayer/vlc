@@ -2,6 +2,7 @@
  * cmd_vars.hpp
  *****************************************************************************
  * Copyright (C) 2004 the VideoLAN team
+ * $Id: 73aab301053b616c3225ad0d23a1e51a1a343f87 $
  *
  * Authors: Cyril Deguet     <asmax@via.ecp.fr>
  *
@@ -28,7 +29,7 @@
 #endif
 
 #include <vlc_common.h>
-#include <vlc_playlist_legacy.h>
+#include <vlc_playlist.h>
 #include <vlc_input_item.h>
 
 #include "cmd_generic.hpp"

@@ -2,6 +2,7 @@
  * EPGWidget.hpp : EPGWidget
  ****************************************************************************
  * Copyright © 2009-2010 VideoLAN
+ * $Id: ba5f497a0cea934b0220b6b7043923bd6d307e40 $
  *
  * Authors: Ludovic Fauvet <etix@l0cal.com>
  *
@@ -26,7 +27,6 @@
 #include "qt.hpp"
 
 #include <vlc_epg.h>
-#include <vlc_input_item.h>
 
 #include <QWidget>
 #include <QStackedWidget>
@@ -59,7 +59,7 @@ private:
     EPGChannels *m_channelsWidget;
     QStackedWidget *rootWidget;
 
-    enum input_item_type_e i_event_source_type;
+    uint8_t i_event_source_type;
     bool b_input_type_known;
 
 signals:

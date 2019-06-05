@@ -18,5 +18,8 @@
  * Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-vout_window_t *vout_display_window_New(vout_thread_t *);
+vout_window_t *vout_display_window_New(vout_thread_t *,
+                                       const vout_window_cfg_t *);
+void vout_display_window_Attach(vout_window_t *, vout_display_t *);
+void vout_display_window_Detach(vout_window_t *);
 void vout_display_window_Delete(vout_window_t *);

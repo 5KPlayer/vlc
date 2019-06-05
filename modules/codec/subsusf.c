@@ -2,6 +2,7 @@
  * subsusf.c : USF subtitles decoder
  *****************************************************************************
  * Copyright (C) 2000-2006 VLC authors and VideoLAN
+ * $Id: 1e6a64fcd15235d6e07b6d6dcbee416c2e5d6e85 $
  *
  * Authors: Bernie Purcell <bitmap@videolan.org>
  *
@@ -85,7 +86,7 @@ typedef struct
     int             i_margin_percent_v;
 }  ssa_style_t;
 
-typedef struct
+struct decoder_sys_t
 {
     int                 i_original_height;
     int                 i_original_width;
@@ -96,7 +97,7 @@ typedef struct
 
     image_attach_t      **pp_images;
     int                 i_images;
-} decoder_sys_t;
+};
 
 static int           DecodeBlock   ( decoder_t *, block_t * );
 static char         *CreatePlainText( char * );
@@ -220,7 +221,7 @@ static subpicture_t *ParseText( decoder_t *p_dec, block_t *p_block )
         return NULL;
 
     /* We cannot display a subpicture with no date */
-    if( p_block->i_pts == VLC_TICK_INVALID )
+    if( p_block->i_pts <= VLC_TS_INVALID )
     {
         msg_Warn( p_dec, "subtitle without a date" );
         return NULL;
@@ -262,7 +263,7 @@ static subpicture_t *ParseText( decoder_t *p_dec, block_t *p_block )
 
     p_spu->i_start = p_block->i_pts;
     p_spu->i_stop = p_block->i_pts + p_block->i_length;
-    p_spu->b_ephemer = (p_block->i_length == VLC_TICK_INVALID);
+    p_spu->b_ephemer = (p_block->i_length == 0);
     p_spu->b_absolute = false;
     p_spu->i_original_picture_width = p_sys->i_original_width;
     p_spu->i_original_picture_height = p_sys->i_original_height;
@@ -507,14 +508,16 @@ static int ParseImageAttachments( decoder_t *p_dec )
 
                 if( p_block != NULL )
                 {
-                    es_format_t        es_in;
+                    video_format_t     fmt_in;
                     video_format_t     fmt_out;
 
                     memcpy( p_block->p_buffer, p_attach->p_data, p_attach->i_data );
 
-                    es_format_Init( &es_in, VIDEO_ES, type );
-                    es_in.video.i_chroma = type;
-                    video_format_Init( &fmt_out, VLC_CODEC_YUVA );
+                    memset( &fmt_in,  0, sizeof( video_format_t));
+                    memset( &fmt_out, 0, sizeof( video_format_t));
+
+                    fmt_in.i_chroma  = type;
+                    fmt_out.i_chroma = VLC_CODEC_YUVA;
 
                     /* Find a suitable decoder module */
                     if( module_exists( "sdl_image" ) )
@@ -526,10 +529,8 @@ static int ParseImageAttachments( decoder_t *p_dec )
                         var_SetString( p_dec, "codec", "sdl_image" );
                     }
 
-                    p_pic = image_Read( p_image, p_block, &es_in, &fmt_out );
+                    p_pic = image_Read( p_image, p_block, &fmt_in, &fmt_out );
                     var_Destroy( p_dec, "codec" );
-                    es_format_Clean( &es_in );
-                    video_format_Clean( &fmt_out );
                 }
 
                 image_HandlerDelete( p_image );

@@ -39,17 +39,6 @@
 #include "common.h"
 #include "decoder.h"
 
-struct decoder_owner
-{
-    decoder_t dec;
-    decoder_t *packetizer;
-};
-
-static inline struct decoder_owner *dec_get_owner(decoder_t *dec)
-{
-    return container_of(dec, struct decoder_owner, dec);
-}
-
 static picture_t *video_new_buffer_decoder(decoder_t *dec)
 {
     return picture_NewFromFormat(&dec->fmt_out.video);
@@ -62,34 +51,50 @@ static subpicture_t *spu_new_buffer_decoder(decoder_t *dec,
     return subpicture_New (p_subpic);
 }
 
-static void queue_video(decoder_t *dec, picture_t *pic)
+static int video_update_format_decoder(decoder_t *dec)
+{
+    (void) dec;
+    return 0;
+}
+static int queue_video(decoder_t *dec, picture_t *pic)
 {
     (void) dec;
     picture_Release(pic);
+    return 0;
 }
 
-static void queue_audio(decoder_t *dec, block_t *p_block)
+static int queue_audio(decoder_t *dec, block_t *p_block)
 {
     (void) dec;
     block_Release(p_block);
+    return 0;
 }
-static void queue_cc(decoder_t *dec, block_t *p_block, const decoder_cc_desc_t *desc)
+static int queue_cc(decoder_t *dec, block_t *p_block, const decoder_cc_desc_t *desc)
 {
     (void) dec; (void) desc;
     block_Release(p_block);
+    return 0;
 }
-static void queue_sub(decoder_t *dec, subpicture_t *p_subpic)
+static int queue_sub(decoder_t *dec, subpicture_t *p_subpic)
 {
     (void) dec;
     subpicture_Delete(p_subpic);
+    return 0;
 }
 
 static int decoder_load(decoder_t *decoder, bool is_packetizer,
                          const es_format_t *restrict fmt)
 {
-    decoder_Init( decoder, fmt );
-
     decoder->b_frame_drop_allowed = true;
+    decoder->i_extra_picture_buffers = 0;
+
+    decoder->pf_decode = NULL;
+    decoder->pf_get_cc = NULL;
+    decoder->pf_packetize = NULL;
+    decoder->pf_flush = NULL;
+
+    es_format_Copy(&decoder->fmt_in, fmt);
+    es_format_Init(&decoder->fmt_out, fmt->i_cat, 0);
 
     if (!is_packetizer)
     {
@@ -106,18 +111,36 @@ static int decoder_load(decoder_t *decoder, bool is_packetizer,
 
     if (!decoder->p_module)
     {
-        decoder_Clean( decoder );
+        es_format_Clean(&decoder->fmt_in);
         return VLC_EGENERIC;
     }
     return VLC_SUCCESS;
 }
 
+static void decoder_unload(decoder_t *decoder)
+{
+    if (decoder->p_module != NULL)
+    {
+        module_unneed(decoder, decoder->p_module);
+        decoder->p_module = NULL;
+        es_format_Clean(&decoder->fmt_out);
+    }
+    es_format_Clean(&decoder->fmt_in);
+    if (decoder->p_description)
+    {
+        vlc_meta_Delete(decoder->p_description);
+        decoder->p_description = NULL;
+    }
+}
+
 void test_decoder_destroy(decoder_t *decoder)
 {
-    struct decoder_owner *owner = dec_get_owner(decoder);
+    decoder_t *packetizer = (void *) decoder->p_owner;
 
-    decoder_Destroy(owner->packetizer);
-    decoder_Destroy(decoder);
+    decoder_unload(packetizer);
+    decoder_unload(decoder);
+    vlc_object_release(packetizer);
+    vlc_object_release(decoder);
 }
 
 decoder_t *test_decoder_create(vlc_object_t *parent, const es_format_t *fmt)
@@ -127,77 +150,40 @@ decoder_t *test_decoder_create(vlc_object_t *parent, const es_format_t *fmt)
     decoder_t *decoder = NULL;
 
     packetizer = vlc_object_create(parent, sizeof(*packetizer));
-    struct decoder_owner *owner = vlc_object_create(parent, sizeof(*owner));
+    decoder = vlc_object_create(parent, sizeof(*decoder));
 
-    if (packetizer == NULL || owner == NULL)
+    if (packetizer == NULL || decoder == NULL)
     {
         if (packetizer)
-            vlc_object_delete(packetizer);
+            vlc_object_release(packetizer);
         return NULL;
     }
-    decoder = &owner->dec;
-    owner->packetizer = packetizer;
 
-    static const struct decoder_owner_callbacks dec_video_cbs =
-    {
-        .video = {
-            .buffer_new = video_new_buffer_decoder,
-            .queue = queue_video,
-            .queue_cc = queue_cc,
-        },
-    };
-    static const struct decoder_owner_callbacks dec_audio_cbs =
-    {
-        .audio = {
-            .queue = queue_audio,
-        },
-    };
-    static const struct decoder_owner_callbacks dec_spu_cbs =
-    {
-        .spu = {
-            .buffer_new = spu_new_buffer_decoder,
-            .queue = queue_sub,
-        },
-    };
-
-    switch (fmt->i_cat)
-    {
-        case VIDEO_ES:
-            decoder->cbs = &dec_video_cbs;
-            break;
-        case AUDIO_ES:
-            decoder->cbs = &dec_audio_cbs;
-            break;
-        case SPU_ES:
-            decoder->cbs = &dec_spu_cbs;
-            break;
-        default:
-            vlc_object_delete(packetizer);
-            vlc_object_delete(decoder);
-            return NULL;
-    }
+    decoder->pf_vout_format_update = video_update_format_decoder;
+    decoder->pf_vout_buffer_new = video_new_buffer_decoder;
+    decoder->pf_spu_buffer_new = spu_new_buffer_decoder;
+    decoder->pf_queue_video = queue_video;
+    decoder->pf_queue_audio = queue_audio;
+    decoder->pf_queue_cc = queue_cc;
+    decoder->pf_queue_sub = queue_sub;
+    decoder->p_owner = (void *)packetizer;
 
     if (decoder_load(packetizer, true, fmt) != VLC_SUCCESS)
-    {
-        vlc_object_delete(packetizer);
-        vlc_object_delete(decoder);
-        return NULL;
-    }
+        goto end;
 
     if (decoder_load(decoder, false, &packetizer->fmt_out) != VLC_SUCCESS)
-    {
-        decoder_Destroy(packetizer);
-        vlc_object_delete(decoder);
-        return NULL;
-    }
+        goto end;
 
     return decoder;
+
+end:
+    test_decoder_destroy(decoder);
+    return NULL;
 }
 
 int test_decoder_process(decoder_t *decoder, block_t *p_block)
 {
-    struct decoder_owner *owner = dec_get_owner(decoder);
-    decoder_t *packetizer = owner->packetizer;
+    decoder_t *packetizer = (void *) decoder->p_owner;
 
     /* This case can happen if a decoder reload failed */
     if (decoder->p_module == NULL)
@@ -221,7 +207,7 @@ int test_decoder_process(decoder_t *decoder, block_t *p_block)
             decoder->pf_decode(decoder, NULL);
 
             /* Reload decoder */
-            decoder_Clean(decoder);
+            decoder_unload(decoder);
             if (decoder_load(decoder, false, &packetizer->fmt_out) != VLC_SUCCESS)
             {
                 block_ChainRelease(p_packetized_block);

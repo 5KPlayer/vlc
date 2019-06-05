@@ -2,6 +2,7 @@
  * param_eq.c:
  *****************************************************************************
  * Copyright © 2006 VLC authors and VideoLAN
+ * $Id: 9b984bec87c895908d999374ced8e552ef925865 $
  *
  * Authors: Antti Huovilainen
  *          Sigmund A. Helberg <dnumgis@videolan.org>
@@ -82,7 +83,7 @@ vlc_module_end ()
 /*****************************************************************************
  * Local prototypes
  *****************************************************************************/
-typedef struct
+struct filter_sys_t
 {
     /* Filter static config */
     float   f_lowf, f_lowgain;
@@ -94,7 +95,7 @@ typedef struct
     float   coeffs[5*5];
     /* State */
     float  *p_state;
-} filter_sys_t;
+};
 
 
 
@@ -154,9 +155,8 @@ static int Open( vlc_object_t *p_this )
 static void Close( vlc_object_t *p_this )
 {
     filter_t *p_filter = (filter_t *)p_this;
-    filter_sys_t *p_sys = p_filter->p_sys;
-    free( p_sys->p_state );
-    free( p_sys );
+    free( p_filter->p_sys->p_state );
+    free( p_filter->p_sys );
 }
 
 /*****************************************************************************
@@ -166,11 +166,10 @@ static void Close( vlc_object_t *p_this )
  *****************************************************************************/
 static block_t *DoWork( filter_t * p_filter, block_t * p_in_buf )
 {
-    filter_sys_t *p_sys = p_filter->p_sys;
     ProcessEQ( (float*)p_in_buf->p_buffer, (float*)p_in_buf->p_buffer,
-               p_sys->p_state,
+               p_filter->p_sys->p_state,
                p_filter->fmt_in.audio.i_channels, p_in_buf->i_nb_samples,
-               p_sys->coeffs, 5 );
+               p_filter->p_sys->coeffs, 5 );
     return p_in_buf;
 }
 

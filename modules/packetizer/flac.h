@@ -35,7 +35,7 @@ struct flac_stream_info
 
 struct flac_header_info
 {
-    vlc_tick_t i_pts;
+    mtime_t i_pts;
     unsigned i_rate;
     unsigned i_channels;
     unsigned i_bits_per_sample;
@@ -260,9 +260,9 @@ static inline int FLAC_ParseSyncInfo(const uint8_t *p_buf,
 
     /* Compute from frame absolute time */
     if ( (p_buf[1] & 0x01) == 0  ) /* Fixed blocksize stream / Frames */
-        h->i_pts = VLC_TICK_0 + vlc_tick_from_samples(blocksize * i_fsnumber, samplerate);
+        h->i_pts = VLC_TS_0 + CLOCK_FREQ * blocksize * i_fsnumber / samplerate;
     else /* Variable blocksize stream / Samples */
-        h->i_pts = VLC_TICK_0 + vlc_tick_from_samples(i_fsnumber, samplerate);
+        h->i_pts = VLC_TS_0 + CLOCK_FREQ * i_fsnumber / samplerate;
 
     h->i_bits_per_sample = bits_per_sample;
     h->i_rate = samplerate;

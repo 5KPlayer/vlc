@@ -2,6 +2,7 @@
  * vlc_es_out.h: es_out (demuxer output) descriptor, queries and methods
  *****************************************************************************
  * Copyright (C) 1999-2004 VLC authors and VideoLAN
+ * $Id: fe53c2a3d34f76eec76d83032cd0d3111be915aa $
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *
@@ -36,8 +37,8 @@ enum es_out_query_e
 {
     /* set or change the selected ES in its category (audio/video/spu) */
     ES_OUT_SET_ES,      /* arg1= es_out_id_t*                   */
-    ES_OUT_UNSET_ES,    /* arg1= es_out_id_t* res=can fail      */
     ES_OUT_RESTART_ES,  /* arg1= es_out_id_t*                   */
+    ES_OUT_RESTART_ALL_ES, /* Deprecated, no effect */
 
     /* set 'default' tag on ES (copied across from container) */
     ES_OUT_SET_ES_DEFAULT, /* arg1= es_out_id_t*                */
@@ -59,13 +60,12 @@ enum es_out_query_e
      * XXX: if you want PREROLL just call ES_OUT_SET_NEXT_DISPLAY_TIME and send
      * as you would normally do.
      */
-    ES_OUT_SET_PCR,             /* arg1=vlc_tick_t i_pcr(microsecond!) (using default group 0)*/
-    ES_OUT_SET_GROUP_PCR,       /* arg1= int i_group, arg2=vlc_tick_t i_pcr(microsecond!)*/
+    ES_OUT_SET_PCR,             /* arg1=int64_t i_pcr(microsecond!) (using default group 0)*/
+    ES_OUT_SET_GROUP_PCR,       /* arg1= int i_group, arg2=int64_t i_pcr(microsecond!)*/
     ES_OUT_RESET_PCR,           /* no arg */
 
-    /* This will update the fmt, drain and restart the decoder (if any).
-     * The new fmt must have the same i_cat and i_id. */
-    ES_OUT_SET_ES_FMT,         /* arg1= es_out_id_t* arg2=es_format_t* res=can fail */
+    /* Try not to use this one as it is a bit hacky */
+    ES_OUT_SET_ES_FMT,         /* arg1= es_out_id_t* arg2=es_format_t* */
 
     /* Allow preroll of data (data with dts/pts < i_pts for all ES will be decoded but not displayed */
     ES_OUT_SET_NEXT_DISPLAY_TIME,       /* arg1=int64_t i_pts(microsecond) */
@@ -93,24 +93,10 @@ enum es_out_query_e
     ES_OUT_SET_META, /* arg1=const vlc_meta_t * */
 
     /* PCR system clock manipulation for external clock synchronization */
-    ES_OUT_GET_PCR_SYSTEM, /* arg1=vlc_tick_t *, arg2=vlc_tick_t * res=can fail */
-    ES_OUT_MODIFY_PCR_SYSTEM, /* arg1=int is_absolute, arg2=vlc_tick_t, res=can fail */
+    ES_OUT_GET_PCR_SYSTEM, /* arg1=mtime_t *, arg2=mtime_t * res=can fail */
+    ES_OUT_MODIFY_PCR_SYSTEM, /* arg1=int is_absolute, arg2=mtime_t, res=can fail */
 
     ES_OUT_POST_SUBNODE, /* arg1=input_item_node_t *, res=can fail */
-
-    ES_OUT_VOUT_SET_MOUSE_EVENT, /* arg1= es_out_id_t* (video es),
-                                    arg2=vlc_mouse_event, arg3=void *(user_data),
-                                    res=can fail */
-
-    ES_OUT_VOUT_ADD_OVERLAY, /* arg1= es_out_id_t* (video es),
-                              * arg2= subpicture_t *,
-                              * arg3= int * (channel id), res= can fail */
-
-    ES_OUT_VOUT_FLUSH_OVERLAY, /* arg1= es_out_id_t* (video es),
-                                * arg2= int (channel id), res= can fail */
-
-    ES_OUT_SPU_SET_HIGHLIGHT, /* arg1= es_out_id_t* (spu es),
-                                 arg2= const vlc_spu_highlight_t *, res=can fail  */
 
     /* First value usable for private control */
     ES_OUT_PRIVATE_START = 0x10000,
@@ -122,40 +108,37 @@ enum es_out_policy_e
     ES_OUT_ES_POLICY_SIMULTANEOUS, /* Allows multiple ES per cat */
 };
 
-struct es_out_callbacks
-{
-    es_out_id_t *(*add)(es_out_t *, const es_format_t *);
-    int          (*send)(es_out_t *, es_out_id_t *, block_t *);
-    void         (*del)(es_out_t *, es_out_id_t *);
-    int          (*control)(es_out_t *, int query, va_list);
-    void         (*destroy)(es_out_t *);
-};
-
 struct es_out_t
 {
-    const struct es_out_callbacks *cbs;
+    es_out_id_t *(*pf_add)    ( es_out_t *, const es_format_t * );
+    int          (*pf_send)   ( es_out_t *, es_out_id_t *, block_t * );
+    void         (*pf_del)    ( es_out_t *, es_out_id_t * );
+    int          (*pf_control)( es_out_t *, int i_query, va_list );
+    void         (*pf_destroy)( es_out_t * );
+
+    es_out_sys_t    *p_sys;
 };
 
 VLC_USED
 static inline es_out_id_t * es_out_Add( es_out_t *out, const es_format_t *fmt )
 {
-    return out->cbs->add( out, fmt );
+    return out->pf_add( out, fmt );
 }
 
 static inline void es_out_Del( es_out_t *out, es_out_id_t *id )
 {
-    out->cbs->del( out, id );
+    out->pf_del( out, id );
 }
 
 static inline int es_out_Send( es_out_t *out, es_out_id_t *id,
                                block_t *p_block )
 {
-    return out->cbs->send( out, id, p_block );
+    return out->pf_send( out, id, p_block );
 }
 
 static inline int es_out_vaControl( es_out_t *out, int i_query, va_list args )
 {
-    return out->cbs->control( out, i_query, args );
+    return out->pf_control( out, i_query, args );
 }
 
 static inline int es_out_Control( es_out_t *out, int i_query, ... )
@@ -171,10 +154,10 @@ static inline int es_out_Control( es_out_t *out, int i_query, ... )
 
 static inline void es_out_Delete( es_out_t *p_out )
 {
-    p_out->cbs->destroy( p_out );
+    p_out->pf_destroy( p_out );
 }
 
-static inline int es_out_SetPCR( es_out_t *out, vlc_tick_t pcr )
+static inline int es_out_SetPCR( es_out_t *out, int64_t pcr )
 {
     return es_out_Control( out, ES_OUT_SET_PCR, pcr );
 }
@@ -184,11 +167,11 @@ static inline int es_out_ControlSetMeta( es_out_t *out, const vlc_meta_t *p_meta
     return es_out_Control( out, ES_OUT_SET_META, p_meta );
 }
 
-static inline int es_out_ControlGetPcrSystem( es_out_t *out, vlc_tick_t *pi_system, vlc_tick_t *pi_delay )
+static inline int es_out_ControlGetPcrSystem( es_out_t *out, mtime_t *pi_system, mtime_t *pi_delay )
 {
     return es_out_Control( out, ES_OUT_GET_PCR_SYSTEM, pi_system, pi_delay );
 }
-static inline int es_out_ControlModifyPcrSystem( es_out_t *out, bool b_absolute, vlc_tick_t i_system )
+static inline int es_out_ControlModifyPcrSystem( es_out_t *out, bool b_absolute, mtime_t i_system )
 {
     return es_out_Control( out, ES_OUT_MODIFY_PCR_SYSTEM, b_absolute, i_system );
 }

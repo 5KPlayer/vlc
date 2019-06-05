@@ -2,6 +2,7 @@
  * gather.c: gathering stream output module
  *****************************************************************************
  * Copyright (C) 2003-2004 VLC authors and VideoLAN
+ * $Id: 2adfbab332933fc93c72bef2a5f8ed0496079e77 $
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *
@@ -30,6 +31,7 @@
 
 #include <vlc_common.h>
 #include <vlc_plugin.h>
+#include <vlc_input.h>
 #include <vlc_sout.h>
 #include <vlc_block.h>
 
@@ -49,24 +51,24 @@ vlc_module_end ()
 /*****************************************************************************
  * Exported prototypes
  *****************************************************************************/
-static void *Add( sout_stream_t *, const es_format_t * );
-static void  Del( sout_stream_t *, void * );
-static int   Send( sout_stream_t *, void *, block_t * );
+static sout_stream_id_sys_t *Add ( sout_stream_t *, const es_format_t * );
+static void              Del ( sout_stream_t *, sout_stream_id_sys_t * );
+static int               Send( sout_stream_t *, sout_stream_id_sys_t *, block_t* );
 
-typedef struct
+struct sout_stream_id_sys_t
 {
     bool    b_used;
     bool    b_streamswap;
 
     es_format_t fmt;
     void          *id;
-} sout_stream_id_sys_t;
+};
 
-typedef struct
+struct sout_stream_sys_t
 {
     int              i_id;
     sout_stream_id_sys_t **id;
-} sout_stream_sys_t;
+};
 
 /*****************************************************************************
  * Open:
@@ -119,7 +121,7 @@ static void Close( vlc_object_t * p_this )
 /*****************************************************************************
  * Add:
  *****************************************************************************/
-static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
+static sout_stream_id_sys_t * Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
 {
     sout_stream_sys_t *p_sys = p_stream->p_sys;
     sout_stream_id_sys_t  *id;
@@ -195,19 +197,18 @@ static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
 /*****************************************************************************
  * Del:
  *****************************************************************************/
-static void Del( sout_stream_t *p_stream, void *_id )
+static void Del( sout_stream_t *p_stream, sout_stream_id_sys_t *id )
 {
     VLC_UNUSED(p_stream);
-    sout_stream_id_sys_t *id = (sout_stream_id_sys_t *)_id;
     id->b_used = false;
 }
 
 /*****************************************************************************
  * Send:
  *****************************************************************************/
-static int Send( sout_stream_t *p_stream, void *_id, block_t *p_buffer )
+static int Send( sout_stream_t *p_stream,
+                 sout_stream_id_sys_t *id, block_t *p_buffer )
 {
-    sout_stream_id_sys_t *id = (sout_stream_id_sys_t *)_id;
     if ( id->b_streamswap )
     {
         id->b_streamswap = false;

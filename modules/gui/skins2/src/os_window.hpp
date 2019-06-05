@@ -2,6 +2,7 @@
  * os_window.hpp
  *****************************************************************************
  * Copyright (C) 2003 the VideoLAN team
+ * $Id: ced1e3553e74739168c2f1343d0b57b210cd811f $
  *
  * Authors: Cyril Deguet     <asmax@via.ecp.fr>
  *          Olivier Teulière <ipkiss@via.ecp.fr>
@@ -56,10 +57,10 @@ public:
     virtual void toggleOnTop( bool onTop ) const = 0;
 
     /// getter for handler
-    virtual void setOSHandle( vout_window_t* pWnd ) const = 0;
+    virtual vlc_wnd_type getOSHandle( ) const = 0;
 
     /// reparent the window
-    virtual void reparent( OSWindow *window,
+    virtual void reparent( vlc_wnd_type OSHandle,
                            int x, int y, int w, int h ) = 0;
 
     /// updateWindow (tell the OS we need to update the window)

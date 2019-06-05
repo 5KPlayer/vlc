@@ -2,6 +2,7 @@
  * stream_io_callback.hpp : matroska demuxer
  *****************************************************************************
  * Copyright (C) 2003-2004 VLC authors and VideoLAN
+ * $Id: d2c72a4214ebbe3d3b9009a4a61acd2d22fcec9f $
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *          Steve Lhomme <steve.lhomme@free.fr>
@@ -20,21 +21,7 @@
  * along with this program; if not, write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-
-#ifndef VLC_MKV_STREAM_IO_CALLBACK_HPP_
-#define VLC_MKV_STREAM_IO_CALLBACK_HPP_
-
-#ifdef HAVE_CONFIG_H
-# include "config.h"
-#endif
-
-#include <vlc_demux.h>
-
-#include "ebml/IOCallback.h"
-
-using namespace LIBEBML_NAMESPACE;
-
-namespace mkv {
+#include "mkv.hpp"
 
 /*****************************************************************************
  * Stream managment
@@ -65,6 +52,3 @@ class vlc_stream_io_callback: public IOCallback
     uint64           toRead          ( void );
 };
 
-} // namespace
-
-#endif

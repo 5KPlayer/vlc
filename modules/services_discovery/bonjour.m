@@ -44,10 +44,10 @@ static void CloseRD( vlc_object_t * );
 VLC_SD_PROBE_HELPER( "Bonjour", N_("Bonjour Network Discovery"), SD_CAT_LAN )
 VLC_RD_PROBE_HELPER( "Bonjour_renderer", "Bonjour Renderer Discovery" )
 
-typedef struct services_discovery_sys_t
+struct services_discovery_sys_t
 {
     CFTypeRef _Nullable discoveryController;
-} services_discovery_sys_t;
+};
 
 struct vlc_renderer_discovery_sys
 {
@@ -423,9 +423,9 @@ static void CloseSD(vlc_object_t *p_this)
 static int OpenRD(vlc_object_t *p_this)
 {
     vlc_renderer_discovery_t *p_rd = (vlc_renderer_discovery_t *)p_this;
-    struct vlc_renderer_discovery_sys *p_sys = NULL;
+    vlc_renderer_discovery_sys *p_sys = NULL;
 
-    p_rd->p_sys = p_sys = calloc(1, sizeof(struct vlc_renderer_discovery_sys));
+    p_rd->p_sys = p_sys = calloc(1, sizeof(vlc_renderer_discovery_sys));
     if (!p_sys) {
         return VLC_ENOMEM;
     }
@@ -442,7 +442,7 @@ static int OpenRD(vlc_object_t *p_this)
 static void CloseRD(vlc_object_t *p_this)
 {
     vlc_renderer_discovery_t *p_rd = (vlc_renderer_discovery_t *)p_this;
-    struct vlc_renderer_discovery_sys *p_sys = p_rd->p_sys;
+    vlc_renderer_discovery_sys *p_sys = p_rd->p_sys;
 
     VLCNetServiceDiscoveryController *discoveryController = (__bridge VLCNetServiceDiscoveryController *)(p_sys->discoveryController);
     [discoveryController stopDiscovery];

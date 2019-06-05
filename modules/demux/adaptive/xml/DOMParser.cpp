@@ -66,11 +66,11 @@ bool    DOMParser::parse                    (bool b)
     if(!vlc_reader && !(vlc_reader = xml_ReaderCreate(stream, stream)))
         return false;
 
-    struct vlc_logger *const logger = vlc_reader->obj.logger;
+    const int i_flags = vlc_reader->obj.flags;
     if(!b)
-        vlc_reader->obj.logger = NULL;
+        vlc_reader->obj.flags |= OBJECT_FLAGS_QUIET;
     root = processNode(b);
-    vlc_reader->obj.logger = logger;
+    vlc_reader->obj.flags = i_flags;
     if ( root == NULL )
         return false;
 
@@ -84,9 +84,7 @@ bool DOMParser::reset(stream_t *s)
         return true;
     delete root;
     root = NULL;
-
-    xml_ReaderDelete(vlc_reader);
-    vlc_reader = xml_ReaderCreate(s, s);
+    vlc_reader = xml_ReaderReset(vlc_reader, s);
     return !!vlc_reader;
 }
 

@@ -1,98 +1,3 @@
-Changes between 3.0.x and 4.0.0-dev:
---------------------------------
-
-Platform support changes:
- * 4.0.x requires:
-     - Windows 7/2008 R2 or later (with KB2533623 installed)
-     - macOS 10.11 or later
-     - iOS 9 or later
-     - Android 4.1.x or later (API-16)
-     - GCC 5.0 or Clang 3.4 (or equivalent)
- * Windows on ARM is now supported
-
-Core:
- * new medialibrary
-
-Audio output:
- * ALSA: HDMI passthrough support.
-   Use --alsa-passthrough to configure S/PDIF or HDMI passthrough.
-
-Demuxer:
- * Support for HEIF image and grid image formats
- * Support for DASH WebM
- * Support for DVBSUB in mkv
- * Improved Bluray menus, clips and stream selection
- * Support chapters in mp3 files
-
-Codecs:
- * Support for experimental AV1 video encoding
- * WebVTT encoder
- * Remove iomx support for Android
- * WebP image decoding
- * Support for SMPTE-TT image profile
- * Support for 16-bit greyscale
- * Support IMM4 decoder
- * Improve 708 decoder
- * Support AGM decoder
-
-Access:
- * Enable SMB2 / SMB3 support on mobile ports with libsmb2
- * Added support for the RIST (Reliable Internet Stream Transport) Protocol
- * Added avaudiocapture module as a replacement for qtsound, which is removed now
- * Audio CD data tracks are now correctly detected and skipped
- * Deprecates Audio CD CDDB lookups in favor of more accurate Musicbrainz
-
-Access output:
- * Added support for the RIST (Reliable Internet Stream Transport) Protocol
-
-Video output:
- * Added X11 RENDER video output plugin
- * Remove aa plugin
- * Remove evas plugin
- * Remove omxil_vout plugin
- * Remove RealRTSP plugin
- * Remove Real demuxer plugin
-
-Video filter:
- * Update yadif
- * Remove remote OSD plugin
-
-Stream output:
- * New SDI output with improved audio and ancillary support.
-   Candidate for deprecation of decklink vout/aout modules.
- * Support for DLNA/UPNP renderers
-
-Service discovery:
- * Support Renderer discovery with avahi
-
-macOS:
- * Remove Growl notification support
- * Improved AppleScript API with support for playback modes, recording, rate
-
-appleOS:
- * Improved proxy configuration handling
-
-
-Changes between 3.0.6 and 3.0.7:
---------------------------------
-
-Access:
- * Improve Blu-ray support
-
-Audio output:
- * Fix pass-through on Android-23
-
-Video Output:
- * Fix 12 bits sources playback with Direct3D11
- * Fix crash on iOS
-
-Stream Output:
- * Improve Chromecast support with new ChromeCast apps
-
-Misc:
- * Update Youtube, Dailymotion, Vimeo scripts
-
-
 Changes between 3.0.5 and 3.0.6:
 --------------------------------
 
@@ -102,7 +7,6 @@ Core:
 Codec:
  * Add support for 12 bits decoding of AV1
  * Fix HDR support in AV1 when the container provides the metadata
-
 
 Changes between 3.0.4 and 3.0.5:
 --------------------------------
@@ -496,7 +400,6 @@ Access:
  * Improvements of cookie handling (share cookies between playlist items,
    domain / path matching, Secure cookies)
  * Support DVB-T2 on Windows BDA
- * Screen capture plugin for Wayland display
  * Support depayloading Opus from RTP
  * New UPnP access module, to list directories without infinite recursions
  * SMB/FTP/SFTP accesses can list directories

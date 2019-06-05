@@ -2,6 +2,7 @@
  * extension_thread.c: Extensions Manager, Threads manager (no Lua here)
  *****************************************************************************
  * Copyright (C) 2009-2010 VideoLAN and authors
+ * $Id: 7db1c0ba0794fb0ba471a52bcc1d4b02725e2a9b $
  *
  * Authors: Jean-Philippe André < jpeg # videolan.org >
  *
@@ -281,8 +282,7 @@ static void* Run( void *data )
         p_ext->p_sys->command = cmd->next;
         cmd->next = NULL; /* unlink command (for FreeCommands()) */
         // Create watch timer
-        vlc_timer_schedule( p_ext->p_sys->timer, false, WATCH_TIMER_PERIOD,
-                            VLC_TIMER_FIRE_ONCE );
+        vlc_timer_schedule( p_ext->p_sys->timer, false, WATCH_TIMER_PERIOD, 0 );
         vlc_mutex_unlock( &p_ext->p_sys->command_lock );
 
         /* Run command */
@@ -385,7 +385,7 @@ static void* Run( void *data )
             vlc_dialog_release( p_mgr, p_ext->p_sys->p_progress_id );
             p_ext->p_sys->p_progress_id = NULL;
         }
-        vlc_timer_disarm( p_ext->p_sys->timer );
+        vlc_timer_schedule( p_ext->p_sys->timer, false, 0, 0 );
     }
 
     vlc_mutex_unlock( &p_ext->p_sys->command_lock );

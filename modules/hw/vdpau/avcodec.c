@@ -23,7 +23,6 @@
 #endif
 
 #include <string.h>
-#include <stdatomic.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <assert.h>
@@ -35,6 +34,7 @@
 #include <vlc_plugin.h>
 #include <vlc_fourcc.h>
 #include <vlc_picture.h>
+#include <vlc_atomic.h>
 #include <vlc_xlib.h>
 #include "vlc_vdpau.h"
 #include "../../codec/avcodec/va.h"
@@ -92,7 +92,7 @@ static vlc_vdp_video_field_t *GetSurface(vlc_va_t *va)
 static int Lock(vlc_va_t *va, picture_t *pic, uint8_t **data)
 {
     vlc_vdp_video_field_t *field;
-    unsigned tries = (VLC_TICK_FROM_SEC(1) + VOUT_OUTMEM_SLEEP) / VOUT_OUTMEM_SLEEP;
+    unsigned tries = (CLOCK_FREQ + VOUT_OUTMEM_SLEEP) / VOUT_OUTMEM_SLEEP;
 
     while ((field = GetSurface(va)) == NULL)
     {
@@ -100,7 +100,7 @@ static int Lock(vlc_va_t *va, picture_t *pic, uint8_t **data)
             return VLC_ENOMEM;
         /* Pool empty. Wait for some time as in src/input/decoder.c.
          * XXX: Both this and the core should use a semaphore or a CV. */
-        vlc_tick_sleep(VOUT_OUTMEM_SLEEP);
+        msleep(VOUT_OUTMEM_SLEEP);
     }
 
     pic->context = &field->context;
@@ -109,7 +109,7 @@ static int Lock(vlc_va_t *va, picture_t *pic, uint8_t **data)
 }
 
 static int Open(vlc_va_t *va, AVCodecContext *avctx, enum PixelFormat pix_fmt,
-                const es_format_t *fmt, void *p_sys)
+                const es_format_t *fmt, picture_sys_t *p_sys)
 {
     if (pix_fmt != AV_PIX_FMT_VDPAU)
         return VLC_EGENERIC;
@@ -192,9 +192,10 @@ static int Open(vlc_va_t *va, AVCodecContext *avctx, enum PixelFormat pix_fmt,
                  i, refs);
 
     const char *infos;
-    if (vdp_get_information_string(sys->vdp, &infos) == VDP_STATUS_OK)
-        msg_Info(va, "Using %s", infos);
+    if (vdp_get_information_string(sys->vdp, &infos) != VDP_STATUS_OK)
+        infos = "VDPAU";
 
+    va->description = infos;
     va->get = Lock;
     return VLC_SUCCESS;
 

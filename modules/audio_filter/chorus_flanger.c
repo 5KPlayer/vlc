@@ -2,6 +2,7 @@
  * chorus_flanger: Basic chorus/flanger/delay audio filter
  *****************************************************************************
  * Copyright (C) 2009-12 VLC authors and VideoLAN
+ * $Id: 0fe19c208f9b25753dd2994052892da74a5bf768 $
  *
  * Authors: Srikanth Raju < srikiraju at gmail dot com >
  *          Sukrit Sangwan < sukritsangwan at gmail dot com >
@@ -36,8 +37,6 @@
 /*****************************************************************************
  * Local prototypes
  *****************************************************************************/
-
-typedef struct filter_sys_t filter_sys_t;
 
 static int  Open     ( vlc_object_t * );
 static void Close    ( vlc_object_t * );

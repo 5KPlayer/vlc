@@ -2,6 +2,7 @@
  * vlc_es.h: Elementary stream formats descriptions
  *****************************************************************************
  * Copyright (C) 1999-2012 VLC authors and VideoLAN
+ * $Id: c03fca394aeef77ad642defe241bd5a5ffe5d53d $
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *
@@ -25,6 +26,7 @@
 
 #include <vlc_common.h>
 #include <vlc_fourcc.h>
+#include <vlc_text_style.h>
 #include <vlc_viewpoint.h>
 
 /**
@@ -153,20 +155,6 @@ struct audio_format_t
 /* Maximum number of unmapped channels */
 #define INPUT_CHAN_MAX              64
 
-static const uint16_t vlc_chan_maps[] =
-{
-    0,
-    AOUT_CHAN_CENTER,
-    AOUT_CHANS_2_0,
-    AOUT_CHANS_3_0,
-    AOUT_CHANS_4_0,
-    AOUT_CHANS_5_0,
-    AOUT_CHANS_5_1,
-    AOUT_CHANS_7_0,
-    AOUT_CHANS_7_1,
-    AOUT_CHANS_8_1,
-};
-
 /* Values available for i_chan_mode only */
 #define AOUT_CHANMODE_DUALMONO    0x1
 #define AOUT_CHANMODE_DOLBYSTEREO 0x2
@@ -243,8 +231,6 @@ typedef enum video_multiview_mode_t
 
     /* Checkerboard pattern with left eye first. */
     MULTIVIEW_STEREO_CHECKERBOARD,
-
-#define MULTIVIEW_STEREO_MAX  MULTIVIEW_STEREO_CHECKERBOARD
 } video_multiview_mode_t;
 
 /**
@@ -333,15 +319,6 @@ typedef enum video_chroma_location_t
 #define CHROMA_LOCATION_MAX CHROMA_LOCATION_BOTTOM_CENTER
 } video_chroma_location_t;
 
-typedef enum video_color_range_t
-{
-    COLOR_RANGE_UNDEF,
-    COLOR_RANGE_FULL,
-    COLOR_RANGE_LIMITED,
-#define COLOR_RANGE_STUDIO COLOR_RANGE_LIMITED
-#define COLOR_RANGE_MAX    COLOR_RANGE_LIMITED
-} video_color_range_t;
-
 /**
  * video format description
  */
@@ -365,17 +342,18 @@ struct video_format_t
     unsigned int i_frame_rate_base;              /**< frame rate denominator */
 
     uint32_t i_rmask, i_gmask, i_bmask;      /**< color masks for RGB chroma */
+    int i_rrshift, i_lrshift;
+    int i_rgshift, i_lgshift;
+    int i_rbshift, i_lbshift;
     video_palette_t *p_palette;              /**< video palette from demuxer */
     video_orientation_t orientation;                /**< picture orientation */
     video_color_primaries_t primaries;                  /**< color primaries */
     video_transfer_func_t transfer;                   /**< transfer function */
     video_color_space_t space;                        /**< YCbCr color space */
-    video_color_range_t color_range;            /**< 0-255 instead of 16-235 */
+    bool b_color_range_full;                    /**< 0-255 instead of 16-235 */
     video_chroma_location_t chroma_location;      /**< YCbCr chroma location */
 
     video_multiview_mode_t multiview_mode;        /** Multiview mode, 2D, 3D */
-    bool b_multiview_right_eye_first;   /** Multiview left or right eye first*/
-    bool b_multiview_left_eye;
 
     video_projection_mode_t projection_mode;            /**< projection mode */
     vlc_viewpoint_t pose;
@@ -451,14 +429,6 @@ static inline void video_format_AdjustColorSpace( video_format_t *p_fmt )
         else
             p_fmt->space = COLOR_SPACE_BT601;
     }
-
-    if ( p_fmt->color_range == COLOR_RANGE_UNDEF )
-    {
-        if ( vlc_fourcc_IsYUV(p_fmt->i_chroma) )
-            p_fmt->color_range = COLOR_RANGE_LIMITED;
-        else
-            p_fmt->color_range = COLOR_RANGE_FULL;
-    }
 }
 
 /**
@@ -483,14 +453,6 @@ VLC_API void video_format_Setup( video_format_t *, vlc_fourcc_t i_chroma,
  * It will copy the crop properties from a video_format_t to another.
  */
 VLC_API void video_format_CopyCrop( video_format_t *, const video_format_t * );
-
-static inline void video_format_CopyCropAr(video_format_t *dst,
-                                           const video_format_t *src)
-{
-    video_format_CopyCrop(dst, src);
-    dst->i_sar_num = src->i_sar_num;
-    dst->i_sar_den = src->i_sar_den;
-}
 
 /**
  * It will compute the crop/ar properties when scaling.
@@ -582,6 +544,8 @@ struct subs_format_t
         /* Reorder depth of transport video, -1 for no reordering */
         int i_reorder_depth;
     } cc;
+
+    text_style_t *p_style; /* Default styles to use */
 };
 
 #define SPU_PALETTE_DEFINED  0xbeefbeef
@@ -700,42 +664,5 @@ static inline void es_format_Change( es_format_t *fmt, int i_cat, vlc_fourcc_t i
     es_format_Clean( fmt );
     es_format_Init( fmt, i_cat, i_codec );
 }
-
-/**
- * Increase the ES track id reference count.
- *
- * Any held ES tracks must be released with vlc_es_id_Release().
- *
- * @param id pointer to the ES id
- * @return the same ES pointer, for convenience
- */
-VLC_API vlc_es_id_t *
-vlc_es_id_Hold(vlc_es_id_t *es);
-
-/**
- * Decrease the ES track id reference count.
- *
- * @param id pointer to the ES track id
- */
-VLC_API void
-vlc_es_id_Release(vlc_es_id_t *id);
-
-/**
- * Get the ES track input id
- *
- * @param id pointer to the ES track id
- * @return the ES track input id (always valid)
- */
-VLC_API int
-vlc_es_id_GetInputId(vlc_es_id_t *id);
-
-/**
- * Get the ES category
- *
- * @param id pointer to the ES track id
- * @return the es track category (always valid)
- */
-VLC_API enum es_format_category_e
-vlc_es_id_GetCat(vlc_es_id_t *id);
 
 #endif

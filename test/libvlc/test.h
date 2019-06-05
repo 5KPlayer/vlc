@@ -1,6 +1,7 @@
 /*
  * test.h - libvlc smoke test common definitions
  *
+ * $Id: 62e260fd89847a4690cfe40f73acae31ff0e2335 $
  */
 
 /**********************************************************************
@@ -40,7 +41,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <unistd.h>
-#include <signal.h>
+
 
 /*********************************************************************
  * Some useful global var
@@ -62,41 +63,12 @@ static const char test_default_video[] = SRCDIR"/samples/image.jpg";
  * Some useful common functions
  */
 
-#define test_log( ... ) printf( "testapi: " __VA_ARGS__ );
-
-static inline void on_timeout(int signum)
-{
-    assert(signum == SIGALRM);
-    abort(); /* Cause a core dump */
-}
+#define log( ... ) printf( "testapi: " __VA_ARGS__ );
 
 static inline void test_init (void)
 {
     (void)test_default_sample; /* This one may not be used */
-
-    /* Make sure "make check" does not get stuck */
-    /* Timeout of 10secs by default */
-    unsigned alarm_timeout = 10;
-    /* Valid timeout value are < 0, for infinite, and > 0, for the number of
-     * seconds */
-    char *alarm_timeout_str = getenv("VLC_TEST_TIMEOUT");
-    if (alarm_timeout_str)
-    {
-        int val = atoi(alarm_timeout_str);
-        if (val <= 0)
-            alarm_timeout = 0; /* infinite */
-        else
-            alarm_timeout = val;
-    }
-    if (alarm_timeout != 0)
-    {
-        struct sigaction sig = {
-            .sa_handler = on_timeout,
-        };
-        sigaction(SIGALRM, &sig, NULL);
-        alarm (alarm_timeout);
-    }
-
+    alarm (10); /* Make sure "make check" does not get stuck */
     setenv( "VLC_PLUGIN_PATH", "../modules", 1 );
 }
 

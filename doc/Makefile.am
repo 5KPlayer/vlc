@@ -2,6 +2,7 @@ NULL =
 
 LIBVLC_SAMPLES = \
 	libvlc/gtk_player.c \
+	libvlc/libvlc_DVD_ripper.c \
 	libvlc/QtPlayer/LICENSE \
 	libvlc/QtPlayer/main.cpp \
 	libvlc/QtPlayer/player.cpp \
@@ -37,8 +38,6 @@ CHANGELOGS = \
 	ChangeLog-2015 \
 	ChangeLog-2016 \
 	ChangeLog-2017 \
-	ChangeLog-2018 \
-	ChangeLog-2019 \
 	$(NULL)
 
 man1_MANS = \
@@ -84,7 +83,7 @@ $(CHANGELOGS): Makefile.am
 	fi
 
 # This one needs to be rebuilt all the time :)
-.PHONY: ChangeLog-2016 changelogs doc
+.PHONY: ChangeLog-2017 changelogs doc
 
 changelogs: $(CHANGELOGS)
 

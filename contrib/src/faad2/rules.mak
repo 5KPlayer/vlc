@@ -24,7 +24,6 @@ endif
 	$(APPLY) $(SRC)/faad2/faad2-fix-71wPCEmapping.patch
 	$(APPLY) $(SRC)/faad2/faad2-fix-cpe-reconstruction.patch
 	$(APPLY) $(SRC)/faad2/faad2-add-define.patch
-	$(APPLY) $(SRC)/faad2/faad2-fix-overflows.patch
 	cd $(UNPACK_DIR) && $(CC) -iquote . -E - </dev/null || sed -i 's/-iquote /-I/' libfaad/Makefile.am
 	$(MOVE)
 
@@ -33,5 +32,5 @@ endif
 	$(RECONF)
 	cd $< && $(HOSTVARS) ./configure --without-drm $(HOSTCONF)
 	cd $< && sed -i.orig "s/shrext_cmds/shrext/g" libtool
-	cd $< && $(MAKE) -C libfaad install
+	cd $</libfaad && $(MAKE) install
 	touch $@

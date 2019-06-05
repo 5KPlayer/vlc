@@ -25,6 +25,7 @@
 #import "coreaudio_common.h"
 
 #import <vlc_plugin.h>
+#import <vlc_memory.h>
 
 #import <CoreAudio/CoreAudioTypes.h>
 #import <Foundation/Foundation.h>
@@ -124,7 +125,7 @@ static const struct {
  * This structure is part of the audio output thread descriptor.
  * It describes the CoreAudio specific properties of an output thread.
  *****************************************************************************/
-typedef struct
+struct aout_sys_t
 {
     struct aout_sys_common c;
 
@@ -140,7 +141,7 @@ typedef struct
     /* sw gain */
     float               soft_gain;
     bool                soft_mute;
-} aout_sys_t;
+};
 
 /* Soft volume helper */
 #include "audio_output/volume.h"
@@ -203,7 +204,7 @@ static void
 avas_setPreferredNumberOfChannels(audio_output_t *p_aout,
                                   const audio_sample_format_t *fmt)
 {
-    aout_sys_t *p_sys = p_aout->sys;
+    struct aout_sys_t *p_sys = p_aout->sys;
 
     if (aout_BitsPerSample(fmt->i_format) == 0)
         return; /* Don't touch the number of channels for passthrough */
@@ -231,7 +232,7 @@ avas_setPreferredNumberOfChannels(audio_output_t *p_aout,
 static void
 avas_resetPreferredNumberOfChannels(audio_output_t *p_aout)
 {
-    aout_sys_t *p_sys = p_aout->sys;
+    struct aout_sys_t *p_sys = p_aout->sys;
     AVAudioSession *instance = p_sys->avInstance;
 
     if (p_sys->b_preferred_channels_set)
@@ -245,7 +246,7 @@ static int
 avas_GetOptimalChannelLayout(audio_output_t *p_aout, enum port_type *pport_type,
                              AudioChannelLayout **playout)
 {
-    aout_sys_t * p_sys = p_aout->sys;
+    struct aout_sys_t * p_sys = p_aout->sys;
     AVAudioSession *instance = p_sys->avInstance;
     AudioChannelLayout *layout = NULL;
     *pport_type = PORT_TYPE_DEFAULT;
@@ -330,7 +331,7 @@ avas_GetOptimalChannelLayout(audio_output_t *p_aout, enum port_type *pport_type,
 static int
 avas_SetActive(audio_output_t *p_aout, bool active, NSUInteger options)
 {
-    aout_sys_t * p_sys = p_aout->sys;
+    struct aout_sys_t * p_sys = p_aout->sys;
     AVAudioSession *instance = p_sys->avInstance;
     BOOL ret = false;
     NSError *error = nil;
@@ -364,9 +365,9 @@ avas_SetActive(audio_output_t *p_aout, bool active, NSUInteger options)
 #pragma mark actual playback
 
 static void
-Pause (audio_output_t *p_aout, bool pause, vlc_tick_t date)
+Pause (audio_output_t *p_aout, bool pause, mtime_t date)
 {
-    aout_sys_t * p_sys = p_aout->sys;
+    struct aout_sys_t * p_sys = p_aout->sys;
 
     /* We need to start / stop the audio unit here because otherwise the OS
      * won't believe us that we stopped the audio output so in case of an
@@ -409,34 +410,42 @@ Pause (audio_output_t *p_aout, bool pause, vlc_tick_t date)
      * that we loose 1-2 sec of audio when resuming. The order is important
      * here, ca_Flush need to be called when paused. */
     if (pause)
-        ca_Flush(p_aout);
+        ca_Flush(p_aout, false);
+}
+
+static void
+Flush(audio_output_t *p_aout, bool wait)
+{
+    struct aout_sys_t * p_sys = p_aout->sys;
+
+    ca_Flush(p_aout, wait);
 }
 
 static int
 MuteSet(audio_output_t *p_aout, bool mute)
 {
-    aout_sys_t * p_sys = p_aout->sys;
+    struct aout_sys_t * p_sys = p_aout->sys;
 
     p_sys->b_muted = mute;
     if (p_sys->au_unit != NULL)
     {
         Pause(p_aout, mute, 0);
         if (mute)
-            ca_Flush(p_aout);
+            ca_Flush(p_aout, false);
     }
 
     return VLC_SUCCESS;
 }
 
 static void
-Play(audio_output_t * p_aout, block_t * p_block, vlc_tick_t date)
+Play(audio_output_t * p_aout, block_t * p_block)
 {
-    aout_sys_t * p_sys = p_aout->sys;
+    struct aout_sys_t * p_sys = p_aout->sys;
 
     if (p_sys->b_muted)
         block_Release(p_block);
     else
-        ca_Play(p_aout, p_block, date);
+        ca_Play(p_aout, p_block);
 }
 
 #pragma mark initialization
@@ -444,7 +453,7 @@ Play(audio_output_t * p_aout, block_t * p_block, vlc_tick_t date)
 static void
 Stop(audio_output_t *p_aout)
 {
-    aout_sys_t   *p_sys = p_aout->sys;
+    struct aout_sys_t   *p_sys = p_aout->sys;
     OSStatus err;
 
     [[NSNotificationCenter defaultCenter] removeObserver:p_sys->aoutWrapper];
@@ -471,7 +480,7 @@ Stop(audio_output_t *p_aout)
 static int
 Start(audio_output_t *p_aout, audio_sample_format_t *restrict fmt)
 {
-    aout_sys_t *p_sys = p_aout->sys;
+    struct aout_sys_t *p_sys = p_aout->sys;
     OSStatus err;
     OSStatus status;
     AudioChannelLayout *layout = NULL;
@@ -533,7 +542,7 @@ Start(audio_output_t *p_aout, audio_sample_format_t *restrict fmt)
         ca_LogWarn("failed to set IO mode");
 
     ret = au_Initialize(p_aout, p_sys->au_unit, fmt, layout,
-                        vlc_tick_from_sec([p_sys->avInstance outputLatency]), NULL);
+                        [p_sys->avInstance outputLatency] * CLOCK_FREQ, NULL);
     if (ret != VLC_SUCCESS)
         goto error;
 
@@ -554,6 +563,7 @@ Start(audio_output_t *p_aout, audio_sample_format_t *restrict fmt)
     fmt->channel_type = AUDIO_CHANNEL_TYPE_BITMAP;
     p_aout->mute_set  = MuteSet;
     p_aout->pause = Pause;
+    p_aout->flush = Flush;
 
     aout_SoftVolumeStart( p_aout );
 

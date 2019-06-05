@@ -21,7 +21,7 @@
 #include <linux/videodev2.h>
 
 /* libv4l2 functions */
-extern int v4l2_fd_open(int, int);
+extern int (*v4l2_fd_open) (int, int);
 extern int (*v4l2_close) (int);
 extern int (*v4l2_ioctl) (int, unsigned long int, ...);
 extern ssize_t (*v4l2_read) (int, void *, size_t);
@@ -55,7 +55,7 @@ int StartUserPtr (vlc_object_t *, int);
 struct buffer_t *StartMmap (vlc_object_t *, int, uint32_t *);
 void StopMmap (int, struct buffer_t *, uint32_t);
 
-vlc_tick_t GetBufferPTS (const struct v4l2_buffer *);
+mtime_t GetBufferPTS (const struct v4l2_buffer *);
 block_t* GrabVideo (vlc_object_t *, int, const struct buffer_t *);
 
 #ifdef ZVBI_COMPILED

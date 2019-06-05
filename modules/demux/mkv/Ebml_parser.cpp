@@ -3,6 +3,7 @@
  * EbmlParser for the matroska demuxer
  *****************************************************************************
  * Copyright (C) 2003-2004 VLC authors and VideoLAN
+ * $Id: 4a9325bf2382c06d92b20f023e225e5f94c7b4c4 $
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *          Steve Lhomme <steve.lhomme@free.fr>
@@ -24,8 +25,6 @@
 
 #include "Ebml_parser.hpp"
 #include "stream_io_callback.hpp"
-
-namespace mkv {
 
 /*****************************************************************************
  * Ebml Stream parser
@@ -210,8 +209,7 @@ next:
 
         if( m_el[mi_level] == NULL )
         {
-            vlc_stream_io_callback *io_callback = dynamic_cast<vlc_stream_io_callback *>(&m_es->I_O());
-            if ( i_max_read != UINT64_MAX && io_callback != NULL && !io_callback->IsEOF() )
+            if ( i_max_read != UINT64_MAX && !static_cast<vlc_stream_io_callback *>(&m_es->I_O())->IsEOF() )
             {
                 msg_Dbg(p_demux, "found nothing, go up");
                 i_ulev = 1;
@@ -225,6 +223,8 @@ next:
         {
             if( !mb_keep )
             {
+                if( MKV_IS_ID( p_prev, KaxBlockVirtual ) )
+                    static_cast<KaxBlockVirtualWorkaround*>(p_prev)->Fix(); // !! WARNING : TODO !! this is undefined-behavior
                 delete p_prev;
                 p_prev = NULL;
             }
@@ -284,6 +284,8 @@ next:
             {
                 if( !mb_keep )
                 {
+                    if( MKV_IS_ID( p_prev, KaxBlockVirtual ) )
+                        static_cast<KaxBlockVirtualWorkaround*>(p_prev)->Fix(); // !! WARNING : TODO !! this is undefined-behavior
                     delete p_prev;
                     p_prev = NULL;
                 }
@@ -315,6 +317,8 @@ next:
             {
                 if( !mb_keep )
                 {
+                    if( MKV_IS_ID( p_prev, KaxBlockVirtual ) )
+                        static_cast<KaxBlockVirtualWorkaround*>(p_prev)->Fix(); // !! WARNING : TODO !! this is undefined-behavior
                     delete p_prev;
                     p_prev = NULL;
                 }
@@ -328,6 +332,8 @@ next:
     {
         if( !mb_keep )
         {
+            if( MKV_IS_ID( p_prev, KaxBlockVirtual ) )
+                static_cast<KaxBlockVirtualWorkaround*>(p_prev)->Fix();
             delete p_prev;
         }
         mb_keep = false;
@@ -345,4 +351,3 @@ bool EbmlParser::IsTopPresent( EbmlElement *el ) const
     return false;
 }
 
-} // namespace

@@ -24,16 +24,33 @@
 
 #include <stdio.h>
 #include <string.h>
-#include <pthread.h>
 #include <linux/limits.h>
 
 #include <vlc_common.h>
 #include "libvlc.h"
 #include "config/configuration.h"
 
-static char *config_GetLibDirRaw(void)
+char *config_GetLibDir (void)
 {
+    static struct
+    {
+        vlc_mutex_t lock;
+        char path[PATH_MAX];
+    } cache = {
+        VLC_STATIC_MUTEX, "",
+    };
+
+    /* Reading and parsing /proc/self/maps is slow, so cache the value since
+     * it's guaranteed not to change during the life-time of the process. */
+    vlc_mutex_lock(&cache.lock);
+    if (cache.path[0] != '\0')
+    {
+        char *ret = strdup(cache.path);
+        vlc_mutex_unlock(&cache.lock);
+        return ret;
+    }
     char *path = NULL;
+
     /* Find the path to libvlc (i.e. ourselves) */
     FILE *maps = fopen ("/proc/self/maps", "rte");
     if (maps == NULL)
@@ -65,7 +82,8 @@ static char *config_GetLibDirRaw(void)
             continue;
         *file = '\0';
 
-        path = strdup(dir);
+        if (asprintf (&path, "%s/"PACKAGE, dir) == -1)
+            path = NULL;
         break;
     }
 
@@ -73,26 +91,39 @@ static char *config_GetLibDirRaw(void)
     fclose (maps);
 error:
     if (path == NULL)
-        path = strdup(LIBDIR);
+        path = strdup(PKGLIBDIR);
+    if (likely(path != NULL && sizeof(cache.path) > strlen(path)))
+        strcpy(cache.path, path);
+    vlc_mutex_unlock(&cache.lock);
     return path;
 }
 
-static char cached_path[PATH_MAX] = LIBDIR;
-
-static void config_GetLibDirOnce(void)
+char *config_GetDataDir (void)
 {
-    char *path = config_GetLibDirRaw();
-    if (likely(path != NULL && sizeof (cached_path) > strlen(path)))
-        strcpy(cached_path, path);
-    free(path);
-}
+    const char *path = getenv ("VLC_DATA_PATH");
+    if (path != NULL)
+        return strdup (path);
 
-char *config_GetLibDir(void)
-{
-    static pthread_once_t once = PTHREAD_ONCE_INIT;
+    char *libdir = config_GetLibDir ();
+    if (libdir == NULL)
+        return NULL; /* OOM */
 
-    /* Reading and parsing /proc/self/maps is slow, so cache the value since
-     * it's guaranteed not to change during the life-time of the process. */
-    pthread_once(&once, config_GetLibDirOnce);
-    return strdup(cached_path);
+    char *datadir = NULL;
+
+    /* There are no clean ways to do this, are there?
+     * Due to multilibs, we cannot simply append ../share/. */
+    char *p = strstr (libdir, "/lib/");
+    if (p != NULL)
+    {
+        char *p2;
+        /* Deal with nested "lib" directories. Grmbl. */
+        while ((p2 = strstr (p + 4, "/lib/")) != NULL)
+            p = p2;
+        *p = '\0';
+
+        if (unlikely(asprintf (&datadir, "%s/share/"PACKAGE, libdir) == -1))
+            datadir = NULL;
+    }
+    free (libdir);
+    return (datadir != NULL) ? datadir : strdup (PKGDATADIR);
 }

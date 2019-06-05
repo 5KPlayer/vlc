@@ -14,11 +14,12 @@ pkginclude_HEADERS = \
 	../include/vlc/libvlc_events.h \
 	../include/vlc/libvlc_media.h \
 	../include/vlc/libvlc_media_discoverer.h \
+	../include/vlc/libvlc_media_library.h \
 	../include/vlc/libvlc_media_list.h \
 	../include/vlc/libvlc_media_list_player.h \
 	../include/vlc/libvlc_media_player.h \
+	../include/vlc/libvlc_vlm.h \
 	../include/vlc/libvlc_renderer_discoverer.h \
-	../include/vlc/libvlc_picture.h \
 	../include/vlc/vlc.h
 
 nodist_pkginclude_HEADERS = ../include/vlc/libvlc_version.h
@@ -34,7 +35,6 @@ libvlc_la_SOURCES = \
 	media_internal.h \
 	media_list_internal.h \
 	media_player_internal.h \
-	picture_internal.h \
 	renderer_discoverer_internal.h \
 	core.c \
 	dialog.c \
@@ -42,6 +42,7 @@ libvlc_la_SOURCES = \
 	error.c \
 	log.c \
 	playlist.c \
+	vlm.c \
 	video.c \
 	audio.c \
 	event.c \
@@ -50,15 +51,16 @@ libvlc_la_SOURCES = \
 	media_list.c \
 	media_list_path.h \
 	media_list_player.c \
-	media_discoverer.c \
-	picture.c
+	media_library.c \
+	media_discoverer.c
 EXTRA_DIST = libvlc.pc.in libvlc.sym ../include/vlc/libvlc_version.h.in
 
-libvlc_la_LIBADD = ../src/libvlccore.la ../compat/libcompat.la $(LIBM)
+libvlc_la_LIBADD = \
+	../src/libvlccore.la ../compat/libcompat.la $(LIBPTHREAD) $(LIBM)
 libvlc_la_LDFLAGS = \
 	$(LDFLAGS_libvlc) \
 	-no-undefined \
-	-version-info 12:0:0 \
+	-version-info 11:0:6 \
 	-export-symbols $(srcdir)/libvlc.sym
 libvlc_la_DEPENDENCIES = libvlc.sym
 if HAVE_WIN32

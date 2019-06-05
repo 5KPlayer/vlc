@@ -2,6 +2,7 @@
  * equalizer.c:
  *****************************************************************************
  * Copyright (C) 2004-2012 VLC authors and VideoLAN
+ * $Id: f83d4599caba5d237aac0627c89afc9f6f4c7649 $
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *
@@ -100,7 +101,7 @@ vlc_module_end ()
 /*****************************************************************************
  * Local prototypes
  *****************************************************************************/
-typedef struct
+struct filter_sys_t
 {
     /* Filter static config */
     int i_band;
@@ -122,7 +123,7 @@ typedef struct
     float y2[32][128][2];
 
     vlc_mutex_t lock;
-} filter_sys_t;
+};
 
 static block_t *DoWork( filter_t *, block_t * );
 
@@ -282,7 +283,7 @@ static int EqzInit( filter_t *p_filter, int i_rate )
     eqz_config_t cfg;
     int i, ch;
     vlc_value_t val1, val2, val3;
-    vlc_object_t *p_aout = vlc_object_parent(p_filter);
+    vlc_object_t *p_aout = p_filter->obj.parent;
     int i_ret = VLC_ENOMEM;
 
     bool b_vlcFreqs = var_InheritBool( p_aout, "equalizer-vlcfreqs" );
@@ -451,7 +452,7 @@ static void EqzFilter( filter_t *p_filter, float *out, float *in,
 static void EqzClean( filter_t *p_filter )
 {
     filter_sys_t *p_sys = p_filter->p_sys;
-    vlc_object_t *p_aout = vlc_object_parent(p_filter);
+    vlc_object_t *p_aout = p_filter->obj.parent;
 
     var_DelCallback( p_aout, "equalizer-bands", BandsCallback, p_sys );
     var_DelCallback( p_aout, "equalizer-preset", PresetCallback, p_sys );

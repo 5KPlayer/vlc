@@ -122,7 +122,7 @@ typedef struct hds_stream_s
 
 #define BITRATE_AS_BYTES_PER_SECOND 1024/8
 
-typedef struct
+struct stream_sys_t
 {
     char         *base_url;    /* URL common part for chunks */
     vlc_thread_t live_thread;
@@ -144,7 +144,7 @@ typedef struct
 
     bool         live;
     bool         closed;
-} stream_sys_t;
+};
 
 typedef struct _bootstrap_info {
     uint8_t* data;
@@ -207,7 +207,7 @@ vlc_module_begin()
     set_subcategory( SUBCAT_INPUT_STREAM_FILTER )
     set_description( N_("HTTP Dynamic Streaming") )
     set_shortname( "Dynamic Streaming")
-    set_capability( "stream_filter", 330 )
+    set_capability( "stream_filter", 30 )
     set_callbacks( Open, Close )
 vlc_module_end()
 
@@ -223,7 +223,7 @@ static inline bool isFQUrl( const char* url )
 static bool isHDS( stream_t *s )
 {
     const uint8_t *peek;
-    int i_size = vlc_stream_Peek( s->s, &peek, 200 );
+    int i_size = vlc_stream_Peek( s->p_source, &peek, 200 );
     if( i_size < 200 )
         return false;
 
@@ -1131,11 +1131,11 @@ static void* live_thread( void* p )
         }
     }
 
-    vlc_tick_t last_dl_start_time;
+    mtime_t last_dl_start_time;
 
     while( ! sys->closed )
     {
-        last_dl_start_time = vlc_tick_now();
+        last_dl_start_time = mdate();
         stream_t* download_stream = vlc_stream_NewURL( p_this, abst_url );
         if( ! download_stream )
         {
@@ -1167,9 +1167,7 @@ static void* live_thread( void* p )
             vlc_stream_Delete( download_stream );
         }
 
-        vlc_tick_wait( last_dl_start_time +
-                       vlc_tick_from_samples(hds_stream->fragment_runs[hds_stream->fragment_run_count-1].fragment_duration,
-                                             hds_stream->afrt_timescale) );
+        mwait( last_dl_start_time + ( ((int64_t)hds_stream->fragment_runs[hds_stream->fragment_run_count-1].fragment_duration) * 1000000LL) / ((int64_t)hds_stream->afrt_timescale) );
 
 
     }
@@ -1183,7 +1181,7 @@ static void* live_thread( void* p )
 static int init_Manifest( stream_t *s, manifest_t *m )
 {
     memset(m, 0, sizeof(*m));
-    stream_t *st = s->s;
+    stream_t *st = s->p_source;
 
     m->vlc_reader = xml_ReaderCreate( st, st );
     if( !m->vlc_reader )
@@ -1895,8 +1893,8 @@ static int Control( stream_t *s, int i_query, va_list args )
             *(va_arg( args, bool * )) = true;
             break;
         case STREAM_GET_PTS_DELAY:
-            *va_arg (args, vlc_tick_t *) = VLC_TICK_FROM_MS(
-                var_InheritInteger(s, "network-caching") );
+            *va_arg (args, int64_t *) = INT64_C(1000) *
+                var_InheritInteger(s, "network-caching");
              break;
         case STREAM_GET_SIZE:
             *(va_arg (args, uint64_t *)) = get_stream_size(s);

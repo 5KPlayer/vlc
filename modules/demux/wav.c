@@ -2,6 +2,7 @@
  * wav.c : wav file input module for vlc
  *****************************************************************************
  * Copyright (C) 2001-2008 VLC authors and VideoLAN
+ * $Id: fd1a3b4325b884c4baecc46eb5b6866e702e77f7 $
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *
@@ -61,7 +62,7 @@ vlc_module_end ()
 static int Demux  ( demux_t * );
 static int Control( demux_t *, int i_query, va_list args );
 
-typedef struct
+struct demux_sys_t
 {
     es_format_t     fmt;
     es_out_id_t     *p_es;
@@ -77,7 +78,7 @@ typedef struct
     uint32_t i_channel_mask;
     uint8_t i_chans_to_reorder;            /* do we need channel reordering */
     uint8_t pi_chan_table[AOUT_CHAN_MAX];
-} demux_sys_t;
+};
 
 static int ChunkFind( demux_t *, const char *, unsigned int * );
 
@@ -429,11 +430,9 @@ static int Open( vlc_object_t * p_this )
     }
 
     p_sys->p_es = es_out_Add( p_demux->out, &p_sys->fmt );
-    if( unlikely(p_sys->p_es == NULL) )
-        goto error;
 
     date_Init( &p_sys->pts, p_sys->fmt.audio.i_rate, 1 );
-    date_Set( &p_sys->pts, VLC_TICK_0 );
+    date_Set( &p_sys->pts, 1 );
 
     return VLC_SUCCESS;
 
@@ -461,7 +460,7 @@ static int Demux( demux_t *p_demux )
     {
         int64_t i_end = p_sys->i_data_pos + p_sys->i_data_size;
         if ( i_pos >= i_end )
-            return VLC_DEMUXER_EOF;  /* EOF */
+            return 0;  /* EOF */
 
         /* Don't read past data chunk boundary */
         if ( i_end < i_pos + i_read_size )
@@ -471,11 +470,11 @@ static int Demux( demux_t *p_demux )
     if( ( p_block = vlc_stream_Block( p_demux->s, i_read_size ) ) == NULL )
     {
         msg_Warn( p_demux, "cannot read data" );
-        return VLC_DEMUXER_EOF;
+        return 0;
     }
 
     p_block->i_dts =
-    p_block->i_pts = date_Get( &p_sys->pts );
+    p_block->i_pts = VLC_TS_0 + date_Get( &p_sys->pts );
 
     /* set PCR */
     es_out_SetPCR( p_demux->out, p_block->i_pts );
@@ -490,7 +489,7 @@ static int Demux( demux_t *p_demux )
 
     date_Increment( &p_sys->pts, p_sys->i_frame_samples );
 
-    return VLC_DEMUXER_SUCCESS;
+    return 1;
 }
 
 /*****************************************************************************

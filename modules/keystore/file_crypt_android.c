@@ -26,6 +26,7 @@
 #include <stdio.h>
 
 #include <vlc_common.h>
+#include <vlc_memory.h>
 #include <vlc_keystore.h>
 
 #include "file_crypt.h"

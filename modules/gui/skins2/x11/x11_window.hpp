@@ -2,6 +2,7 @@
  * x11_window.hpp
  *****************************************************************************
  * Copyright (C) 2003 the VideoLAN team
+ * $Id: c8ffa96e490d19f3ac15d58daf4b941ccef88c43 $
  *
  * Authors: Cyril Deguet     <asmax@via.ecp.fr>
  *          Olivier Teulière <ipkiss@via.ecp.fr>
@@ -29,8 +30,6 @@
 
 #include "../src/generic_window.hpp"
 #include "../src/os_window.hpp"
-
-#include <vlc_vout_window.h>
 
 class X11Display;
 class X11DragDrop;
@@ -68,16 +67,14 @@ public:
     /// Get the window ID
     Window getDrawable() const { return m_wnd; }
 
-    /// Set the window handler
-    void setOSHandle( vout_window_t *pWnd ) const {
-        pWnd->type = VOUT_WINDOW_TYPE_XID;
-        pWnd->info.has_double_click = true;
-        pWnd->handle.xid = m_wnd;
-        pWnd->display.x11 = NULL;
-    }
+    /// Getter for the handler
+    uint32_t getOSHandle() const { return m_wnd; }
+
+    /// Getter for the handler
+    uint32_t getParentOSHandle() const { return m_wnd_parent; }
 
     /// reparent the window
-    void reparent( OSWindow *parent, int x, int y, int w, int h );
+    void reparent( uint32_t OSHandle, int x, int y, int w, int h );
 
     /// invalidate a window surface
     bool invalidateRect( int x, int y, int w, int h ) const;

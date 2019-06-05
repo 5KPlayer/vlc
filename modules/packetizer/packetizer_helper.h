@@ -2,6 +2,7 @@
  * packetizer_helper.h: Packetizer helpers
  *****************************************************************************
  * Copyright (C) 2009 Laurent Aimar
+ * $Id: f7711895707b7eca77a8bbaee2f10fd4908224a6 $
  *
  * Authors: Laurent Aimar <fenrir _AT_ videolan _DOT_ org>
  *
@@ -32,11 +33,10 @@ enum
     STATE_HEADER,
     STATE_NEXT_SYNC,
     STATE_GET_DATA,
-    STATE_SEND_DATA,
-    STATE_CUSTOM_FIRST,
+    STATE_SEND_DATA
 };
 
-typedef void (*packetizer_reset_t)( void *p_private, bool b_flush );
+typedef void (*packetizer_reset_t)( void *p_private, bool b_broken );
 typedef block_t *(*packetizer_parse_t)( void *p_private, bool *pb_ts_used, block_t * );
 typedef int (*packetizer_validate_t)( void *p_private, block_t * );
 
@@ -115,10 +115,16 @@ static inline block_t *packetizer_Packetize( packetizer_t *p_pack, block_t **pp_
         if( p_drained )
             return p_drained;
 
+        const bool b_broken = !!( p_block->i_flags&BLOCK_FLAG_CORRUPTED );
         p_pack->i_state = STATE_NOSYNC;
         block_BytestreamEmpty( &p_pack->bytestream );
         p_pack->i_offset = 0;
-        p_pack->pf_reset( p_pack->p_private, false );
+        p_pack->pf_reset( p_pack->p_private, b_broken );
+        if( b_broken )
+        {
+            block_Release( p_block );
+            return NULL;
+        }
     }
 
     if( p_block )
@@ -166,8 +172,7 @@ static inline block_t *packetizer_Packetize( packetizer_t *p_pack, block_t **pp_
                                        NULL, &p_pack->i_offset, NULL );
                 p_pack->i_offset -= p_pack->bytestream.i_block_offset;
 
-                if( p_pack->i_offset <= (size_t)p_pack->i_startcode &&
-                    (p_pack->bytestream.p_block->i_flags & BLOCK_FLAG_AU_END) == 0 )
+                if( p_pack->i_offset <= (size_t)p_pack->i_startcode )
                     return NULL;
             }
 
@@ -179,13 +184,6 @@ static inline block_t *packetizer_Packetize( packetizer_t *p_pack, block_t **pp_
             p_pic = block_Alloc( p_pack->i_offset + p_pack->i_au_prepend );
             p_pic->i_pts = p_block_bytestream->i_pts;
             p_pic->i_dts = p_block_bytestream->i_dts;
-
-            /* Do not wait for next sync code if notified block ends AU */
-            if( (p_block_bytestream->i_flags & BLOCK_FLAG_AU_END) &&
-                 p_block_bytestream->i_buffer == p_pack->i_offset )
-            {
-                p_pic->i_flags |= BLOCK_FLAG_AU_END;
-            }
 
             block_GetBytes( &p_pack->bytestream, &p_pic->p_buffer[p_pack->i_au_prepend],
                             p_pic->i_buffer - p_pack->i_au_prepend );
@@ -205,8 +203,8 @@ static inline block_t *packetizer_Packetize( packetizer_t *p_pack, block_t **pp_
                 p_pic = p_pack->pf_parse( p_pack->p_private, &b_used_ts, p_pic );
                 if( b_used_ts )
                 {
-                    p_block_bytestream->i_dts = VLC_TICK_INVALID;
-                    p_block_bytestream->i_pts = VLC_TICK_INVALID;
+                    p_block_bytestream->i_dts = VLC_TS_INVALID;
+                    p_block_bytestream->i_pts = VLC_TS_INVALID;
                 }
             }
 

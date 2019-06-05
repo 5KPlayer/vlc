@@ -2,6 +2,7 @@
  * cache.c: Plugins cache
  *****************************************************************************
  * Copyright (C) 2001-2007 VLC authors and VideoLAN
+ * $Id: a9ce8efa9fc06ac1a333a10af9a5f00571afbaca $
  *
  * Authors: Sam Hocevar <sam@zoy.org>
  *          Ethan C. Baldridge <BaldridgeE@cadmus.com>
@@ -56,7 +57,7 @@
 #ifdef HAVE_DYNAMIC_PLUGINS
 /* Sub-version number
  * (only used to avoid breakage in dev version when cache structure changes) */
-#define CACHE_SUBVERSION_NUM 35
+#define CACHE_SUBVERSION_NUM 34
 
 /* Cache filename */
 #define CACHE_NAME "plugins.dat"
@@ -182,6 +183,7 @@ static int vlc_cache_load_config(module_config_t *cfg, block_t *file)
 {
     LOAD_IMMEDIATE (cfg->i_type);
     LOAD_IMMEDIATE (cfg->i_short);
+    LOAD_FLAG (cfg->b_advanced);
     LOAD_FLAG (cfg->b_internal);
     LOAD_FLAG (cfg->b_unsaveable);
     LOAD_FLAG (cfg->b_safe);
@@ -373,7 +375,7 @@ vlc_plugin_t *vlc_cache_load(vlc_object_t *p_this, const char *dir,
     assert( dir != NULL );
 
     if( asprintf( &psz_filename, "%s"DIR_SEP CACHE_NAME, dir ) == -1 )
-        return NULL;
+        return 0;
 
     msg_Dbg( p_this, "loading plugins cache file %s", psz_filename );
 
@@ -383,7 +385,7 @@ vlc_plugin_t *vlc_cache_load(vlc_object_t *p_this, const char *dir,
                  vlc_strerror_c(errno));
     free(psz_filename);
     if (file == NULL)
-        return NULL;
+        return 0;
 
     /* Check the file is a plugins cache */
     char cachestr[sizeof (CACHE_STRING) - 1];
@@ -393,7 +395,7 @@ vlc_plugin_t *vlc_cache_load(vlc_object_t *p_this, const char *dir,
     {
         msg_Warn( p_this, "This doesn't look like a valid plugins cache" );
         block_Release(file);
-        return NULL;
+        return 0;
     }
 
 #ifdef DISTRO_VERSION
@@ -405,7 +407,7 @@ vlc_plugin_t *vlc_cache_load(vlc_object_t *p_this, const char *dir,
     {
         msg_Warn( p_this, "This doesn't look like a valid plugins cache" );
         block_Release(file);
-        return NULL;
+        return 0;
     }
 #endif
 
@@ -418,7 +420,7 @@ vlc_plugin_t *vlc_cache_load(vlc_object_t *p_this, const char *dir,
         msg_Warn( p_this, "This doesn't look like a valid plugins cache "
                   "(corrupted header)" );
         block_Release(file);
-        return NULL;
+        return 0;
     }
 
     /* Check header marker */
@@ -433,7 +435,7 @@ vlc_plugin_t *vlc_cache_load(vlc_object_t *p_this, const char *dir,
         msg_Warn( p_this, "This doesn't look like a valid plugins cache "
                   "(corrupted header)" );
         block_Release(file);
-        return NULL;
+        return 0;
     }
 
     vlc_plugin_t *cache = NULL;
@@ -514,6 +516,7 @@ static int CacheSaveConfig (FILE *file, const module_config_t *cfg)
 {
     SAVE_IMMEDIATE (cfg->i_type);
     SAVE_IMMEDIATE (cfg->i_short);
+    SAVE_FLAG (cfg->b_advanced);
     SAVE_FLAG (cfg->b_internal);
     SAVE_FLAG (cfg->b_unsaveable);
     SAVE_FLAG (cfg->b_safe);

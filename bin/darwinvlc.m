@@ -2,6 +2,7 @@
  * darwinvlc.m: OS X specific main executable for VLC media player
  *****************************************************************************
  * Copyright (C) 2013-2015 VLC authors and VideoLAN
+ * $Id: e3da5722a03e7d5fad8adc93357c26a9e4ebd0ba $
  *
  * Authors: Felix Paul Kühne <fkuehne at videolan dot org>
  *          David Fuhrmann <dfuhrmann at videolan dot org>
@@ -26,9 +27,6 @@
 #endif
 
 #include <vlc/vlc.h>
-#include <vlc_common.h>
-#include <vlc_charset.h>
-
 #include <stdlib.h>
 #include <locale.h>
 #include <signal.h>
@@ -132,7 +130,6 @@ int main(int i_argc, const char *ppsz_argv[])
 #ifdef TOP_BUILDDIR
     setenv("VLC_PLUGIN_PATH", TOP_BUILDDIR"/modules", 1);
     setenv("VLC_DATA_PATH", TOP_SRCDIR"/share", 1);
-    setenv("VLC_LIB_PATH", TOP_BUILDDIR"/modules", 1);
 #endif
 
 #ifndef ALLOW_RUN_AS_ROOT
@@ -247,13 +244,21 @@ int main(int i_argc, const char *ppsz_argv[])
         language = (CFStringRef)CFPreferencesCopyAppValue(CFSTR("language"),
                                                           kCFPreferencesCurrentApplication);
         if (language) {
-            lang = FromCFString(language, kCFStringEncodingUTF8);
-            if (strncmp( lang, "auto", 4 )) {
-                char tmp[11];
-                snprintf(tmp, 11, "LANG=%s", lang);
-                putenv(tmp);
+            CFIndex length = CFStringGetLength(language) + 1;
+            if (length > 0) {
+                CFIndex maxSize = CFStringGetMaximumSizeForEncoding(length, kCFStringEncodingUTF8);
+                lang = (char *)malloc(maxSize);
+                if(lang) {
+                    CFStringGetCString(language, lang, maxSize - 1, kCFStringEncodingUTF8);
+                    if (strncmp( lang, "auto", 4 )) {
+                        char tmp[11];
+                        snprintf(tmp, 11, "LANG=%s", lang);
+                        putenv(tmp);
+
+                    }
+                }
+                free(lang);
             }
-            free(lang);
             CFRelease(language);
         }
     }
@@ -283,11 +288,9 @@ int main(int i_argc, const char *ppsz_argv[])
 
     libvlc_add_intf(vlc, "hotkeys,none");
 
-    if (libvlc_add_intf(vlc, NULL)) {
-        fprintf(stderr, "VLC cannot start any interface. Exiting.\n");
+    if (libvlc_add_intf(vlc, NULL))
         goto out;
-    }
-    libvlc_playlist_play(vlc);
+    libvlc_playlist_play(vlc, -1, 0, NULL);
 
     /*
      * Run the main loop. If the mac interface is not initialized, only the CoreFoundation

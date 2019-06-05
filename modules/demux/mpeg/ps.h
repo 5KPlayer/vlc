@@ -2,6 +2,7 @@
  * ps.h: Program Stream demuxer helper
  *****************************************************************************
  * Copyright (C) 2004-2009 VLC authors and VideoLAN
+ * $Id: c73309e9be43d779f7ea178b634c914284641ec8 $
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *
@@ -22,6 +23,7 @@
 
 #include <assert.h>
 #include <vlc_demux.h>
+#include <vlc_memory.h>
 #include "timestamps.h"
 
 #define PS_STREAM_ID_END_STREAM       0xB9
@@ -60,8 +62,8 @@ typedef struct
     int         i_next_block_flags;
     es_out_id_t *es;
     es_format_t fmt;
-    vlc_tick_t  i_first_pts;
-    vlc_tick_t  i_last_pts;
+    mtime_t     i_first_pts;
+    mtime_t     i_last_pts;
 
 } ps_track_t;
 
@@ -77,8 +79,8 @@ static inline void ps_track_init( ps_track_t tk[PS_TK_COUNT] )
         tk[i].i_id   = 0;
         tk[i].i_next_block_flags = 0;
         tk[i].es     = NULL;
-        tk[i].i_first_pts = VLC_TICK_INVALID;
-        tk[i].i_last_pts = VLC_TICK_INVALID;
+        tk[i].i_first_pts = -1;
+        tk[i].i_last_pts = -1;
         es_format_Init( &tk[i].fmt, UNKNOWN_ES, 0 );
     }
 }
@@ -320,7 +322,7 @@ static inline int ps_pkt_id( block_t *p_pkt )
     {
         uint8_t i_sub_id = 0;
         if( p_pkt->i_buffer >= 9 &&
-            p_pkt->i_buffer > 9 + (size_t)p_pkt->p_buffer[8] )
+            p_pkt->i_buffer >= 9 + (size_t)p_pkt->p_buffer[8] )
         {
             const unsigned i_start = 9 + p_pkt->p_buffer[8];
             i_sub_id = p_pkt->p_buffer[i_start];
@@ -429,21 +431,20 @@ static inline int ps_pkt_size( const uint8_t *p, int i_peek )
 }
 
 /* parse a PACK PES */
-static inline int ps_pkt_parse_pack( block_t *p_pkt, vlc_tick_t *pi_scr,
+static inline int ps_pkt_parse_pack( block_t *p_pkt, int64_t *pi_scr,
                                      int *pi_mux_rate )
 {
     uint8_t *p = p_pkt->p_buffer;
     if( p_pkt->i_buffer >= 14 && (p[4] >> 6) == 0x01 )
     {
-        *pi_scr = FROM_SCALE( ExtractPackHeaderTimestamp( &p[4] ) );
+        *pi_scr = FROM_SCALE_NZ( ExtractPackHeaderTimestamp( &p[4] ) );
         *pi_mux_rate = ( p[10] << 14 )|( p[11] << 6 )|( p[12] >> 2);
     }
     else if( p_pkt->i_buffer >= 12 && (p[4] >> 4) == 0x02 ) /* MPEG-1 Pack SCR, same bits as PES/PTS */
     {
-        stime_t i_scr;
-        if(!ExtractPESTimestamp( &p[4], 0x02, &i_scr ))
+        if(!ExtractPESTimestamp( &p[4], 0x02, pi_scr ))
             return VLC_EGENERIC;
-        *pi_scr = FROM_SCALE( i_scr );
+        *pi_scr = FROM_SCALE_NZ( *pi_scr );
         *pi_mux_rate = ( ( p[9]&0x7f )<< 15 )|( p[10] << 7 )|( p[11] >> 1);
     }
     else
@@ -493,8 +494,8 @@ static inline int ps_pkt_parse_system( block_t *p_pkt, ps_psm_t *p_psm,
 static inline int ps_pkt_parse_pes( vlc_object_t *p_object, block_t *p_pes, int i_skip_extra )
 {
     unsigned int i_skip  = 0;
-    stime_t i_pts = -1;
-    stime_t i_dts = -1;
+    mtime_t i_pts = -1;
+    mtime_t i_dts = -1;
     uint8_t i_stream_id = 0;
     bool b_pes_scrambling = false;
 
@@ -623,10 +624,7 @@ static inline int ps_psm_fill( ps_psm_t *p_psm, block_t *p_pkt,
     int i_version;
     bool b_single_extension;
 
-    // Demux() checks that we have at least 4 bytes, but we need
-    // at least 10 to read up to the info_length field
-    assert(i_buffer >= 4);
-    if( !p_psm || i_buffer < 10 || p_buffer[3] != PS_STREAM_ID_MAP)
+    if( !p_psm || p_buffer[3] != PS_STREAM_ID_MAP )
         return VLC_EGENERIC;
 
     i_length = GetWBE(&p_buffer[4]) + 6;

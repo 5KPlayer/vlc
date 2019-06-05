@@ -34,8 +34,6 @@
 
 namespace adaptive
 {
-    class SharedResources;
-
     namespace playlist
     {
         class BaseAdaptationSet;
@@ -60,14 +58,13 @@ namespace adaptive
                 uint64_t            getBandwidth            () const;
                 void                setBandwidth            ( uint64_t bandwidth );
                 const std::list<std::string> & getCodecs    () const;
-                void                addCodecs               (const std::string &);
+                void                addCodec                (const std::string &);
                 bool                consistentSegmentNumber () const;
-                virtual void        pruneByPlaybackTime     (vlc_tick_t);
+                virtual void        pruneByPlaybackTime     (mtime_t);
 
-                virtual vlc_tick_t  getMinAheadTime         (uint64_t) const;
+                virtual mtime_t     getMinAheadTime         (uint64_t) const;
                 virtual bool        needsUpdate             () const;
-                virtual bool        runLocalUpdates         (SharedResources *,
-                                                             vlc_tick_t, uint64_t, bool);
+                virtual bool        runLocalUpdates         (mtime_t, uint64_t, bool);
                 virtual void        scheduleNextUpdate      (uint64_t);
 
                 virtual void        debug                   (vlc_object_t *,int = 0) const;

@@ -104,13 +104,13 @@ static block_t *Remap( filter_t *, block_t * );
 typedef void (*remap_fun_t)( filter_t *, const void *, void *,
                              int, unsigned, unsigned);
 
-typedef struct
+struct filter_sys_t
 {
     remap_fun_t pf_remap;
     int nb_in_ch[AOUT_CHAN_MAX];
     int8_t map_ch[AOUT_CHAN_MAX];
     bool b_normalize;
-} filter_sys_t;
+};
 
 static const uint32_t valid_channels[] = {
 /* list taken from aout_FormatPrintChannels */
@@ -321,7 +321,7 @@ static int OpenFilter( vlc_object_t *p_this )
     }
     i_output_physical = CanonicaliseChannels( i_output_physical );
 
-    unsigned i_channels = vlc_popcount(i_output_physical);
+    unsigned i_channels = popcount(i_output_physical);
 
     /* condense out_channels */
     uint8_t out_ch_sorted[ AOUT_CHAN_MAX ];

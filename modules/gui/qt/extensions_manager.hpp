@@ -2,6 +2,7 @@
  * extensions_manager.hpp: Extensions manager for Qt
  ****************************************************************************
  * Copyright (C) 2009-2010 VideoLAN and authors
+ * $Id: 72a8153393ced8873162eb8d218bba343b362619 $
  *
  * Authors: Jean-Philippe André < jpeg # videolan.org >
  *
@@ -30,7 +31,6 @@
 #include <vlc_extensions.h>
 
 #include "qt.hpp"
-#include <components/player_controller.hpp>
 
 #include <QObject>
 #include <QMenu>
@@ -63,9 +63,11 @@ public:
     inline bool isUnloading() { return b_unloading; }
     void menu( QMenu *current );
 
-    /** Get the extensions_manager_t if it is loaded */
+    /** Get the extensions_manager_t if it is loaded and hold the object */
     extensions_manager_t* getManager()
     {
+        if( !p_extensions_manager ) return NULL;
+        vlc_object_hold( p_extensions_manager );
         return p_extensions_manager;
     }
 
@@ -77,7 +79,7 @@ public slots:
 private slots:
     void triggerMenu( int id );
     void inputChanged( );
-    void playingChanged(PlayerController::PlayingState );
+    void playingChanged( int );
     void metaChanged( input_item_t *p_input );
 
 private:

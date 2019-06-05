@@ -2,6 +2,7 @@
  * vlm_internal.h: Internal vlm structures
  *****************************************************************************
  * Copyright (C) 1998-2006 VLC authors and VideoLAN
+ * $Id: d5a6905291e44421b8dc3eda9d55cc3396f5b4b7 $
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *
@@ -24,7 +25,6 @@
 #define LIBVLC_VLM_INTERNAL_H 1
 
 #include <vlc_vlm.h>
-#include <vlc_player.h>
 #include "input_interface.h"
 
 /* Private */
@@ -36,17 +36,18 @@ typedef struct
     /* "playlist" index */
     int i_index;
 
+    bool      b_sout_keep;
+
     vlc_object_t *p_parent;
     input_item_t      *p_item;
-    vlc_player_t *player;
-    vlc_player_listener_id *listener;
+    input_thread_t    *p_input;
+    input_resource_t *p_input_resource;
 
 } vlm_media_instance_sys_t;
 
 
 typedef struct
 {
-    struct vlc_object_t obj;
     vlm_media_t cfg;
 
     struct
@@ -73,7 +74,7 @@ typedef struct
     time_t date;
 
     /* if != 0, repeat period in seconds */
-    time_t period;
+    unsigned period;
     /* number of times you have to repeat
        i_repeat < 0 : endless repeat     */
     int i_repeat;
@@ -82,7 +83,7 @@ typedef struct
 
 struct vlm_t
 {
-    struct vlc_object_t obj;
+    VLC_COMMON_MEMBERS
 
     vlc_mutex_t  lock;
     vlc_thread_t thread;

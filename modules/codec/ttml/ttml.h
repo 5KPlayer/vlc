@@ -35,7 +35,7 @@ enum
 
 typedef struct
 {
-    vlc_tick_t base;
+    int64_t base;
     unsigned frames;
     //unsigned ticks;
 } tt_time_t;
@@ -106,7 +106,7 @@ static inline void tt_time_Init( tt_time_t *t )
     t->frames = 0;
 }
 
-static inline tt_time_t tt_time_Create( vlc_tick_t i )
+static inline tt_time_t tt_time_Create( mtime_t i )
 {
     tt_time_t t;
     t.base = i;
@@ -119,28 +119,27 @@ static inline bool tt_time_Valid( const tt_time_t *t )
     return t->base != -1;
 }
 
-static inline vlc_tick_t tt_time_Convert( const tt_time_t *t )
+static inline mtime_t tt_time_Convert( const tt_time_t *t )
 {
     if( !tt_time_Valid( t ) )
-        return VLC_TICK_INVALID;
+        return -1;
     else
-        return t->base + vlc_tick_from_samples( t->frames, TT_FRAME_RATE);
+        return t->base + CLOCK_FREQ * t->frames / TT_FRAME_RATE;
 }
 
 static inline int tt_time_Compare( const tt_time_t *t1, const tt_time_t *t2 )
 {
-    vlc_tick_t ttt1 = tt_time_Convert( t1 );
-    vlc_tick_t ttt2 = tt_time_Convert( t2 );
-    if (ttt1 < ttt2)
+    if( tt_time_Convert( t1 ) < tt_time_Convert( t2 ) )
         return -1;
-    return ttt1 > ttt2;
+    else
+        return ( tt_time_Convert( t1 ) > tt_time_Convert( t2 ) );
 }
 
 static inline tt_time_t tt_time_Add( tt_time_t t1, tt_time_t t2 )
 {
     t1.base += t2.base;
     t1.frames += t2.frames;
-    t1.base += vlc_tick_from_samples( t1.frames, TT_FRAME_RATE );
+    t1.base += CLOCK_FREQ * ( t1.frames / TT_FRAME_RATE );
     t1.frames = t1.frames % TT_FRAME_RATE;
     return t1;
 }
@@ -150,7 +149,7 @@ static inline tt_time_t tt_time_Sub( tt_time_t t1, tt_time_t t2 )
     if( t2.frames > t1.frames )
     {
         unsigned diff = 1 + (t2.frames - t1.frames) / TT_FRAME_RATE;
-        t1.base -= vlc_tick_from_sec( diff );
+        t1.base -= diff * CLOCK_FREQ;
         t1.frames += diff * TT_FRAME_RATE;
     }
     t1.frames -= t2.frames;

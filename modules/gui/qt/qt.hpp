@@ -2,6 +2,7 @@
  * qt.hpp : Qt interface
  ****************************************************************************
  * Copyright (C) 2006-2009 the VideoLAN team
+ * $Id: e59583ab712116f8590fa6465206e6505c0b51fc $
  *
  * Authors: Clément Stenac <zorglub@videolan.org>
  *          Jean-Baptiste Kempf <jb@videolan.org>
@@ -28,10 +29,9 @@
 # include "config.h"
 #endif
 
-#include <vlc_common.h>
+#include <vlc_common.h>    /* VLC_COMMON_MEMBERS for vlc_interface.h */
 #include <vlc_interface.h> /* intf_thread_t */
-#include <vlc_playlist.h>  /* vlc_playlist_t */
-#include <vlc_player.h>  /* vlc_player_t */
+#include <vlc_playlist.h>  /* playlist_t */
 
 #include <qconfig.h>
 
@@ -43,16 +43,18 @@
 #include <QString>
 #include <QUrl>
 
-#if ( QT_VERSION < 0x050900 )
-# error Update your Qt version to at least 5.9.0
+#if ( QT_VERSION < 0x050500 )
+# error Update your Qt version to at least 5.5.0
 #endif
 
 #define HAS_QT56 ( QT_VERSION >= 0x050600 )
 #define HAS_QT510 ( QT_VERSION >= 0x051000 )
 
 enum {
-    IMEventTypeOffset     = 0,
-    MsgEventTypeOffset    = 100
+    DialogEventTypeOffset = 0,
+    IMEventTypeOffset     = 100,
+    PLEventTypeOffset     = 200,
+    MsgEventTypeOffset    = 300,
 };
 
 enum{
@@ -61,12 +63,6 @@ enum{
     NOTIFICATION_ALWAYS = 2,
 };
 
-namespace vlc {
-namespace playlist {
-class PlaylistControllerModel;
-}
-}
-class PlayerController;
 struct intf_sys_t
 {
     vlc_thread_t thread;
@@ -74,47 +70,46 @@ struct intf_sys_t
     class QVLCApp *p_app;          /* Main Qt Application */
     class MainInterface *p_mi;     /* Main Interface, NULL if DialogProvider Mode */
     class QSettings *mainSettings; /* Qt State settings not messing main VLC ones */
+    class PLModel *pl_model;
 
     QUrl filepath;        /* Last path used in dialogs */
 
     unsigned voutWindowType; /* Type of vout_window_t provided */
     bool b_isDialogProvider; /* Qt mode or Skins mode */
-
-    vlc_playlist_t *p_playlist;  /* playlist */
-    vlc_player_t *p_player; /* player */
-    vlc::playlist::PlaylistControllerModel* p_mainPlaylistController;
-    PlayerController* p_mainPlayerController;
-
+    playlist_t *p_playlist;  /* playlist */
 #ifdef _WIN32
     bool disable_volume_keys;
 #endif
 };
 
+#define THEPL p_intf->p_sys->p_playlist
+
 /**
  * This class may be used for scope-bound locking/unlocking
- * of a player_t*. As hinted, the player is locked when
+ * of a playlist_t*. As hinted, the playlist is locked when
  * the object is created, and unlocked when the object is
  * destroyed.
  */
-struct vlc_player_locker {
-    vlc_player_locker( vlc_player_t* p_player )
-        : p_player( p_player )
+
+struct vlc_playlist_locker {
+    vlc_playlist_locker( playlist_t* p_playlist )
+        : p_playlist( p_playlist )
     {
-        vlc_player_Lock( p_player );
+        playlist_Lock( p_playlist );
     }
 
-    ~vlc_player_locker()
+    ~vlc_playlist_locker()
     {
-        vlc_player_Unlock( p_player );
+        playlist_Unlock( p_playlist );
     }
 
     private:
-        vlc_player_t* p_player;
+        playlist_t* p_playlist;
 };
 
 #define THEDP DialogsProvider::getInstance()
-#define THEMIM p_intf->p_sys->p_mainPlayerController
-#define THEMPL p_intf->p_sys->p_mainPlaylistController
+#define THEMIM MainInputManager::getInstance( p_intf )
+#define THEAM ActionsManager::getInstance( p_intf )
 
 #define qfu( i ) QString::fromUtf8( i )
 #define qfue( i ) QString::fromUtf8( i ).replace( "&", "&&" ) /* for actions/buttons */

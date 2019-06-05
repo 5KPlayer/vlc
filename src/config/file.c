@@ -2,6 +2,7 @@
  * file.c: configuration file handling
  *****************************************************************************
  * Copyright (C) 2001-2007 VLC authors and VideoLAN
+ * $Id: 6270a6bc9d621ae6a0d7a23da5dbb6e7a176487a $
  *
  * Authors: Gildas Bazin <gbazin@videolan.org>
  *
@@ -136,6 +137,7 @@ static FILE *config_OpenConfigFile( vlc_object_t *p_obj )
     return p_stream;
 }
 
+
 static int64_t vlc_strtoi (const char *str)
 {
     char *end;
@@ -204,13 +206,6 @@ int config_LoadConfigFile( vlc_object_t *p_this )
 
         module_config_t *item = config_FindConfig(psz_option_name);
         if (item == NULL)
-            continue;
-
-        /* Reject values of options that are unsaveable */
-        if (item->b_unsaveable)
-            continue;
-        /* Ignore options that are obsolete */
-        if (item->b_removed)
             continue;
 
         const char *psz_option_value = ptr + 1;
@@ -304,7 +299,7 @@ int config_CreateDir( vlc_object_t *p_this, const char *psz_dirname )
     return -1;
 }
 
-VLC_FORMAT(6, 7) static int
+static int
 config_Write (FILE *file, const char *desc, const char *type,
               bool comment, const char *name, const char *fmt, ...)
 {

@@ -73,7 +73,7 @@ vlc_module_end ()
 /*****************************************************************************
  * Local prototypes
  *****************************************************************************/
-typedef struct
+struct demux_sys_t
 {
     es_out_id_t *p_es;
 
@@ -82,7 +82,7 @@ typedef struct
     unsigned    frame_rate_den;
 
     decoder_t *p_packetizer;
-} demux_sys_t;
+};
 
 static int Demux( demux_t * );
 static int Control( demux_t *, int, va_list );
@@ -350,7 +350,7 @@ static int GenericOpen( demux_t *p_demux, const char *psz_module,
     }
     else
         date_Init( &p_sys->dts, 25000, 1000 );
-    date_Set( &p_sys->dts, VLC_TICK_0 );
+    date_Set( &p_sys->dts, VLC_TS_0 );
 
     /* Load the mpegvideo packetizer */
     es_format_Init( &fmt, VIDEO_ES, i_codec );
@@ -437,7 +437,7 @@ static int Demux( demux_t *p_demux)
             if( p_block_in )
             {
                 p_block_in->i_dts = date_Get( &p_sys->dts );
-                p_block_in->i_pts = VLC_TICK_INVALID;
+                p_block_in->i_pts = VLC_TS_INVALID;
             }
 
             if( p_sys->p_es == NULL )
@@ -453,8 +453,8 @@ static int Demux( demux_t *p_demux)
 
             /* h264 packetizer does merge multiple NAL into AU, but slice flag persists */
             bool frame = p_block_out->i_flags & BLOCK_FLAG_TYPE_MASK;
-            const vlc_tick_t i_frame_dts = p_block_out->i_dts;
-            const vlc_tick_t i_frame_length = p_block_out->i_length;
+            const mtime_t i_frame_dts = p_block_out->i_dts;
+            const mtime_t i_frame_length = p_block_out->i_length;
             es_out_Send( p_demux->out, p_sys->p_es, p_block_out );
             if( frame )
             {
@@ -473,7 +473,7 @@ static int Demux( demux_t *p_demux)
                         p_sys->frame_rate_den = 1000;
                     }
                     date_Init( &p_sys->dts, 2 * p_sys->frame_rate_num, p_sys->frame_rate_den );
-                    date_Set( &p_sys->dts, VLC_TICK_0 );
+                    date_Set( &p_sys->dts, VLC_TS_0 );
                     msg_Dbg( p_demux, "using %.2f fps", (double) p_sys->frame_rate_num / p_sys->frame_rate_den );
                 }
 
@@ -481,8 +481,8 @@ static int Demux( demux_t *p_demux)
                 unsigned i_nb_fields;
                 if( i_frame_length > 0 )
                 {
-                    i_nb_fields = round( (double)i_frame_length * 2 * p_sys->frame_rate_num /
-                                  ( p_sys->frame_rate_den * CLOCK_FREQ ) );
+                    i_nb_fields = i_frame_length * 2 * p_sys->frame_rate_num /
+                                  ( p_sys->frame_rate_den * CLOCK_FREQ );
                 }
                 else i_nb_fields = 2;
                 if( i_nb_fields <= 6 ) /* in the legit range */

@@ -18,22 +18,16 @@
  * Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-#include <stdatomic.h>
-#include <stddef.h>
-
 #include <vlc_picture.h>
+#include <vlc_atomic.h>
 
 typedef struct
 {
     picture_t picture;
     struct
     {
+        atomic_uintptr_t refs;
         void (*destroy)(picture_t *);
         void *opaque;
     } gc;
-
-    max_align_t extra[];
 } picture_priv_t;
-
-void *picture_Allocate(int *, size_t);
-void picture_Deallocate(int, void *, size_t);

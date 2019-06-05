@@ -30,7 +30,6 @@
 # include "config.h"
 #endif
 
-#include "../renderer_common.hpp"
 #include "chromecast.h"
 #include <vlc_dialog.h>
 
@@ -44,13 +43,6 @@
 #define TRANSCODING_NONE 0x0
 #define TRANSCODING_VIDEO 0x1
 #define TRANSCODING_AUDIO 0x2
-
-#if 0
-/* TODO: works only with internal spu and transcoding/blending for now */
-#define CC_ENABLE_SPU
-#endif
-
-namespace {
 
 struct sout_access_out_sys_t
 {
@@ -84,8 +76,6 @@ private:
     std::string        m_mime;
 };
 
-typedef struct sout_stream_id_sys_t sout_stream_id_sys_t;
-
 struct sout_stream_sys_t
 {
     sout_stream_sys_t(httpd_host_t *httpd_host, intf_sys_t * const intf, bool has_video, int port)
@@ -98,8 +88,8 @@ struct sout_stream_sys_t
         , first_video_keyframe_pts( -1 )
         , es_changed( true )
         , cc_has_input( false )
+        , cc_reload( false )
         , cc_flushing( false )
-        , cc_eof( false )
         , has_video( false )
         , out_force_reload( false )
         , perf_warning_shown( false )
@@ -141,12 +131,12 @@ struct sout_stream_sys_t
     const int i_port;
 
     sout_stream_id_sys_t *             video_proxy_id;
-    vlc_tick_t                         first_video_keyframe_pts;
+    mtime_t                            first_video_keyframe_pts;
 
     bool                               es_changed;
     bool                               cc_has_input;
+    bool                               cc_reload;
     bool                               cc_flushing;
-    bool                               cc_eof;
     bool                               has_video;
     bool                               out_force_reload;
     bool                               perf_warning_shown;
@@ -155,10 +145,12 @@ struct sout_stream_sys_t
     std::vector<sout_stream_id_sys_t*> streams;
     std::vector<sout_stream_id_sys_t*> out_streams;
     unsigned int                       out_streams_added;
-    unsigned int                       spu_streams_count;
 
 private:
+    std::string GetVencOption( sout_stream_t *, vlc_fourcc_t *,
+                               const video_format_t *, int );
     std::string GetAcodecOption( sout_stream_t *, vlc_fourcc_t *, const audio_format_t *, int );
+    std::string GetVcodecOption( sout_stream_t *, vlc_fourcc_t *, const video_format_t *, int );
     bool UpdateOutput( sout_stream_t * );
 };
 
@@ -169,12 +161,10 @@ struct sout_stream_id_sys_t
     bool                  flushed;
 };
 
-} // namespace
-
 #define SOUT_CFG_PREFIX "sout-chromecast-"
 
-static const char DEFAULT_MUXER[] = "avformat{mux=matroska,options={live=1},reset-ts}";
-static const char DEFAULT_MUXER_WEBM[] = "avformat{mux=webm,options={live=1},reset-ts}";
+static const char DEFAULT_MUXER[] = "avformat{mux=matroska,options={live=1}}";
+static const char DEFAULT_MUXER_WEBM[] = "avformat{mux=webm,options={live=1}}";
 
 
 /*****************************************************************************
@@ -197,6 +187,39 @@ static const char *const ppsz_sout_options[] = {
 #define HTTP_PORT_TEXT N_("HTTP port")
 #define HTTP_PORT_LONGTEXT N_("This sets the HTTP port of the local server " \
                               "used to stream the media to the Chromecast.")
+#define PERF_TEXT N_( "Performance warning" )
+#define PERF_LONGTEXT N_( "Display a performance warning when transcoding" )
+#define AUDIO_PASSTHROUGH_TEXT N_( "Enable Audio passthrough" )
+#define AUDIO_PASSTHROUGH_LONGTEXT N_( "Disable if your receiver does not support Dolby®." )
+
+enum {
+    CONVERSION_QUALITY_HIGH = 0,
+    CONVERSION_QUALITY_MEDIUM = 1,
+    CONVERSION_QUALITY_LOW = 2,
+    CONVERSION_QUALITY_LOWCPU = 3,
+};
+
+#if defined (__ANDROID__) || defined (__arm__) || (defined (TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+# define CONVERSION_QUALITY_DEFAULT CONVERSION_QUALITY_LOW
+#else
+# define CONVERSION_QUALITY_DEFAULT CONVERSION_QUALITY_MEDIUM
+#endif
+
+static const int conversion_quality_list[] = {
+    CONVERSION_QUALITY_HIGH,
+    CONVERSION_QUALITY_MEDIUM,
+    CONVERSION_QUALITY_LOW,
+    CONVERSION_QUALITY_LOWCPU,
+};
+static const char *const conversion_quality_list_text[] = {
+    N_( "High (high quality and high bandwidth)" ),
+    N_( "Medium (medium quality and medium bandwidth)" ),
+    N_( "Low (low quality and low bandwidth)" ),
+    N_( "Low CPU (low quality but high bandwidth)" ),
+};
+
+#define CONVERSION_QUALITY_TEXT N_( "Conversion quality" )
+#define CONVERSION_QUALITY_LONGTEXT N_( "Change this option to increase conversion speed or quality." )
 
 #define IP_ADDR_TEXT N_("IP Address")
 #define IP_ADDR_LONGTEXT N_("IP Address of the Chromecast.")
@@ -228,7 +251,12 @@ vlc_module_begin ()
     add_integer(SOUT_CFG_PREFIX "http-port", HTTP_PORT, HTTP_PORT_TEXT, HTTP_PORT_LONGTEXT, false)
     add_obsolete_string(SOUT_CFG_PREFIX "mux")
     add_obsolete_string(SOUT_CFG_PREFIX "mime")
-    add_renderer_opts(SOUT_CFG_PREFIX)
+    add_integer(SOUT_CFG_PREFIX "show-perf-warning", 1, PERF_TEXT, PERF_LONGTEXT, true )
+        change_private()
+    add_bool(SOUT_CFG_PREFIX "audio-passthrough", false, AUDIO_PASSTHROUGH_TEXT, AUDIO_PASSTHROUGH_LONGTEXT, false )
+    add_integer(SOUT_CFG_PREFIX "conversion-quality", CONVERSION_QUALITY_DEFAULT,
+                CONVERSION_QUALITY_TEXT, CONVERSION_QUALITY_LONGTEXT, false );
+        change_integer_list(conversion_quality_list, conversion_quality_list_text)
 
     add_submodule()
         /* sout proxy that start the cc input when all streams are loaded */
@@ -242,10 +270,10 @@ vlc_module_begin ()
         set_callbacks(AccessOpen, AccessClose)
 vlc_module_end ()
 
-static void *ProxyAdd(sout_stream_t *p_stream, const es_format_t *p_fmt)
+static sout_stream_id_sys_t *ProxyAdd(sout_stream_t *p_stream, const es_format_t *p_fmt)
 {
-    sout_stream_sys_t *p_sys = reinterpret_cast<sout_stream_sys_t *>( p_stream->p_sys );
-    sout_stream_id_sys_t *id = reinterpret_cast<sout_stream_id_sys_t *>( sout_StreamIdAdd(p_stream->p_next, p_fmt) );
+    sout_stream_sys_t *p_sys = p_stream->p_sys;
+    sout_stream_id_sys_t *id = sout_StreamIdAdd(p_stream->p_next, p_fmt);
     if (id)
     {
         if (p_fmt->i_cat == VIDEO_ES)
@@ -255,22 +283,20 @@ static void *ProxyAdd(sout_stream_t *p_stream, const es_format_t *p_fmt)
     return id;
 }
 
-static void ProxyDel(sout_stream_t *p_stream, void *_id)
+static void ProxyDel(sout_stream_t *p_stream, sout_stream_id_sys_t *id)
 {
-    sout_stream_sys_t *p_sys = reinterpret_cast<sout_stream_sys_t *>( p_stream->p_sys );
-    sout_stream_id_sys_t *id = reinterpret_cast<sout_stream_id_sys_t *>( _id );
+    sout_stream_sys_t *p_sys = p_stream->p_sys;
     p_sys->out_streams_added--;
     if (id == p_sys->video_proxy_id)
         p_sys->video_proxy_id = NULL;
     return sout_StreamIdDel(p_stream->p_next, id);
 }
 
-static int ProxySend(sout_stream_t *p_stream, void *_id, block_t *p_buffer)
+static int ProxySend(sout_stream_t *p_stream, sout_stream_id_sys_t *id,
+                     block_t *p_buffer)
 {
-    sout_stream_sys_t *p_sys = reinterpret_cast<sout_stream_sys_t *>( p_stream->p_sys );
-    sout_stream_id_sys_t *id = reinterpret_cast<sout_stream_id_sys_t *>( _id );
-    if (p_sys->cc_has_input
-     || p_sys->out_streams_added >= p_sys->out_streams.size() - p_sys->spu_streams_count)
+    sout_stream_sys_t *p_sys = p_stream->p_sys;
+    if (p_sys->cc_has_input || p_sys->out_streams_added >= p_sys->out_streams.size())
     {
         if (p_sys->has_video)
         {
@@ -287,10 +313,16 @@ static int ProxySend(sout_stream_t *p_stream, void *_id, block_t *p_buffer)
             if (p_buffer->i_pts < p_sys->first_video_keyframe_pts
              || p_sys->first_video_keyframe_pts == -1)
             {
-                block_ChainRelease(p_buffer);
+                block_Release(p_buffer);
                 return VLC_SUCCESS;
             }
         }
+
+        mtime_t pause_delay = p_sys->p_intf->getPauseDelay();
+        if( p_buffer->i_pts != VLC_TS_INVALID )
+            p_buffer->i_pts -= pause_delay;
+        if( p_buffer->i_dts != VLC_TS_INVALID )
+            p_buffer->i_dts -= pause_delay;
 
         int ret = sout_StreamIdSend(p_stream->p_next, id, p_buffer);
         if (ret == VLC_SUCCESS && !p_sys->cc_has_input)
@@ -304,12 +336,12 @@ static int ProxySend(sout_stream_t *p_stream, void *_id, block_t *p_buffer)
     }
     else
     {
-        block_ChainRelease(p_buffer);
+        block_Release(p_buffer);
         return VLC_SUCCESS;
     }
 }
 
-static void ProxyFlush(sout_stream_t *p_stream, void *id)
+static void ProxyFlush(sout_stream_t *p_stream, sout_stream_id_sys_t *id)
 {
     sout_StreamFlush(p_stream->p_next, id);
 }
@@ -612,7 +644,7 @@ void sout_access_out_sys_t::close()
 
 ssize_t AccessWrite(sout_access_out_t *p_access, block_t *p_block)
 {
-    sout_access_out_sys_t *p_sys = reinterpret_cast<sout_access_out_sys_t *>( p_access->p_sys );
+    sout_access_out_sys_t *p_sys = p_access->p_sys;
     return p_sys->write(p_access, p_block);
 }
 
@@ -650,7 +682,7 @@ static int AccessOpen(vlc_object_t *p_this)
 static void AccessClose(vlc_object_t *p_this)
 {
     sout_access_out_t *p_access = (sout_access_out_t*)p_this;
-    sout_access_out_sys_t *p_sys = reinterpret_cast<sout_access_out_sys_t *>( p_access->p_sys );
+    sout_access_out_sys_t *p_sys = p_access->p_sys;
 
     p_sys->close();
 }
@@ -658,9 +690,9 @@ static void AccessClose(vlc_object_t *p_this)
 /*****************************************************************************
  * Sout callbacks
  *****************************************************************************/
-static void *Add(sout_stream_t *p_stream, const es_format_t *p_fmt)
+static sout_stream_id_sys_t *Add(sout_stream_t *p_stream, const es_format_t *p_fmt)
 {
-    sout_stream_sys_t *p_sys = reinterpret_cast<sout_stream_sys_t *>( p_stream->p_sys );
+    sout_stream_sys_t *p_sys = p_stream->p_sys;
     vlc_mutex_locker locker(&p_sys->lock);
 
     if (!p_sys->b_supports_video)
@@ -683,10 +715,10 @@ static void *Add(sout_stream_t *p_stream, const es_format_t *p_fmt)
 }
 
 
-static void DelInternal(sout_stream_t *p_stream, void *_id, bool reset_config)
+static void DelInternal(sout_stream_t *p_stream, sout_stream_id_sys_t *id,
+                        bool reset_config)
 {
-    sout_stream_sys_t *p_sys = reinterpret_cast<sout_stream_sys_t *>( p_stream->p_sys );
-    sout_stream_id_sys_t *id = reinterpret_cast<sout_stream_id_sys_t *>( _id );
+    sout_stream_sys_t *p_sys = p_stream->p_sys;
 
     for (std::vector<sout_stream_id_sys_t*>::iterator it = p_sys->streams.begin();
          it != p_sys->streams.end(); )
@@ -707,8 +739,6 @@ static void DelInternal(sout_stream_t *p_stream, void *_id, bool reset_config)
                         p_sys->out_force_reload = reset_config;
                         if( p_sys_id->fmt.i_cat == VIDEO_ES )
                             p_sys->has_video = false;
-                        else if( p_sys_id->fmt.i_cat == SPU_ES )
-                            p_sys->spu_streams_count--;
                         break;
                     }
                     out_it++;
@@ -732,10 +762,9 @@ static void DelInternal(sout_stream_t *p_stream, void *_id, bool reset_config)
     }
 }
 
-static void Del(sout_stream_t *p_stream, void *_id)
+static void Del(sout_stream_t *p_stream, sout_stream_id_sys_t *id)
 {
-    sout_stream_sys_t *p_sys = reinterpret_cast<sout_stream_sys_t *>( p_stream->p_sys );
-    sout_stream_id_sys_t *id = reinterpret_cast<sout_stream_id_sys_t *>( _id );
+    sout_stream_sys_t *p_sys = p_stream->p_sys;
 
     vlc_mutex_locker locker(&p_sys->lock);
     DelInternal(p_stream, id, true);
@@ -814,11 +843,11 @@ bool sout_stream_sys_t::startSoutChain(sout_stream_t *p_stream,
 
     msg_Dbg( p_stream, "Creating chain %s", sout.c_str() );
     cc_has_input = false;
+    cc_reload = false;
     first_video_keyframe_pts = -1;
     video_proxy_id = NULL;
     has_video = false;
     out_streams = new_streams;
-    spu_streams_count = 0;
     transcoding_state = new_transcoding_state;
 
     access_out_live.prepare( p_stream, mime );
@@ -836,7 +865,7 @@ bool sout_stream_sys_t::startSoutChain(sout_stream_t *p_stream,
          it != out_streams.end(); )
     {
         sout_stream_id_sys_t *p_sys_id = *it;
-        p_sys_id->p_sub_id = reinterpret_cast<sout_stream_id_sys_t *>( sout_StreamIdAdd( p_out, &p_sys_id->fmt ) );
+        p_sys_id->p_sub_id = sout_StreamIdAdd( p_out, &p_sys_id->fmt );
         if ( p_sys_id->p_sub_id == NULL )
         {
             msg_Err( p_stream, "can't handle %4.4s stream", (char *)&p_sys_id->fmt.i_codec );
@@ -847,8 +876,6 @@ bool sout_stream_sys_t::startSoutChain(sout_stream_t *p_stream,
         {
             if( p_sys_id->fmt.i_cat == VIDEO_ES )
                 has_video = true;
-            else if( p_sys_id->fmt.i_cat == SPU_ES )
-                spu_streams_count++;
             ++it;
         }
     }
@@ -878,6 +905,163 @@ void sout_stream_sys_t::setNextTranscodingState()
 bool sout_stream_sys_t::transcodingCanFallback() const
 {
     return transcoding_state != (TRANSCODING_VIDEO|TRANSCODING_AUDIO);
+}
+
+static std::string GetVencVPXOption( sout_stream_t * /* p_stream */,
+                                      const video_format_t * /* p_vid */,
+                                      int /* i_quality */ )
+{
+    return "venc=vpx{quality-mode=1}";
+}
+
+static std::string GetVencX264Option( sout_stream_t * /* p_stream */,
+                                      const video_format_t *p_vid,
+                                      int i_quality )
+{
+    std::stringstream ssout;
+    static const char video_x264_preset_veryfast[] = "veryfast";
+    static const char video_x264_preset_ultrafast[] = "ultrafast";
+    const char *psz_video_x264_preset;
+    unsigned i_video_x264_crf_hd, i_video_x264_crf_720p;
+
+    switch ( i_quality )
+    {
+        case CONVERSION_QUALITY_HIGH:
+            i_video_x264_crf_hd = i_video_x264_crf_720p = 21;
+            psz_video_x264_preset = video_x264_preset_veryfast;
+            break;
+        case CONVERSION_QUALITY_MEDIUM:
+            i_video_x264_crf_hd = 23;
+            i_video_x264_crf_720p = 21;
+            psz_video_x264_preset = video_x264_preset_veryfast;
+            break;
+        case CONVERSION_QUALITY_LOW:
+            i_video_x264_crf_hd = i_video_x264_crf_720p = 23;
+            psz_video_x264_preset = video_x264_preset_veryfast;
+            break;
+        default:
+        case CONVERSION_QUALITY_LOWCPU:
+            i_video_x264_crf_hd = i_video_x264_crf_720p = 23;
+            psz_video_x264_preset = video_x264_preset_ultrafast;
+            break;
+    }
+
+    const bool b_hdres = p_vid == NULL || p_vid->i_height == 0 || p_vid->i_height >= 800;
+    unsigned i_video_x264_crf = b_hdres ? i_video_x264_crf_hd : i_video_x264_crf_720p;
+
+    ssout << "venc=x264{preset=" << psz_video_x264_preset
+          << ",crf=" << i_video_x264_crf << "}";
+    return ssout.str();
+}
+
+
+static struct
+{
+    vlc_fourcc_t fcc;
+    std::string (*get_opt)( sout_stream_t *, const video_format_t *, int);
+} venc_opt_list[] = {
+    { .fcc = VLC_CODEC_H264, .get_opt = GetVencX264Option },
+    { .fcc = VLC_CODEC_VP8,  .get_opt = GetVencVPXOption },
+    { .fcc = VLC_CODEC_H264, .get_opt = NULL },
+};
+
+std::string
+sout_stream_sys_t::GetVencOption( sout_stream_t *p_stream, vlc_fourcc_t *p_codec_video,
+                                  const video_format_t *p_vid, int i_quality )
+{
+    for( size_t i = (venc_opt_idx == -1 ? 0 : venc_opt_idx);
+         i < ARRAY_SIZE(venc_opt_list); ++i )
+    {
+        std::stringstream ssout, ssvenc;
+        char fourcc[5];
+        ssvenc << "vcodec=";
+        vlc_fourcc_to_char( venc_opt_list[i].fcc, fourcc );
+        fourcc[4] = '\0';
+        ssvenc << fourcc << ',';
+
+        if( venc_opt_list[i].get_opt != NULL )
+            ssvenc << venc_opt_list[i].get_opt( p_stream, p_vid, i_quality ) << ',';
+
+        if( venc_opt_list[i].get_opt == NULL
+         || ( venc_opt_idx != -1 && (unsigned) venc_opt_idx == i) )
+        {
+            venc_opt_idx = i;
+            *p_codec_video = venc_opt_list[i].fcc;
+            return ssvenc.str();
+        }
+
+        /* Test if a module can encode with the specified options / fmt_video. */
+        ssout << "transcode{" << ssvenc.str() << "}:dummy";
+
+        sout_stream_t *p_sout_test =
+            sout_StreamChainNew( p_stream->p_sout, ssout.str().c_str(), NULL, NULL );
+
+        if( p_sout_test != NULL )
+        {
+            p_sout_test->obj.flags |= OBJECT_FLAGS_QUIET|OBJECT_FLAGS_NOINTERACT;
+
+            es_format_t fmt;
+            es_format_InitFromVideo( &fmt, p_vid );
+            fmt.i_codec = fmt.video.i_chroma = VLC_CODEC_I420;
+
+            /* Test the maximum size/fps we will encode */
+            fmt.video.i_visible_width = fmt.video.i_width = 1920;
+            fmt.video.i_visible_height = fmt.video.i_height = 1080;
+            fmt.video.i_frame_rate = 30;
+            fmt.video.i_frame_rate_base = 1;
+
+            sout_stream_id_sys_t *id = sout_StreamIdAdd( p_sout_test, &fmt );
+
+            es_format_Clean( &fmt );
+            const bool success = id != NULL;
+
+            if( id )
+                sout_StreamIdDel( p_sout_test, id );
+            sout_StreamChainDelete( p_sout_test, NULL );
+
+            if( success )
+            {
+                venc_opt_idx = i;
+                *p_codec_video = venc_opt_list[i].fcc;
+                return ssvenc.str();
+            }
+        }
+    }
+    vlc_assert_unreachable();
+}
+
+std::string
+sout_stream_sys_t::GetVcodecOption( sout_stream_t *p_stream, vlc_fourcc_t *p_codec_video,
+                                    const video_format_t *p_vid, int i_quality )
+{
+    std::stringstream ssout;
+    static const char video_maxres_hd[] = "maxwidth=1920,maxheight=1080";
+    static const char video_maxres_720p[] = "maxwidth=1280,maxheight=720";
+
+    ssout << GetVencOption( p_stream, p_codec_video, p_vid, i_quality );
+
+    switch ( i_quality )
+    {
+        case CONVERSION_QUALITY_HIGH:
+        case CONVERSION_QUALITY_MEDIUM:
+            ssout << video_maxres_hd << ',';
+            break;
+        default:
+            ssout << video_maxres_720p << ',';
+    }
+
+    if( p_vid == NULL
+     || p_vid->i_frame_rate == 0 || p_vid->i_frame_rate_base == 0
+     || ( p_vid->i_frame_rate / p_vid->i_frame_rate_base ) > 30 )
+    {
+        /* Even force 24fps if the frame rate is unknown */
+        msg_Warn( p_stream, "lowering frame rate to 24fps" );
+        ssout << "fps=24,";
+    }
+
+    msg_Dbg( p_stream, "Converting video to %.4s", (const char*)p_codec_video );
+
+    return ssout.str();
 }
 
 std::string
@@ -940,7 +1124,6 @@ bool sout_stream_sys_t::UpdateOutput( sout_stream_t *p_stream )
     vlc_fourcc_t i_codec_video = 0, i_codec_audio = 0;
     const es_format_t *p_original_audio = NULL;
     const es_format_t *p_original_video = NULL;
-    const es_format_t *p_original_spu = NULL;
     bool b_out_streams_changed = false;
     std::vector<sout_stream_id_sys_t*> new_streams;
 
@@ -969,24 +1152,14 @@ bool sout_stream_sys_t::UpdateOutput( sout_stream_t *p_stream )
                              p_es->i_id, (const char*)&p_es->i_codec );
                     canRemux = false;
                 }
-                else if (i_codec_video == 0 && !p_original_spu)
+                else if (i_codec_video == 0)
                     i_codec_video = p_es->i_codec;
                 p_original_video = p_es;
                 new_streams.push_back(*it);
             }
-#ifdef CC_ENABLE_SPU
-            else if (p_es->i_cat == SPU_ES && p_original_spu == NULL)
-            {
-                msg_Dbg( p_stream, "forcing video transcode because of subtitle '%4.4s'",
-                         (const char*)&p_es->i_codec );
-                canRemux = false;
-                i_codec_video = 0;
-                p_original_spu = p_es;
-                new_streams.push_back(*it);
-            }
-#endif
             else
                 continue;
+            /* TODO: else handle ttml/webvtt */
         }
         else
             continue;
@@ -1019,7 +1192,7 @@ bool sout_stream_sys_t::UpdateOutput( sout_stream_t *p_stream )
     if ( !canRemux )
     {
         if ( !perf_warning_shown && i_codec_video == 0 && p_original_video
-          && var_InheritInteger( p_stream, RENDERER_CFG_PREFIX "show-perf-warning" ) )
+          && var_InheritInteger( p_stream, SOUT_CFG_PREFIX "show-perf-warning" ) )
         {
             int res = vlc_dialog_wait_question( p_stream,
                           VLC_DIALOG_QUESTION_WARNING,
@@ -1032,7 +1205,7 @@ bool sout_stream_sys_t::UpdateOutput( sout_stream_t *p_stream )
                  return false;
             perf_warning_shown = true;
             if ( res == 2 )
-                config_PutInt(RENDERER_CFG_PREFIX "show-perf-warning", 0 );
+                config_PutInt(p_stream, SOUT_CFG_PREFIX "show-perf-warning", 0 );
         }
 
         const int i_quality = var_InheritInteger( p_stream, SOUT_CFG_PREFIX "conversion-quality" );
@@ -1047,24 +1220,16 @@ bool sout_stream_sys_t::UpdateOutput( sout_stream_t *p_stream )
         }
         if ( i_codec_video == 0 && p_original_video )
         {
-            try {
-                ssout << vlc_sout_renderer_GetVcodecOption( p_stream,
-                                        { VLC_CODEC_H264, VLC_CODEC_VP8 },
-                                        &i_codec_video,
-                                        &p_original_video->video, i_quality );
-                new_transcoding_state |= TRANSCODING_VIDEO;
-            } catch(const std::exception& e) {
-                return false;
-            }
+            ssout << GetVcodecOption( p_stream, &i_codec_video,
+                                      &p_original_video->video, i_quality );
+            new_transcoding_state |= TRANSCODING_VIDEO;
         }
-        if ( p_original_spu )
-            ssout << "soverlay,";
         ssout << "}:";
     }
 
-    const bool is_webm = ( i_codec_audio == VLC_CODEC_VORBIS ||
+    const bool is_webm = ( i_codec_audio == 0 || i_codec_audio == VLC_CODEC_VORBIS ||
                            i_codec_audio == VLC_CODEC_OPUS ) &&
-                         ( i_codec_video == VLC_CODEC_VP8 ||
+                         ( i_codec_video == 0 || i_codec_video == VLC_CODEC_VP8 ||
                            i_codec_video == VLC_CODEC_VP9 );
 
     if ( !p_original_video )
@@ -1136,22 +1301,22 @@ bool sout_stream_sys_t::isFlushing( sout_stream_t *p_stream )
     return false;
 }
 
-static int Send(sout_stream_t *p_stream, void *_id, block_t *p_buffer)
+static int Send(sout_stream_t *p_stream, sout_stream_id_sys_t *id,
+                block_t *p_buffer)
 {
-    sout_stream_sys_t *p_sys = reinterpret_cast<sout_stream_sys_t *>( p_stream->p_sys );
-    sout_stream_id_sys_t *id = reinterpret_cast<sout_stream_id_sys_t *>( _id );
+    sout_stream_sys_t *p_sys = p_stream->p_sys;
     vlc_mutex_locker locker(&p_sys->lock);
 
-    if( p_sys->isFlushing( p_stream ) || p_sys->cc_eof )
+    if( p_sys->isFlushing( p_stream ) )
     {
-        block_ChainRelease( p_buffer );
+        block_Release( p_buffer );
         return VLC_SUCCESS;
     }
 
     sout_stream_id_sys_t *next_id = p_sys->GetSubId( p_stream, id );
     if ( next_id == NULL )
     {
-        block_ChainRelease( p_buffer );
+        block_Release( p_buffer );
         return VLC_EGENERIC;
     }
 
@@ -1162,16 +1327,15 @@ static int Send(sout_stream_t *p_stream, void *_id, block_t *p_buffer)
     return ret;
 }
 
-static void Flush( sout_stream_t *p_stream, void *_id )
+static void Flush( sout_stream_t *p_stream, sout_stream_id_sys_t *id )
 {
-    sout_stream_sys_t *p_sys = reinterpret_cast<sout_stream_sys_t *>( p_stream->p_sys );
-    sout_stream_id_sys_t *id = reinterpret_cast<sout_stream_id_sys_t *>( _id );
+    sout_stream_sys_t *p_sys = p_stream->p_sys;
     vlc_mutex_locker locker(&p_sys->lock);
 
     sout_stream_id_sys_t *next_id = p_sys->GetSubId( p_stream, id, false );
     if ( next_id == NULL )
         return;
-    id->flushed = true;
+    next_id->flushed = true;
 
     if( !p_sys->cc_flushing )
     {
@@ -1193,7 +1357,7 @@ static void Flush( sout_stream_t *p_stream, void *_id )
 static void on_input_event_cb(void *data, enum cc_input_event event, union cc_input_arg arg )
 {
     sout_stream_t *p_stream = reinterpret_cast<sout_stream_t*>(data);
-    sout_stream_sys_t *p_sys = reinterpret_cast<sout_stream_sys_t *>( p_stream->p_sys );
+    sout_stream_sys_t *p_sys = p_stream->p_sys;
 
     vlc_mutex_locker locker(&p_sys->lock);
     switch (event)
@@ -1202,8 +1366,7 @@ static void on_input_event_cb(void *data, enum cc_input_event event, union cc_in
             /* In case of EOF: stop the sout chain in order to drain all
              * sout/demuxers/access. If EOF changes to false, reset es_changed
              * in order to reload the sout from next Send calls. */
-            p_sys->cc_eof = arg.eof;
-            if( p_sys->cc_eof )
+            if( arg.eof )
                 p_sys->stopSoutChain( p_stream );
             else
                 p_sys->out_force_reload = p_sys->es_changed = true;
@@ -1325,7 +1488,7 @@ error:
 static void Close(vlc_object_t *p_this)
 {
     sout_stream_t *p_stream = reinterpret_cast<sout_stream_t*>(p_this);
-    sout_stream_sys_t *p_sys = reinterpret_cast<sout_stream_sys_t *>( p_stream->p_sys );
+    sout_stream_sys_t *p_sys = p_stream->p_sys;
 
     assert(p_sys->out_streams.empty() && p_sys->streams.empty());
     var_Destroy( p_stream->p_sout, SOUT_CFG_PREFIX "sys" );

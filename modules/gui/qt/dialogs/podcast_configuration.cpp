@@ -2,6 +2,7 @@
  * podcast_configuration.cpp: Podcast configuration dialog
  ****************************************************************************
  * Copyright (C) 2007 the VideoLAN team
+ * $Id: e6a15210089e51ab49984d97814b53b44edaff03 $
  *
  * Authors: Antoine Cellerier <dionoea at videolan dot org>
  *
@@ -41,7 +42,7 @@ PodcastConfigDialog::PodcastConfigDialog( intf_thread_t *_p_intf)
     CONNECT( ui.podcastDelete, clicked(), this, remove() );
     CONNECT( okButton, clicked(), this, close() );
 
-    char *psz_urls = config_GetPsz( "podcast-urls" );
+    char *psz_urls = config_GetPsz( p_intf, "podcast-urls" );
     if( psz_urls )
     {
         char *psz_url = psz_urls;
@@ -69,14 +70,13 @@ void PodcastConfigDialog::accept()
         urls +=  ui.podcastList->item(i)->text();
         if( i != ui.podcastList->count()-1 ) urls += "|";
     }
-    config_PutPsz( "podcast-urls", qtu( urls ) );
+    config_PutPsz( p_intf, "podcast-urls", qtu( urls ) );
 
-    //FIXME IsServicesDiscoveryLoaded is uninplmented
-    //if( playlist_IsServicesDiscoveryLoaded( THEPL, "podcast" ) )
-    //{
-    //    var_SetString( THEPL, "podcast-urls", qtu( urls ) );
-    //    msg_Dbg( p_intf, "You will need to reload the podcast module to take into account deleted podcast urls" );
-    //}
+    if( playlist_IsServicesDiscoveryLoaded( THEPL, "podcast" ) )
+    {
+        var_SetString( THEPL, "podcast-urls", qtu( urls ) );
+        msg_Dbg( p_intf, "You will need to reload the podcast module to take into account deleted podcast urls" );
+    }
 }
 
 void PodcastConfigDialog::add()

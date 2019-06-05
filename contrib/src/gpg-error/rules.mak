@@ -43,24 +43,9 @@ else
 endif
 endif
 endif
-ifdef HAVE_NACL
-ifeq ($(ARCH),i386) # 32bits intel
-	cp $@/src/syscfg/lock-obj-pub.i686-pc-linux-gnu.h $@/src/syscfg/lock-obj-pub.nacl.h
-else
-ifeq ($(ARCH),x86_64)
-	cp $@/src/syscfg/lock-obj-pub.x86_64-pc-linux-gnu.h $@/src/syscfg/lock-obj-pub.nacl.h
-endif
-endif
-endif
-
-GPGERROR_CONF := $(HOSTCONF) \
-	--disable-nls \
-	--disable-shared \
-	--disable-languages \
-	--disable-tests
 
 .gpg-error: libgpg-error
 	$(RECONF)
-	cd $< && $(HOSTVARS) ./configure $(GPGERROR_CONF)
+	cd $< && $(HOSTVARS) ./configure $(HOSTCONF) --disable-nls --disable-shared --disable-languages --disable-tests
 	cd $< && $(MAKE) install
 	touch $@

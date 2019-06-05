@@ -66,13 +66,12 @@ typedef struct jpeg_sys_t jpeg_sys_t;
 /*
  * jpeg decoder descriptor
  */
-typedef struct
+struct decoder_sys_t
 {
     JPEG_SYS_COMMON_MEMBERS
 
-    JSAMPARRAY p_row_pointers;
     struct jpeg_decompress_struct p_jpeg;
-} decoder_sys_t;
+};
 
 static int  OpenDecoder(vlc_object_t *);
 static void CloseDecoder(vlc_object_t *);
@@ -82,7 +81,7 @@ static int DecodeBlock(decoder_t *, block_t *);
 /*
  * jpeg encoder descriptor
  */
-typedef struct
+struct encoder_sys_t
 {
     JPEG_SYS_COMMON_MEMBERS
 
@@ -90,7 +89,7 @@ typedef struct
 
     int i_blocksize;
     int i_quality;
-} encoder_sys_t;
+};
 
 static const char * const ppsz_enc_options[] = {
     "quality",
@@ -178,13 +177,9 @@ static int OpenDecoder(vlc_object_t *p_this)
     /* Set callbacks */
     p_dec->pf_decode = DecodeBlock;
 
-    p_dec->fmt_out.video.i_chroma =
     p_dec->fmt_out.i_codec = VLC_CODEC_RGB24;
-    p_dec->fmt_out.video.transfer  = TRANSFER_FUNC_SRGB;
-    p_dec->fmt_out.video.space     = COLOR_SPACE_SRGB;
-    p_dec->fmt_out.video.primaries = COLOR_PRIMARIES_SRGB;
-    p_dec->fmt_out.video.color_range = COLOR_RANGE_FULL;
-    video_format_FixRgb(&p_dec->fmt_out.video);
+    p_dec->fmt_out.video.transfer = TRANSFER_FUNC_SRGB;
+    p_dec->fmt_out.video.b_color_range_full = true;
 
     return VLC_SUCCESS;
 }
@@ -223,13 +218,13 @@ de_get16( void * ptr, uint endian ) {
     if ( endian == G_BIG_ENDIAN )
     {
         #ifndef WORDS_BIGENDIAN
-        val = vlc_bswap16( val );
+        val = bswap16( val );
         #endif
     }
     else
     {
         #ifdef WORDS_BIGENDIAN
-        val = vlc_bswap16( val );
+        val = bswap16( val );
         #endif
     }
     return val;
@@ -243,13 +238,13 @@ de_get32( void * ptr, uint endian ) {
     if ( endian == G_BIG_ENDIAN )
     {
         #ifndef WORDS_BIGENDIAN
-        val = vlc_bswap32( val );
+        val = bswap32( val );
         #endif
     }
     else
     {
         #ifdef WORDS_BIGENDIAN
-        val = vlc_bswap32( val );
+        val = bswap32( val );
         #endif
     }
     return val;
@@ -503,7 +498,7 @@ static int DecodeBlock(decoder_t *p_dec, block_t *p_block)
     decoder_sys_t *p_sys = p_dec->p_sys;
     picture_t *p_pic = 0;
 
-    p_sys->p_row_pointers = NULL;
+    JSAMPARRAY p_row_pointers = NULL;
 
     if (!p_block) /* No Drain */
         return VLCDEC_SUCCESS;
@@ -556,27 +551,27 @@ static int DecodeBlock(decoder_t *p_dec, block_t *p_block)
     }
 
     /* Decode picture */
-    p_sys->p_row_pointers = vlc_alloc(p_sys->p_jpeg.output_height, sizeof(JSAMPROW));
-    if (!p_sys->p_row_pointers)
+    p_row_pointers = vlc_alloc(p_sys->p_jpeg.output_height, sizeof(JSAMPROW));
+    if (!p_row_pointers)
     {
         goto error;
     }
     for (unsigned i = 0; i < p_sys->p_jpeg.output_height; i++) {
-        p_sys->p_row_pointers[i] = p_pic->p->p_pixels + p_pic->p->i_pitch * i;
+        p_row_pointers[i] = p_pic->p->p_pixels + p_pic->p->i_pitch * i;
     }
 
     while (p_sys->p_jpeg.output_scanline < p_sys->p_jpeg.output_height)
     {
         jpeg_read_scanlines(&p_sys->p_jpeg,
-                p_sys->p_row_pointers + p_sys->p_jpeg.output_scanline,
+                p_row_pointers + p_sys->p_jpeg.output_scanline,
                 p_sys->p_jpeg.output_height - p_sys->p_jpeg.output_scanline);
     }
 
     jpeg_finish_decompress(&p_sys->p_jpeg);
     jpeg_destroy_decompress(&p_sys->p_jpeg);
-    free(p_sys->p_row_pointers);
+    free(p_row_pointers);
 
-    p_pic->date = p_block->i_pts != VLC_TICK_INVALID ? p_block->i_pts : p_block->i_dts;
+    p_pic->date = p_block->i_pts > VLC_TS_INVALID ? p_block->i_pts : p_block->i_dts;
 
     block_Release(p_block);
     decoder_QueueVideo( p_dec, p_pic );
@@ -585,7 +580,7 @@ static int DecodeBlock(decoder_t *p_dec, block_t *p_block)
 error:
 
     jpeg_destroy_decompress(&p_sys->p_jpeg);
-    free(p_sys->p_row_pointers);
+    free(p_row_pointers);
 
     block_Release(p_block);
     return VLCDEC_SUCCESS;

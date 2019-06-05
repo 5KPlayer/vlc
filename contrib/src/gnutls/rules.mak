@@ -1,14 +1,14 @@
 # GnuTLS
 
-GNUTLS_VERSION := 3.6.7.1
-GNUTLS_URL := https://www.gnupg.org/ftp/gcrypt/gnutls/v3.6/gnutls-$(GNUTLS_VERSION).tar.xz
+GNUTLS_VERSION := 3.5.19
+GNUTLS_URL := https://www.gnupg.org/ftp/gcrypt/gnutls/v3.5/gnutls-$(GNUTLS_VERSION).tar.xz
 
 ifdef BUILD_NETWORK
 ifndef HAVE_DARWIN_OS
 PKGS += gnutls
 endif
 endif
-ifeq ($(call need_pkg,"gnutls >= 3.5.0"),)
+ifeq ($(call need_pkg,"gnutls >= 3.3.6"),)
 PKGS_FOUND += gnutls
 endif
 
@@ -17,17 +17,26 @@ $(TARBALLS)/gnutls-$(GNUTLS_VERSION).tar.xz:
 
 .sum-gnutls: gnutls-$(GNUTLS_VERSION).tar.xz
 
-# gnutls 3.6.7.1 unpacks into a dir named 3.6.7
-gnutls: UNPACK_DIR=gnutls-3.6.7
 gnutls: gnutls-$(GNUTLS_VERSION).tar.xz .sum-gnutls
 	$(UNPACK)
 	$(APPLY) $(SRC)/gnutls/gnutls-pkgconfig-static.patch
 ifdef HAVE_WIN32
 	$(APPLY) $(SRC)/gnutls/gnutls-win32.patch
+	$(APPLY) $(SRC)/gnutls/gnutls-loadlibrary.patch
+ifdef HAVE_WINSTORE
+	$(APPLY) $(SRC)/gnutls/gnutls-winrt.patch
+	$(APPLY) $(SRC)/gnutls/winrt-topendir.patch
+endif
 endif
 ifdef HAVE_ANDROID
 	$(APPLY) $(SRC)/gnutls/no-create-time-h.patch
 endif
+	$(APPLY) $(SRC)/gnutls/read-file-limits.h.patch
+ifdef HAVE_MACOSX
+	$(APPLY) $(SRC)/gnutls/gnutls-disable-getentropy-osx.patch
+	$(APPLY) $(SRC)/gnutls/gnutls-disable-connectx-macos.patch
+endif
+	$(APPLY) $(SRC)/gnutls/gnutls-libidn.patch
 	$(call pkg_static,"lib/gnutls.pc.in")
 	$(UPDATE_AUTOCONFIG)
 	$(MOVE)
@@ -37,7 +46,9 @@ GNUTLS_CONF := \
 	--without-p11-kit \
 	--disable-cxx \
 	--disable-srp-authentication \
+	--disable-psk-authentication-FIXME \
 	--disable-anon-authentication \
+	--disable-openpgp-authentication \
 	--disable-openssl-compatibility \
 	--disable-guile \
 	--disable-nls \
@@ -64,19 +75,16 @@ ifeq ($(ARCH),x86_64)
 endif
 endif
 ifdef HAVE_WIN32
-	GNUTLS_CONF += --without-idn
+ifdef HAVE_CLANG
 ifeq ($(ARCH),aarch64)
-	# Gnutls' aarch64 assembly unconditionally uses ELF specific directives
 	GNUTLS_CONF += --disable-hardware-acceleration
 endif
 endif
-
-ifdef HAVE_NACL
-	GNUTLS_CONF += --disable-hardware-acceleration
 endif
 
 .gnutls: gnutls
+	$(RECONF)
 	cd $< && $(GNUTLS_ENV) ./configure $(GNUTLS_CONF)
-	cd $< && $(MAKE) -C gl install
-	cd $< && $(MAKE) -C lib install
+	cd $</gl && $(MAKE) install
+	cd $</lib && $(MAKE) install
 	touch $@

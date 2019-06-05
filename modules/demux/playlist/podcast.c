@@ -2,6 +2,7 @@
  * podcast.c : podcast playlist imports
  *****************************************************************************
  * Copyright (C) 2005-2009 VLC authors and VideoLAN
+ * $Id: 9be1b08823d85f1b88abb38b439ec502daef0071 $
  *
  * Authors: Antoine Cellerier <dionoea -at- videolan -dot- org>
  *
@@ -38,7 +39,7 @@
  * Local prototypes
  *****************************************************************************/
 static int ReadDir( stream_t *, input_item_node_t * );
-static vlc_tick_t strTimeToMTime( const char *psz );
+static mtime_t strTimeToMTime( const char *psz );
 
 /*****************************************************************************
  * Import_podcast: main import function
@@ -48,19 +49,19 @@ int Import_podcast( vlc_object_t *p_this )
     stream_t *p_demux = (stream_t *)p_this;
 
     CHECK_FILE(p_demux);
-    if( stream_IsMimeType( p_demux->s, "text/xml" )
-     || stream_IsMimeType( p_demux->s, "application/xml" ) )
+    if( stream_IsMimeType( p_demux->p_source, "text/xml" )
+     || stream_IsMimeType( p_demux->p_source, "application/xml" ) )
     {
         /* XML: check if the root node is "rss". Use a specific peeked
          * probestream in order to not modify the source state while probing.
          * */
         const uint8_t *p_peek;
-        ssize_t i_peek = vlc_stream_Peek( p_demux->s, &p_peek, 2048 );
+        ssize_t i_peek = vlc_stream_Peek( p_demux->p_source, &p_peek, 2048 );
         if( unlikely( i_peek <= 0 ) )
             return VLC_EGENERIC;
 
         stream_t *p_probestream =
-            vlc_stream_MemoryNew( p_demux, (uint8_t *)p_peek, i_peek, true );
+            vlc_stream_MemoryNew( p_demux->p_source, (uint8_t *)p_peek, i_peek, true );
         if( unlikely( !p_probestream ) )
             return VLC_EGENERIC;
 
@@ -85,7 +86,7 @@ int Import_podcast( vlc_object_t *p_this )
         vlc_stream_Delete( p_probestream );
         /* SUCCESS: this text/xml is a rss file */
     }
-    else if( !stream_IsMimeType( p_demux->s, "application/rss+xml" ) )
+    else if( !stream_IsMimeType( p_demux->p_source, "application/rss+xml" ) )
         return VLC_EGENERIC;
 
     p_demux->pf_readdir = ReadDir;
@@ -121,7 +122,7 @@ static int ReadDir( stream_t *p_demux, input_item_node_t *p_subitems )
 
     input_item_t *p_current_input = GetCurrentItem(p_demux);
 
-    p_xml_reader = xml_ReaderCreate( p_demux, p_demux->s );
+    p_xml_reader = xml_ReaderCreate( p_demux, p_demux->p_source );
     if( !p_xml_reader )
         goto error;
 
@@ -286,8 +287,7 @@ static int ReadDir( stream_t *p_demux, input_item_node_t *p_subitems )
                     }
 
                     vlc_xml_decode( psz_item_mrl );
-                    if( psz_item_name )
-                       vlc_xml_decode( psz_item_name );
+                    vlc_xml_decode( psz_item_name );
                     p_input = input_item_New( psz_item_mrl, psz_item_name );
                     FREENULL( psz_item_mrl );
                     FREENULL( psz_item_name );
@@ -375,16 +375,16 @@ error:
     return VLC_EGENERIC;
 }
 
-static vlc_tick_t strTimeToMTime( const char *psz )
+static mtime_t strTimeToMTime( const char *psz )
 {
     int h, m, s;
     switch( sscanf( psz, "%u:%u:%u", &h, &m, &s ) )
     {
     case 3:
-        return vlc_tick_from_sec( ( h*60 + m )*60 + s );
+        return (mtime_t)( ( h*60 + m )*60 + s ) * 1000000;
     case 2:
-        return vlc_tick_from_sec( h*60 + m );
+        return (mtime_t)( h*60 + m ) * 1000000;
     default:
-        return INPUT_DURATION_UNSET;
+        return -1;
     }
 }

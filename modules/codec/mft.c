@@ -84,7 +84,7 @@ typedef struct
     HRESULT (STDCALL *fptr_MFCreateAlignedMemoryBuffer)(DWORD cbMaxLength, DWORD fAlignmentFlags, IMFMediaBuffer **ppBuffer);
 } MFHandle;
 
-typedef struct
+struct decoder_sys_t
 {
     MFHandle mf_handle;
 
@@ -92,8 +92,6 @@ typedef struct
 
     const GUID* major_type;
     const GUID* subtype;
-    /* Container for a dynamically constructed subtype */
-    GUID custom_subtype;
 
     /* For asynchronous MFT */
     bool is_async;
@@ -112,7 +110,7 @@ typedef struct
 
     /* H264 only. */
     uint8_t nal_length_size;
-} decoder_sys_t;
+};
 
 static const int pi_channels_maps[9] =
 {
@@ -185,20 +183,6 @@ static const pair_format_guid video_format_table[] =
     { 0, NULL }
 };
 
-// 8-bit luminance only
-DEFINE_MEDIATYPE_GUID (MFVideoFormat_L8, 50);
-
-/*
- * Table to map MF Transform raw 3D3 output formats to native VLC FourCC
- */
-static const pair_format_guid d3d_format_table[] = {
-    { VLC_CODEC_RGB32, &MFVideoFormat_RGB32  },
-    { VLC_CODEC_RGB24, &MFVideoFormat_RGB24  },
-    { VLC_CODEC_RGBA,  &MFVideoFormat_ARGB32 },
-    { VLC_CODEC_GREY,  &MFVideoFormat_L8     },
-    { 0, NULL }
-};
-
 #if defined(__MINGW64_VERSION_MAJOR) && __MINGW64_VERSION_MAJOR < 4
 DEFINE_GUID(MFAudioFormat_Dolby_AC3, 0xe06d802c, 0xdb46, 0x11cf, 0xb4, 0xd1, 0x00, 0x80, 0x5f, 0x6c, 0xbb, 0xea);
 #endif
@@ -224,15 +208,6 @@ static const GUID *FormatToGUID(const pair_format_guid table[], vlc_fourcc_t fou
             return table[i].guid;
 
     return NULL;
-}
-
-static vlc_fourcc_t GUIDToFormat(const pair_format_guid table[], const GUID* guid)
-{
-    for (int i = 0; table[i].fourcc; ++i)
-        if (IsEqualGUID(table[i].guid, guid))
-            return table[i].fourcc;
-
-    return 0;
 }
 
 /*
@@ -297,16 +272,6 @@ static int SetInputType(decoder_t *p_dec, DWORD stream_id, IMFMediaType **result
         hr = IMFMediaType_SetUINT64(input_media_type, &MF_MT_FRAME_SIZE, frame_size);
         if (FAILED(hr))
             goto error;
-
-        /* Some transforms like to know the frame rate and may reject the input type otherwise. */
-        UINT64 frame_ratio_num = p_dec->fmt_in.video.i_frame_rate;
-        UINT64 frame_ratio_dem = p_dec->fmt_in.video.i_frame_rate_base;
-        if(frame_ratio_num && frame_ratio_dem) {
-            UINT64 frame_rate = (frame_ratio_num << 32) | frame_ratio_dem;
-            hr = IMFMediaType_SetUINT64(input_media_type, &MF_MT_FRAME_RATE, frame_rate);
-            if(FAILED(hr))
-                goto error;
-        }
     }
     else
     {
@@ -391,7 +356,7 @@ static int SetOutputType(decoder_t *p_dec, DWORD stream_id, IMFMediaType **resul
      * preference thus we will use the first one unless YV12/I420 is
      * available for video or float32 for audio.
      */
-    int output_type_index = -1;
+    int output_type_index = 0;
     bool found = false;
     for (int i = 0; !found; ++i)
     {
@@ -415,10 +380,6 @@ static int SetOutputType(decoder_t *p_dec, DWORD stream_id, IMFMediaType **resul
         {
             if (IsEqualGUID(&subtype, &MFVideoFormat_YV12) || IsEqualGUID(&subtype, &MFVideoFormat_I420))
                 found = true;
-            /* Transform might offer output in a D3DFMT propietary FCC. If we can
-             * use it, fall back to it in case we do not find YV12 or I420 */
-            else if(output_type_index < 0 && GUIDToFormat(d3d_format_table, &subtype) > 0)
-                    output_type_index = i;
         }
         else
         {
@@ -438,12 +399,9 @@ static int SetOutputType(decoder_t *p_dec, DWORD stream_id, IMFMediaType **resul
     }
     /*
      * It's not an error if we don't find the output type we were
-     * looking for, in this case we use the first available type.
+     * looking for, in this case we use the first available type which
+     * is the "preferred" output type for this MFT.
      */
-    if(output_type_index < 0)
-        /* No output format found we prefer, just pick the first one preferred
-         * by the MFT */
-        output_type_index = 0;
 
     hr = IMFTransform_GetOutputAvailableType(p_sys->mft, stream_id, output_type_index, &output_media_type);
     if (FAILED(hr))
@@ -461,17 +419,7 @@ static int SetOutputType(decoder_t *p_dec, DWORD stream_id, IMFMediaType **resul
     if (p_dec->fmt_in.i_cat == VIDEO_ES)
     {
         video_format_Copy( &p_dec->fmt_out.video, &p_dec->fmt_in.video );
-
-        /* Transform might offer output in a D3DFMT propietary FCC */
-        vlc_fourcc_t fcc = GUIDToFormat(d3d_format_table, &subtype);
-        if(fcc) {
-            /* D3D formats are upside down */
-            p_dec->fmt_out.video.orientation = ORIENT_BOTTOM_LEFT;
-        } else {
-            fcc = vlc_fourcc_GetCodec(p_dec->fmt_in.i_cat, subtype.Data1);
-        }
-
-        p_dec->fmt_out.i_codec = fcc;
+        p_dec->fmt_out.i_codec = vlc_fourcc_GetCodec(p_dec->fmt_in.i_cat, subtype.Data1);
     }
     else
     {
@@ -646,10 +594,12 @@ static int ProcessInputStream(decoder_t *p_dec, DWORD stream_id, block_t *p_bloc
     if (FAILED(hr))
         goto error;
 
-    vlc_tick_t ts = p_block->i_pts == VLC_TICK_INVALID ? p_block->i_dts : p_block->i_pts;
+    LONGLONG ts = p_block->i_pts;
+    if (!ts && p_block->i_dts)
+        ts = p_block->i_dts;
 
     /* Convert from microseconds to 100 nanoseconds unit. */
-    hr = IMFSample_SetSampleTime(input_sample, MSFTIME_FROM_VLC_TICK(ts));
+    hr = IMFSample_SetSampleTime(input_sample, ts * 10);
     if (FAILED(hr))
         goto error;
 
@@ -719,7 +669,7 @@ static int ProcessOutputStream(decoder_t *p_dec, DWORD stream_id)
         if (FAILED(hr))
             goto error;
         /* Convert from 100 nanoseconds unit to microseconds. */
-        vlc_tick_t samp_time = VLC_TICK_FROM_MSFTIME(sample_time);
+        sample_time /= 10;
 
         DWORD total_length = 0;
         hr = IMFSample_GetTotalLength(output_sample, &total_length);
@@ -738,7 +688,7 @@ static int ProcessOutputStream(decoder_t *p_dec, DWORD stream_id)
             hr = IMFSample_GetUINT32(output_sample, &MFSampleExtension_Interlaced, &interlaced);
             picture->b_progressive = !interlaced;
 
-            picture->date = samp_time;
+            picture->date = sample_time;
         }
         else
         {
@@ -753,7 +703,7 @@ static int ProcessOutputStream(decoder_t *p_dec, DWORD stream_id)
             if (aout_buffer->i_buffer < total_length)
                 goto error;
 
-            aout_buffer->i_pts = samp_time;
+            aout_buffer->i_pts = sample_time;
         }
 
         IMFMediaBuffer *output_media_buffer = NULL;
@@ -1096,12 +1046,6 @@ static int FindMFT(decoder_t *p_dec)
         category = MFT_CATEGORY_VIDEO_DECODER;
         p_sys->major_type = &MFMediaType_Video;
         p_sys->subtype = FormatToGUID(video_format_table, p_dec->fmt_in.i_codec);
-        if(!p_sys->subtype) {
-            /* Codec is not well known. Construct a MF transform subtype from the fourcc */
-            p_sys->custom_subtype = MFVideoFormat_Base;
-            p_sys->custom_subtype.Data1 = p_dec->fmt_in.i_codec;
-            p_sys->subtype = &p_sys->custom_subtype;
-        }
     }
     else
     {
@@ -1146,7 +1090,7 @@ static int FindMFT(decoder_t *p_dec)
 
 static int LoadMFTLibrary(MFHandle *mf)
 {
-#if _WIN32_WINNT < _WIN32_WINNT_WIN7 || VLC_WINSTORE_APP || __MINGW64_VERSION_MAJOR < 6
+#if _WIN32_WINNT < _WIN32_WINNT_WIN7 || VLC_WINSTORE_APP
     mf->mfplat_dll = LoadLibrary(TEXT("mfplat.dll"));
     if (!mf->mfplat_dll)
         return VLC_EGENERIC;

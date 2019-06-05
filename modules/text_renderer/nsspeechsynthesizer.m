@@ -2,6 +2,7 @@
  * nsspeechsynthesizer.m: Simple text to Speech renderer for Mac OS X
  *****************************************************************************
  * Copyright (C) 2015 VLC authors and VideoLAN
+ * $Id: 32d2512321093d09b7ffc1a67af78ffea80626df $
  *
  * Authors: Felix Paul Kühne <fkuehne # videolan # org>
  *
@@ -51,12 +52,12 @@ set_capability("text renderer", 0)
 set_callbacks(Create, Destroy)
 vlc_module_end ()
 
-typedef struct filter_sys_t
+struct filter_sys_t
 {
     NSSpeechSynthesizer *speechSynthesizer;
     NSString *currentLocale;
     NSString *lastString;
-} filter_sys_t;
+};
 
 static int  Create (vlc_object_t *p_this)
 {

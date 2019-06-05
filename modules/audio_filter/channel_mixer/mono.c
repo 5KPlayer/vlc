@@ -2,22 +2,23 @@
  * mono.c : stereo2mono downmixsimple channel mixer plug-in
  *****************************************************************************
  * Copyright (C) 2006 M2X
+ * $Id: 45b64b724ae6c27971dd699a80f821c6b8d9c283 $
  *
  * Authors: Jean-Paul Saman <jpsaman at m2x dot nl>
  *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU Lesser General Public License as published by
- * the Free Software Foundation; either version 2.1 of the License, or
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU Lesser General Public License for more details.
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program; if not, write to the Free Software Foundation,
- * Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
 /*****************************************************************************
@@ -30,6 +31,7 @@
 #include <math.h>                                        /* sqrt */
 #include <stdint.h>                                         /* int16_t .. */
 
+#define VLC_MODULE_LICENSE VLC_LICENSE_GPL_2_PLUS
 #include <vlc_common.h>
 #include <vlc_plugin.h>
 #include <vlc_block.h>
@@ -59,7 +61,7 @@ struct atomic_operation_t
     double d_amplitude_factor;
 };
 
-typedef struct
+struct filter_sys_t
 {
     bool b_downmix;
 
@@ -71,7 +73,7 @@ typedef struct
     uint8_t * p_overflow_buffer;
     unsigned int i_nb_atomic_operations;
     struct atomic_operation_t * p_atomic_operations;
-} filter_sys_t;
+};
 
 #define MONO_DOWNMIX_TEXT N_("Use downmix algorithm")
 #define MONO_DOWNMIX_LONGTEXT N_("This option selects a stereo to mono " \
@@ -133,7 +135,7 @@ vlc_module_end ()
  *
  *          x-axis
  *  */
-static void ComputeChannelOperations( filter_sys_t * p_data,
+static void ComputeChannelOperations( struct filter_sys_t * p_data,
         unsigned int i_rate, unsigned int i_next_atomic_operation,
         int i_source_channel_offset, double d_x, double d_z,
         double d_compensation_length, double d_channel_amplitude_factor )
@@ -190,7 +192,7 @@ static void ComputeChannelOperations( filter_sys_t * p_data,
     }
 }
 
-static int Init( vlc_object_t *p_this, filter_sys_t * p_data,
+static int Init( vlc_object_t *p_this, struct filter_sys_t * p_data,
                  unsigned int i_nb_channels, uint32_t i_physical_channels,
                  unsigned int i_rate )
 {
@@ -430,8 +432,7 @@ static block_t *Convert( filter_t *p_filter, block_t *p_block )
         return NULL;
     }
 
-    filter_sys_t *p_sys = p_filter->p_sys;
-    i_out_size = p_block->i_nb_samples * p_sys->i_bitspersample/8 *
+    i_out_size = p_block->i_nb_samples * p_filter->p_sys->i_bitspersample/8 *
                  aout_FormatNbChannels( &(p_filter->fmt_out.audio) );
 
     p_out = block_Alloc( i_out_size );
@@ -442,11 +443,11 @@ static block_t *Convert( filter_t *p_filter, block_t *p_block )
         return NULL;
     }
     p_out->i_nb_samples =
-                  (p_block->i_nb_samples / p_sys->i_nb_channels) *
+                  (p_block->i_nb_samples / p_filter->p_sys->i_nb_channels) *
                        aout_FormatNbChannels( &(p_filter->fmt_out.audio) );
 
 #if 0
-    unsigned int i_in_size = in_buf.i_nb_samples  * (p_sys->i_bitspersample/8) *
+    unsigned int i_in_size = in_buf.i_nb_samples  * (p_filter->p_sys->i_bitspersample/8) *
                              aout_FormatNbChannels( &(p_filter->fmt_in.audio) );
     if( (in_buf.i_buffer != i_in_size) && ((i_in_size % 32) != 0) ) /* is it word aligned?? */
     {
@@ -456,7 +457,7 @@ static block_t *Convert( filter_t *p_filter, block_t *p_block )
 #endif
 
     memset( p_out->p_buffer, 0, i_out_size );
-    if( p_sys->b_downmix )
+    if( p_filter->p_sys->b_downmix )
     {
         stereo2mono_downmix( p_filter, p_block, p_out );
         mono( p_filter, p_out, p_block );

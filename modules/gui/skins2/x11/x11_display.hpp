@@ -2,6 +2,7 @@
  * x11_display.hpp
  *****************************************************************************
  * Copyright (C) 2003 the VideoLAN team
+ * $Id: dea86e2a8909daf5913fe7793a20045e0c1f0e06 $
  *
  * Authors: Cyril Deguet     <asmax@via.ecp.fr>
  *          Olivier Teulière <ipkiss@via.ecp.fr>
@@ -45,7 +46,6 @@
 #define NET_WM_WINDOW_OPACITY     m_rDisplay.m_net_wm_window_opacity
 
 #define NET_WM_PID                m_rDisplay.m_net_wm_pid
-#define NET_WORKAREA              m_rDisplay.m_net_workarea
 
 /// Class for encapsulation of a X11 Display
 class X11Display: public SkinObject
@@ -99,7 +99,6 @@ public:
     Atom m_net_wm_window_opacity;
 
     Atom m_net_wm_pid;
-    Atom m_net_workarea;
 
     /// test EWMH capabilities
     void testEWMH();

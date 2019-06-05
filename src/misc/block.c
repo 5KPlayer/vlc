@@ -36,6 +36,13 @@
 #include <vlc_fs.h>
 
 #ifndef NDEBUG
+static void BlockNoRelease( block_t *b )
+{
+    fprintf( stderr, "block %p has no release callback! This is a bug!\n",
+             (void *) b );
+    abort();
+}
+
 static void block_Check (block_t *block)
 {
     while (block != NULL)
@@ -45,6 +52,7 @@ static void block_Check (block_t *block)
         unsigned char *bufstart = block->p_buffer;
         unsigned char *bufend = block->p_buffer + block->i_buffer;
 
+        assert (block->pf_release != BlockNoRelease);
         assert (start <= end);
         assert (bufstart <= bufend);
         assert (bufstart >= start);
@@ -53,12 +61,19 @@ static void block_Check (block_t *block)
         block = block->p_next;
     }
 }
+
+static void block_Invalidate (block_t *block)
+{
+    block->p_next = NULL;
+    block_Check (block);
+    block->pf_release = BlockNoRelease;
+}
 #else
 # define block_Check(b) ((void)(b))
+# define block_Invalidate(b) ((void)(b))
 #endif
 
-block_t *block_Init(block_t *restrict b, const struct vlc_block_callbacks *cbs,
-                    void *buf, size_t size)
+void block_Init( block_t *restrict b, void *buf, size_t size )
 {
     /* Fill all fields to their default */
     b->p_next = NULL;
@@ -69,23 +84,20 @@ block_t *block_Init(block_t *restrict b, const struct vlc_block_callbacks *cbs,
     b->i_flags = 0;
     b->i_nb_samples = 0;
     b->i_pts =
-    b->i_dts = VLC_TICK_INVALID;
+    b->i_dts = VLC_TS_INVALID;
     b->i_length = 0;
-    b->cbs = cbs;
-    return b;
+#ifndef NDEBUG
+    b->pf_release = BlockNoRelease;
+#endif
 }
 
 static void block_generic_Release (block_t *block)
 {
     /* That is always true for blocks allocated with block_Alloc(). */
     assert (block->p_start == (unsigned char *)(block + 1));
+    block_Invalidate (block);
     free (block);
 }
-
-static const struct vlc_block_callbacks block_generic_cbs =
-{
-    block_generic_Release,
-};
 
 static void BlockMetaCopy( block_t *restrict out, const block_t *in )
 {
@@ -123,22 +135,14 @@ block_t *block_Alloc (size_t size)
     if (unlikely(b == NULL))
         return NULL;
 
-    block_Init(b, &block_generic_cbs, b + 1, alloc - sizeof (*b));
+    block_Init (b, b + 1, alloc - sizeof (*b));
     static_assert ((BLOCK_PADDING % BLOCK_ALIGN) == 0,
                    "BLOCK_PADDING must be a multiple of BLOCK_ALIGN");
     b->p_buffer += BLOCK_PADDING + BLOCK_ALIGN - 1;
     b->p_buffer = (void *)(((uintptr_t)b->p_buffer) & ~(BLOCK_ALIGN - 1));
     b->i_buffer = size;
+    b->pf_release = block_generic_Release;
     return b;
-}
-
-void block_Release(block_t *block)
-{
-#ifndef NDEBUG
-    block->p_next = NULL;
-    block_Check (block);
-#endif
-    block->cbs->free(block);
 }
 
 block_t *block_TryRealloc (block_t *p_block, ssize_t i_prebody, size_t i_body)
@@ -242,14 +246,10 @@ block_t *block_Realloc (block_t *block, ssize_t prebody, size_t body)
 
 static void block_heap_Release (block_t *block)
 {
+    block_Invalidate (block);
     free (block->p_start);
     free (block);
 }
-
-static const struct vlc_block_callbacks block_heap_cbs =
-{
-    block_heap_Release,
-};
 
 block_t *block_heap_Alloc (void *addr, size_t length)
 {
@@ -260,7 +260,9 @@ block_t *block_heap_Alloc (void *addr, size_t length)
         return NULL;
     }
 
-    return block_Init(block, &block_heap_cbs, addr, length);
+    block_Init (block, addr, length);
+    block->pf_release = block_heap_Release;
+    return block;
 }
 
 #ifdef HAVE_MMAP
@@ -268,14 +270,10 @@ block_t *block_heap_Alloc (void *addr, size_t length)
 
 static void block_mmap_Release (block_t *block)
 {
+    block_Invalidate (block);
     munmap (block->p_start, block->i_size);
     free (block);
 }
-
-static const struct vlc_block_callbacks block_mmap_cbs =
-{
-    block_mmap_Release,
-};
 
 block_t *block_mmap_Alloc (void *addr, size_t length)
 {
@@ -293,10 +291,10 @@ block_t *block_mmap_Alloc (void *addr, size_t length)
         return NULL;
     }
 
-    block_Init(block, &block_mmap_cbs,
-               ((char *)addr) - left, left + length + right);
+    block_Init (block, ((char *)addr) - left, left + length + right);
     block->p_buffer = addr;
     block->i_buffer = length;
+    block->pf_release = block_mmap_Release;
     return block;
 }
 #else
@@ -309,27 +307,33 @@ block_t *block_mmap_Alloc (void *addr, size_t length)
 #ifdef HAVE_SYS_SHM_H
 # include <sys/shm.h>
 
+typedef struct block_shm_t
+{
+    block_t     self;
+    void       *base_addr;
+} block_shm_t;
+
 static void block_shm_Release (block_t *block)
 {
-    shmdt(block->p_start);
-    free(block);
-}
+    block_shm_t *p_sys = (block_shm_t *)block;
 
-static const struct vlc_block_callbacks block_shm_cbs =
-{
-    block_shm_Release,
-};
+    shmdt (p_sys->base_addr);
+    free (p_sys);
+}
 
 block_t *block_shm_Alloc (void *addr, size_t length)
 {
-    block_t *block = malloc (sizeof (*block));
+    block_shm_t *block = malloc (sizeof (*block));
     if (unlikely(block == NULL))
     {
         shmdt (addr);
         return NULL;
     }
 
-    return block_Init(block, &block_shm_cbs, (uint8_t *)addr, length);
+    block_Init (&block->self, (uint8_t *)addr, length);
+    block->self.pf_release = block_shm_Release;
+    block->base_addr = addr;
+    return &block->self;
 }
 #else
 block_t *block_shm_Alloc (void *addr, size_t length)
@@ -405,8 +409,6 @@ block_t *block_File(int fd, bool write)
         if (addr != MAP_FAILED)
             return block_mmap_Alloc (addr, length);
     }
-#else
-    (void) write;
 #endif
 
     /* If mmap() is not implemented by the OS _or_ the filesystem... */

@@ -88,10 +88,10 @@ static time_t str_duration( const char *psz_duration )
 
 IsoTime::IsoTime(const std::string &str)
 {
-    time = vlc_tick_from_sec(str_duration(str.c_str()));
+    time = str_duration(str.c_str());
 }
 
-IsoTime::operator vlc_tick_t () const
+IsoTime::operator time_t () const
 {
     return time;
 }
@@ -149,37 +149,32 @@ UTCTime::UTCTime(const std::string &str)
             }
         }
 
-        if (!in.fail() && !in.bad()) {
-            struct tm tm;
+        struct tm tm;
 
-            tm.tm_year = values[UTCTIME_YEAR] - 1900;
-            tm.tm_mon = values[UTCTIME_MON] - 1;
-            tm.tm_mday = values[UTCTIME_DAY];
-            tm.tm_hour = values[UTCTIME_HOUR];
-            tm.tm_min = values[UTCTIME_MIN];
-            tm.tm_sec = values[UTCTIME_SEC];
-            tm.tm_isdst = 0;
+        tm.tm_year = values[UTCTIME_YEAR] - 1900;
+        tm.tm_mon = values[UTCTIME_MON] - 1;
+        tm.tm_mday = values[UTCTIME_DAY];
+        tm.tm_hour = values[UTCTIME_HOUR];
+        tm.tm_min = values[UTCTIME_MIN];
+        tm.tm_sec = values[UTCTIME_SEC];
+        tm.tm_isdst = 0;
 
-            int64_t mst = timegm( &tm );
-            mst += values[UTCTIME_TZ] * 60;
-            mst *= 1000;
-            mst += values[UTCTIME_MSEC];
-            t = VLC_TICK_FROM_MS(mst);
-        } else {
-            // Failure parsing time string
-            t = 0;
-        }
-    } catch(...) {
+        t = timegm( &tm );
+        t += values[UTCTIME_TZ] * 60;
+        t *= 1000;
+        t += values[UTCTIME_MSEC];
+        t *= CLOCK_FREQ / 1000;
+    } catch(int) {
         t = 0;
     }
 }
 
 time_t UTCTime::time() const
 {
-    return SEC_FROM_VLC_TICK(t);
+    return t / CLOCK_FREQ;
 }
 
-vlc_tick_t UTCTime::mtime() const
+mtime_t UTCTime::mtime() const
 {
     return t;
 }

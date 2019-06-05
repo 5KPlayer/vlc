@@ -1,6 +1,7 @@
 /*
  * media_player.c - libvlc smoke test
  *
+ * $Id: eef9ece0516b6525107f9ba9dcf6314cf350e961 $
  */
 
 /**********************************************************************
@@ -48,7 +49,7 @@ static void print_media(libvlc_media_t *media)
         for (unsigned i = 0; i < i_count; ++i)
         {
             libvlc_media_track_t *p_track = pp_tracks[i];
-            test_log("\ttrack(%d/%d): codec: %4.4s/%4.4s, ", i, p_track->i_id,
+            log("\ttrack(%d/%d): codec: %4.4s/%4.4s, ", i, p_track->i_id,
                 (const char *)&p_track->i_codec,
                 (const char *)&p_track->i_original_fourcc);
             switch (p_track->i_type)
@@ -76,14 +77,14 @@ static void print_media(libvlc_media_t *media)
         libvlc_media_tracks_release(pp_tracks, i_count);
     }
     else
-        test_log("\tmedia doesn't have any tracks\n");
+        log("\tmedia doesn't have any tracks\n");
 
     for (enum libvlc_meta_t i = libvlc_meta_Title;
          i <= libvlc_meta_DiscTotal; ++i)
     {
         char *psz_meta = libvlc_media_get_meta(media, i);
         if (psz_meta != NULL)
-            test_log("\tmeta(%d): '%s'\n", i, psz_meta);
+            log("\tmeta(%d): '%s'\n", i, psz_meta);
         free(psz_meta);
     }
 }
@@ -93,8 +94,8 @@ static void test_media_preparsed(libvlc_instance_t *vlc, const char *path,
                                  libvlc_media_parse_flag_t parse_flags,
                                  libvlc_media_parsed_status_t i_expected_status)
 {
-    test_log ("test_media_preparsed: %s, expected: %d\n", path ? path : location,
-              i_expected_status);
+    log ("test_media_preparsed: %s, expected: %d\n", path ? path : location,
+         i_expected_status);
 
     libvlc_media_t *media;
     if (path != NULL)
@@ -126,21 +127,19 @@ static void test_media_preparsed(libvlc_instance_t *vlc, const char *path,
     libvlc_media_release (media);
 }
 
-static void input_item_preparse_timeout( input_item_t *item,
-                                         enum input_item_preparse_status status,
+static void input_item_preparse_timeout( const vlc_event_t *p_event,
                                          void *user_data )
 {
-    VLC_UNUSED(item);
     vlc_sem_t *p_sem = user_data;
 
-    assert( status == ITEM_PREPARSE_TIMEOUT );
+    assert( p_event->u.input_item_preparse_ended.new_status == ITEM_PREPARSE_TIMEOUT );
     vlc_sem_post(p_sem);
 }
 
 static void test_input_metadata_timeout(libvlc_instance_t *vlc, int timeout,
                                         int wait_and_cancel)
 {
-    test_log ("test_input_metadata_timeout: timeout: %d, wait_and_cancel: %d ms\n",
+    log ("test_input_metadata_timeout: timeout: %d, wait_and_cancel: %d\n",
          timeout, wait_and_cancel);
 
     int i_ret, p_pipe[2];
@@ -155,17 +154,16 @@ static void test_input_metadata_timeout(libvlc_instance_t *vlc, int timeout,
 
     vlc_sem_t sem;
     vlc_sem_init (&sem, 0);
-    const struct input_preparser_callbacks_t cbs = {
-        .on_preparse_ended = input_item_preparse_timeout,
-    };
+    i_ret = vlc_event_attach(&p_item->event_manager, vlc_InputItemPreparseEnded,
+                             input_item_preparse_timeout, &sem);
+    assert(i_ret == 0);
     i_ret = libvlc_MetadataRequest(vlc->p_libvlc_int, p_item,
-                                   META_REQUEST_OPTION_SCOPE_LOCAL,
-                                   &cbs, &sem, timeout, vlc);
+                                   META_REQUEST_OPTION_SCOPE_LOCAL, timeout, vlc);
     assert(i_ret == 0);
 
     if (wait_and_cancel > 0)
     {
-        vlc_tick_sleep( VLC_TICK_FROM_MS(wait_and_cancel) );
+        msleep(wait_and_cancel * 1000);
         libvlc_MetadataCancel(vlc->p_libvlc_int, vlc);
 
     }
@@ -216,7 +214,7 @@ static void subitem_added(const libvlc_event_t *event, void *user_data)
     const char *file = strrchr (mrl, FILE_SEPARATOR);
     assert (file);
     file++;
-    test_log ("subitem_added, file: %s\n", file);
+    log ("subitem_added, file: %s\n", file);
 
     for (unsigned i = 0; i < TEST_SUBITEMS_COUNT; ++i)
     {
@@ -273,7 +271,7 @@ static void test_media_subitems_media(libvlc_media_t *media, bool play,
 
     for (unsigned i = 0; i < TEST_SUBITEMS_COUNT; ++i)
     {
-        test_log ("test if %s was added\n", test_media_subitems_list[i].file);
+        log ("test if %s was added\n", test_media_subitems_list[i].file);
         assert (subitems_found[i]);
     }
 }
@@ -284,7 +282,7 @@ static void test_media_subitems(libvlc_instance_t *vlc)
 
     libvlc_media_t *media;
 
-    test_log ("Testing media_subitems: path: '%s'\n", subitems_path);
+    log ("Testing media_subitems: path: '%s'\n", subitems_path);
     media = libvlc_media_new_path (vlc, subitems_path);
     assert (media != NULL);
     test_media_subitems_media (media, false, true);
@@ -298,7 +296,7 @@ static void test_media_subitems(libvlc_instance_t *vlc)
     {
         char *location;
         assert (asprintf (&location, "%s%s", schemes[i], subitems_realpath) != -1);
-        test_log ("Testing media_subitems: location: '%s'\n", location);
+        log ("Testing media_subitems: location: '%s'\n", location);
         media = libvlc_media_new_location (vlc, location);
         assert (media != NULL);
         test_media_subitems_media (media, false, true);
@@ -310,7 +308,7 @@ static void test_media_subitems(libvlc_instance_t *vlc)
 #ifdef HAVE_OPENAT
     /* listing directory via a fd works only if HAVE_OPENAT is defined */
     int fd = open (subitems_path, O_RDONLY);
-    test_log ("Testing media_subitems: fd: '%d'\n", fd);
+    log ("Testing media_subitems: fd: '%d'\n", fd);
     assert (fd >= 0);
     media = libvlc_media_new_fd (vlc, fd);
     assert (media != NULL);
@@ -321,7 +319,7 @@ static void test_media_subitems(libvlc_instance_t *vlc)
 #warning not testing subitems list via a fd location
 #endif
 
-    test_log ("Testing media_subitems failure\n");
+    log ("Testing media_subitems failure\n");
     media = libvlc_media_new_location (vlc, "wrongfile://test");
     assert (media != NULL);
     test_media_subitems_media (media, false, false);

@@ -2,6 +2,7 @@
  * archive.c: libarchive based stream filter
  *****************************************************************************
  * Copyright (C) 2016 VLC authors and VideoLAN
+ * $Id: af69a29094c5c07eb42945959d4fd36669954937 $
  *
  * Authors: Filip Roséen <filip@atch.se>
  *
@@ -363,7 +364,7 @@ static int archive_seek_subentry( private_sys_t* p_sys, char const* psz_subentry
         case ARCHIVE_WARN:
             msg_Warn( p_sys->p_obj,
               "libarchive: %s", archive_error_string( p_arc ) );
-            /* fall through */
+
         case ARCHIVE_EOF:
         case ARCHIVE_FATAL:
         case ARCHIVE_RETRY:
@@ -643,11 +644,12 @@ static int Seek( stream_extractor_t* p_extractor, uint64_t i_req )
             "intrinsic seek failed: '%s' (falling back to dumb seek)",
             archive_error_string( p_sys->p_archive ) );
 
-        uint64_t i_skip = i_req - p_sys->i_offset;
+        uint64_t i_offset = p_sys->i_offset;
+        uint64_t i_skip   = i_req - i_offset;
 
-        /* RECREATE LIBARCHIVE HANDLE IF WE ARE SEEKING BACKWARDS */
+        /* RECREATE LIBARCHIE HANDLE IF WE ARE SEEKING BACKWARDS */
 
-        if( i_req < p_sys->i_offset )
+        if( i_req < i_offset )
         {
             if( archive_extractor_reset( p_extractor ) )
             {
@@ -656,6 +658,7 @@ static int Seek( stream_extractor_t* p_extractor, uint64_t i_req )
             }
 
             i_skip = i_req;
+            i_offset = 0;
         }
 
         if( archive_skip_decompressed( p_extractor, i_skip ) )

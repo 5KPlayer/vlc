@@ -34,7 +34,6 @@ using namespace adaptive::playlist;
 SegmentList::SegmentList( SegmentInformation *parent ):
     SegmentInfoCommon( parent ), TimescaleAble( parent )
 {
-    totalLength = 0;
 }
 SegmentList::~SegmentList()
 {
@@ -70,18 +69,12 @@ void SegmentList::addSegment(ISegment *seg)
 {
     seg->setParent(this);
     segments.push_back(seg);
-    totalLength += seg->duration.Get();
 }
 
-void SegmentList::updateWith(SegmentList *updated, bool b_restamp)
+void SegmentList::mergeWith(SegmentList *updated, bool b_restamp)
 {
     const ISegment * lastSegment = (segments.empty()) ? NULL : segments.back();
     const ISegment * prevSegment = lastSegment;
-
-    if(updated->segments.empty())
-        return;
-
-    uint64_t firstnumber = updated->segments.front()->getSequenceNumber();
 
     std::vector<ISegment *>::iterator it;
     for(it = updated->segments.begin(); it != updated->segments.end(); ++it)
@@ -105,11 +98,9 @@ void SegmentList::updateWith(SegmentList *updated, bool b_restamp)
             delete cur;
     }
     updated->segments.clear();
-
-    pruneBySegmentNumber(firstnumber);
 }
 
-void SegmentList::pruneByPlaybackTime(vlc_tick_t time)
+void SegmentList::pruneByPlaybackTime(mtime_t time)
 {
     uint64_t num;
     const Timescale timescale = inheritTimescale();
@@ -127,7 +118,9 @@ void SegmentList::pruneBySegmentNumber(uint64_t tobelownum)
         if(seg->getSequenceNumber() >= tobelownum)
             break;
 
-        totalLength -= (*it)->duration.Get();
+        if(seg->chunksuse.Get()) /* can't prune from here, still in use */
+            break;
+
         delete *it;
         it = segments.erase(it);
     }
@@ -147,9 +140,9 @@ bool SegmentList::getSegmentNumberByScaledTime(stime_t time, uint64_t *ret) cons
 }
 
 bool SegmentList::getPlaybackTimeDurationBySegmentNumber(uint64_t number,
-                                                         vlc_tick_t *time, vlc_tick_t *dur) const
+                                                         mtime_t *time, mtime_t *dur) const
 {
-    *time = *dur = VLC_TICK_INVALID;
+    *time = *dur = VLC_TS_INVALID;
 
     if(segments.empty())
         return false;
@@ -185,12 +178,7 @@ bool SegmentList::getPlaybackTimeDurationBySegmentNumber(uint64_t number,
     if(!found)
         return false;
 
-    *time = VLC_TICK_0 + timescale.ToTime(seg_start);
-    *dur = VLC_TICK_0 + timescale.ToTime(seg_dura);
+    *time = VLC_TS_0 + timescale.ToTime(seg_start);
+    *dur = VLC_TS_0 + timescale.ToTime(seg_dura);
     return true;
-}
-
-stime_t SegmentList::getTotalLength() const
-{
-    return totalLength;
 }

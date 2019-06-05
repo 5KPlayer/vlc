@@ -2,6 +2,7 @@
  * mmal_picture.h: Shared header for MMAL pictures
  *****************************************************************************
  * Copyright © 2014 jusst technologies GmbH
+ * $Id: 3539f2cfc834b0fc8bbbf4d8f98dea0bb27978d2 $
  *
  * Authors: Julian Scheel <julian@jusst.de>
  *
@@ -29,13 +30,12 @@
 /* Think twice before changing this. Incorrect values cause havoc. */
 #define NUM_ACTUAL_OPAQUE_BUFFERS 30
 
-typedef struct
-{
+struct picture_sys_t {
     vlc_object_t *owner;
 
     MMAL_BUFFER_HEADER_T *buffer;
     bool displayed;
-} picture_sys_t;
+};
 
 int mmal_picture_lock(picture_t *picture);
 

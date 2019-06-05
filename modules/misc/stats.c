@@ -55,18 +55,18 @@ static int DecodeBlock( decoder_t *p_dec, block_t *p_block )
     if( p_block->i_buffer == kBufferSize )
     {
         msg_Dbg( p_dec, "got %"PRIu64" ms",
-                 MS_FROM_VLC_TICK(*(vlc_tick_t *)p_block->p_buffer) );
+                 *(mtime_t *)p_block->p_buffer  / 1000 );
         msg_Dbg( p_dec, "got %"PRIu64" ms offset",
-                 MS_FROM_VLC_TICK(vlc_tick_now() - *(vlc_tick_t *)p_block->p_buffer) );
-        *(vlc_tick_t *)(p_pic->p->p_pixels) = *(vlc_tick_t *)p_block->p_buffer;
+                 (mdate() - *(mtime_t *)p_block->p_buffer) / 1000 );
+        *(mtime_t *)(p_pic->p->p_pixels) = *(mtime_t *)p_block->p_buffer;
     }
     else
     {
         msg_Dbg( p_dec, "got a packet not from stats demuxer" );
-        *(vlc_tick_t *)(p_pic->p->p_pixels) = vlc_tick_now();
+        *(mtime_t *)(p_pic->p->p_pixels) = mdate();
     }
 
-    p_pic->date = p_block->i_pts != VLC_TICK_INVALID ?
+    p_pic->date = p_block->i_pts > VLC_TS_INVALID ?
             p_block->i_pts : p_block->i_dts;
     p_pic->b_force = true;
 
@@ -102,13 +102,13 @@ static block_t *EncodeVideo( encoder_t *p_enc, picture_t *p_pict )
     (void)p_pict;
     block_t * p_block = block_Alloc( kBufferSize );
 
-    *(vlc_tick_t*)p_block->p_buffer = vlc_tick_now();
+    *(mtime_t*)p_block->p_buffer = mdate();
     p_block->i_buffer = kBufferSize;
     p_block->i_length = kBufferSize;
     p_block->i_dts = p_pict->date;
 
     msg_Dbg( p_enc, "putting %"PRIu64"ms",
-             MS_FROM_VLC_TICK(*(vlc_tick_t*)p_block->p_buffer) );
+             *(mtime_t*)p_block->p_buffer / 1000 );
     return p_block;
 }
 
@@ -133,13 +133,13 @@ static int OpenEncoder ( vlc_object_t *p_this )
 #endif
 
 /*** Demuxer ***/
-typedef struct
+struct demux_sys_t
 {
     es_format_t     fmt;
     es_out_id_t     *p_es;
 
     date_t          pts;
-} demux_sys_t;
+};
 
 static int Demux( demux_t *p_demux )
 {
@@ -149,10 +149,11 @@ static int Demux( demux_t *p_demux )
 
     if( !p_block ) return 1;
 
-    p_block->i_dts = p_block->i_pts = date_Increment( &p_sys->pts, kBufferSize );
+    p_block->i_dts = p_block->i_pts =
+        date_Increment( &p_sys->pts, kBufferSize );
 
     msg_Dbg( p_demux, "demux got %"PRId64" ms offset",
-             MS_FROM_VLC_TICK(vlc_tick_now() - *(vlc_tick_t *)p_block->p_buffer) );
+             (mdate() - *(mtime_t *)p_block->p_buffer) / 1000 );
 
     //es_out_SetPCR( p_demux->out, p_block->i_pts );
 
@@ -176,7 +177,7 @@ static int OpenDemux ( vlc_object_t *p_this )
     p_demux->p_sys = NULL;
 
     /* Only when selected */
-    if( *p_demux->psz_name == '\0' )
+    if( *p_demux->psz_demux == '\0' )
         return VLC_EGENERIC;
 
     msg_Dbg( p_demux, "Init Stat demux" );
@@ -189,7 +190,7 @@ static int OpenDemux ( vlc_object_t *p_this )
         return VLC_ENOMEM;
 
     date_Init( &p_sys->pts, 1, 1 );
-    date_Set( &p_sys->pts, VLC_TICK_0 );
+    date_Set( &p_sys->pts, 1 );
 
     es_format_Init( &p_sys->fmt, VIDEO_ES, VLC_FOURCC('s','t','a','t') );
     p_sys->fmt.video.i_width = 720;

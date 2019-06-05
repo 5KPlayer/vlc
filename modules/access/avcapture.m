@@ -68,7 +68,7 @@ vlc_module_begin ()
    set_category(CAT_INPUT)
    set_subcategory(SUBCAT_INPUT_ACCESS)
    add_shortcut("avcapture")
-   set_capability("access", 0)
+   set_capability("access_demux", 10)
    set_callbacks(Open, Close)
 vlc_module_end ()
 
@@ -82,8 +82,8 @@ vlc_module_end ()
 
     CVImageBufferRef    currentImageBuffer;
 
-    vlc_tick_t          currentPts;
-    vlc_tick_t          previousPts;
+    mtime_t             currentPts;
+    mtime_t             previousPts;
     size_t              bytesPerRow;
 
     long                timeScale;
@@ -96,9 +96,9 @@ vlc_module_end ()
 - (int)width;
 - (int)height;
 - (void)getVideoDimensions:(CMSampleBufferRef)sampleBuffer;
-- (vlc_tick_t)currentPts;
+- (mtime_t)currentPts;
 - (void)captureOutput:(AVCaptureOutput *)captureOutput didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer fromConnection:(AVCaptureConnection *)connection;
-- (vlc_tick_t)copyCurrentFrameToBuffer:(void *)buffer;
+- (mtime_t)copyCurrentFrameToBuffer:(void *)buffer;
 @end
 
 @implementation VLCAVDecompressedVideoOutput : AVCaptureVideoDataOutput
@@ -161,9 +161,9 @@ vlc_module_end ()
     }
 }
 
--(vlc_tick_t)currentPts
+-(mtime_t)currentPts
 {
-    vlc_tick_t pts;
+    mtime_t pts;
 
     if ( !currentImageBuffer || currentPts == previousPts )
         return 0;
@@ -190,7 +190,7 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
         @synchronized (self) {
             imageBufferToRelease = currentImageBuffer;
             currentImageBuffer = videoFrame;
-            currentPts = (vlc_tick_t)presentationtimestamp.value;
+            currentPts = (mtime_t)presentationtimestamp.value;
             timeScale = (long)presentationtimestamp.timescale;
         }
         
@@ -198,10 +198,10 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
     }
 }
 
-- (vlc_tick_t)copyCurrentFrameToBuffer:(void *)buffer
+- (mtime_t)copyCurrentFrameToBuffer:(void *)buffer
 {
     CVImageBufferRef imageBuffer;
-    vlc_tick_t pts;
+    mtime_t pts;
 
     void *pixels;
 
@@ -237,7 +237,7 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
 * Struct
 *****************************************************************************/
 
-typedef struct demux_sys_t
+struct demux_sys_t
 {
     CFTypeRef _Nullable             session;       // AVCaptureSession
     CFTypeRef _Nullable             device;        // AVCaptureDevice
@@ -246,7 +246,7 @@ typedef struct demux_sys_t
     es_format_t                     fmt;
     int                             height, width;
     BOOL                            b_es_setup;
-} demux_sys_t;
+};
 
 /*****************************************************************************
 * Open:
@@ -266,7 +266,8 @@ static int Open(vlc_object_t *p_this)
 
     char                    *psz_uid = NULL;
 
-    if (p_demux->out == NULL)
+    /* Only when selected */
+    if ( *p_demux->psz_access == '\0' )
         return VLC_EGENERIC;
 
     @autoreleasepool {
@@ -279,6 +280,9 @@ static int Open(vlc_object_t *p_this)
         /* Set up p_demux */
         p_demux->pf_demux = Demux;
         p_demux->pf_control = Control;
+        p_demux->info.i_update = 0;
+        p_demux->info.i_title = 0;
+        p_demux->info.i_seekpoint = 0;
 
         p_demux->p_sys = p_sys = calloc(1, sizeof(demux_sys_t));
         if ( !p_sys )
@@ -435,7 +439,7 @@ static int Demux(demux_t *p_demux)
             {
                 /* Nothing to display yet, just forget */
                 block_Release(p_block);
-                vlc_tick_sleep(VLC_HARD_MIN_SLEEP);
+                msleep(10000);
                 return 1;
             }
             else if ( !p_sys->b_es_setup )
@@ -463,6 +467,7 @@ static int Demux(demux_t *p_demux)
 static int Control(demux_t *p_demux, int i_query, va_list args)
 {
     bool        *pb;
+    int64_t     *pi64;
 
     switch( i_query )
     {
@@ -476,12 +481,13 @@ static int Control(demux_t *p_demux, int i_query, va_list args)
            return VLC_SUCCESS;
 
         case DEMUX_GET_PTS_DELAY:
-           *va_arg(args, vlc_tick_t *) =
-               VLC_TICK_FROM_MS(var_InheritInteger(p_demux, "live-caching"));
+           pi64 = va_arg(args, int64_t *);
+           *pi64 = INT64_C(1000) * var_InheritInteger(p_demux, "live-caching");
            return VLC_SUCCESS;
 
         case DEMUX_GET_TIME:
-            *va_arg(args, vlc_tick_t *) = vlc_tick_now();
+            pi64 = va_arg(args, int64_t *);
+            *pi64 = mdate();
             return VLC_SUCCESS;
 
         default:

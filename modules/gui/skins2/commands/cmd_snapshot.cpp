@@ -2,6 +2,7 @@
  * cmd_snapshot.cpp
  *****************************************************************************
  * Copyright (C) 2006-2009 the VideoLAN team
+ * $Id: 33107c5690f24548ce56354c75456bff63237221 $
  *
  * Authors: Olivier Teulière <ipkiss@via.ecp.fr>
  *
@@ -34,7 +35,7 @@ void CmdSnapshot::execute()
     {
         // Take a snapshot
         var_TriggerCallback( pVout, "video-snapshot" );
-        vout_Release(pVout);
+        vlc_object_release( pVout );
     }
 }
 

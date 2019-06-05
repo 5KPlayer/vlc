@@ -2,6 +2,7 @@
  * i420_rgb16.c : YUV to bitmap RGB conversion module for vlc
  *****************************************************************************
  * Copyright (C) 2000 VLC authors and VideoLAN
+ * $Id: acf7a04f9ec24d52979680ec2e383c98a6bfadd8 $
  *
  * Authors: Samuel Hocevar <sam@zoy.org>
  *          Damien Fouilleul <damienf@videolan.org>
@@ -106,8 +107,6 @@ static void SetOffset( int i_width, int i_height, int i_pic_width,
 
 void I420_RGB16( filter_t *p_filter, picture_t *p_src, picture_t *p_dest )
 {
-    filter_sys_t *p_sys = p_filter->p_sys;
-
     /* We got this one from the old arguments */
     uint16_t *p_pic = (uint16_t*)p_dest->p->p_pixels;
     uint8_t  *p_y   = p_src->Y_PIXELS;
@@ -125,15 +124,15 @@ void I420_RGB16( filter_t *p_filter, picture_t *p_src, picture_t *p_dest )
     uint16_t *  p_pic_start;       /* beginning of the current line for copy */
     int         i_uval, i_vval;                           /* U and V samples */
     int         i_red, i_green, i_blue;          /* U and V modified samples */
-    uint16_t *  p_yuv = p_sys->p_rgb16;
+    uint16_t *  p_yuv = p_filter->p_sys->p_rgb16;
     uint16_t *  p_ybase;                     /* Y dependant conversion table */
 
     /* Conversion buffer pointer */
-    uint16_t *  p_buffer_start;
+    uint16_t *  p_buffer_start = (uint16_t*)p_filter->p_sys->p_buffer;
     uint16_t *  p_buffer;
 
     /* Offset array pointer */
-    int *       p_offset_start = p_sys->p_offset;
+    int *       p_offset_start = p_filter->p_sys->p_offset;
     int *       p_offset;
 
     const int i_source_margin = p_src->p[0].i_pitch
@@ -154,14 +153,6 @@ void I420_RGB16( filter_t *p_filter, picture_t *p_src, picture_t *p_dest )
                (p_filter->fmt_out.video.i_x_offset + p_filter->fmt_out.video.i_visible_width),
                (p_filter->fmt_out.video.i_y_offset + p_filter->fmt_out.video.i_visible_height),
                &b_hscale, &i_vscale, p_offset_start );
-
-    if(b_hscale &&
-       AllocateOrGrow(&p_sys->p_buffer, &p_sys->i_buffer_size,
-                      p_filter->fmt_in.video.i_x_offset +
-                      p_filter->fmt_in.video.i_visible_width,
-                      p_sys->i_bytespp))
-        return;
-    else p_buffer_start = (uint16_t*)p_sys->p_buffer;
 
     /*
      * Perform conversion
@@ -221,8 +212,6 @@ void I420_RGB16( filter_t *p_filter, picture_t *p_src, picture_t *p_dest )
 
 void I420_RGB32( filter_t *p_filter, picture_t *p_src, picture_t *p_dest )
 {
-    filter_sys_t *p_sys = p_filter->p_sys;
-
     /* We got this one from the old arguments */
     uint32_t *p_pic = (uint32_t*)p_dest->p->p_pixels;
     uint8_t  *p_y   = p_src->Y_PIXELS;
@@ -240,15 +229,15 @@ void I420_RGB32( filter_t *p_filter, picture_t *p_src, picture_t *p_dest )
     uint32_t *  p_pic_start;       /* beginning of the current line for copy */
     int         i_uval, i_vval;                           /* U and V samples */
     int         i_red, i_green, i_blue;          /* U and V modified samples */
-    uint32_t *  p_yuv = p_sys->p_rgb32;
+    uint32_t *  p_yuv = p_filter->p_sys->p_rgb32;
     uint32_t *  p_ybase;                     /* Y dependant conversion table */
 
     /* Conversion buffer pointer */
-    uint32_t *  p_buffer_start;
+    uint32_t *  p_buffer_start = (uint32_t*)p_filter->p_sys->p_buffer;
     uint32_t *  p_buffer;
 
     /* Offset array pointer */
-    int *       p_offset_start = p_sys->p_offset;
+    int *       p_offset_start = p_filter->p_sys->p_offset;
     int *       p_offset;
 
     const int i_source_margin = p_src->p[0].i_pitch
@@ -269,14 +258,6 @@ void I420_RGB32( filter_t *p_filter, picture_t *p_src, picture_t *p_dest )
                (p_filter->fmt_out.video.i_x_offset + p_filter->fmt_out.video.i_visible_width),
                (p_filter->fmt_out.video.i_y_offset + p_filter->fmt_out.video.i_visible_height),
                &b_hscale, &i_vscale, p_offset_start );
-
-    if(b_hscale &&
-       AllocateOrGrow(&p_sys->p_buffer, &p_sys->i_buffer_size,
-                      p_filter->fmt_in.video.i_x_offset +
-                      p_filter->fmt_in.video.i_visible_width,
-                      p_sys->i_bytespp))
-        return;
-    else p_buffer_start = (uint32_t*)p_sys->p_buffer;
 
     /*
      * Perform conversion

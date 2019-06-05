@@ -2,6 +2,7 @@
  * magnify.c : Magnify/Zoom interactive effect
  *****************************************************************************
  * Copyright (C) 2005-2009 VLC authors and VideoLAN
+ * $Id: 5f94f2d6fc2d48899b3002a85f1a0b2e04077de8 $
  *
  * Authors: Antoine Cellerier <dionoea -at- videolan -dot- org>
  *
@@ -68,19 +69,19 @@ static void DrawRectangle( uint8_t *, int i_pitch, int i_width, int i_height,
                            int x, int y, int i_w, int i_h );
 
 /* */
-typedef struct
+struct filter_sys_t
 {
     image_handler_t *p_image;
 
-    vlc_tick_t i_hide_timeout;
+    int64_t i_hide_timeout;
 
     int i_zoom; /* zoom level in percent */
     int i_x, i_y; /* top left corner coordinates in original image */
 
     bool b_visible; /* is "interface" visible ? */
 
-    vlc_tick_t i_last_activity;
-} filter_sys_t;
+    int64_t i_last_activity;
+};
 
 #define VIS_ZOOM 4
 #define ZOOM_FACTOR 8
@@ -125,8 +126,8 @@ static int Create( vlc_object_t *p_this )
     p_sys->i_y = 0;
     p_sys->i_zoom = 2*ZOOM_FACTOR;
     p_sys->b_visible = true;
-    p_sys->i_last_activity = vlc_tick_now();
-    p_sys->i_hide_timeout = VLC_TICK_FROM_MS( var_InheritInteger( p_filter, "mouse-hide-timeout" ) );
+    p_sys->i_last_activity = mdate();
+    p_sys->i_hide_timeout = 1000 * var_InheritInteger( p_filter, "mouse-hide-timeout" );
 
     /* */
     p_filter->pf_video_filter = Filter;
@@ -145,6 +146,53 @@ static void Destroy( vlc_object_t *p_this )
     image_HandlerDelete( p_sys->p_image );
 
     free( p_sys );
+}
+
+static void plane_CopyVisiblePixels( plane_t *p_dst, const plane_t *p_src )
+{
+    const unsigned i_width  = __MIN( p_dst->i_visible_pitch,
+                                     p_src->i_visible_pitch );
+    const unsigned i_height = __MIN( p_dst->i_visible_lines,
+                                     p_src->i_visible_lines );
+
+    /* The 2x visible pitch check does two things:
+       1) Makes field plane_t's work correctly (see the deinterlacer module)
+       2) Moves less data if the pitch and visible pitch differ much.
+    */
+    if( p_src->i_pitch == p_dst->i_pitch  &&
+        p_src->i_pitch < 2*p_src->i_visible_pitch )
+    {
+        /* There are margins, but with the same width : perfect ! */
+        memcpy( p_dst->p_pixels, p_src->p_pixels,
+                    p_src->i_pitch * i_height );
+    }
+    else
+    {
+        /* We need to proceed line by line */
+        uint8_t *p_in = p_src->p_pixels;
+        uint8_t *p_out = p_dst->p_pixels;
+
+        assert( p_in );
+        assert( p_out );
+
+        for( int i_line = i_height; i_line--; )
+        {
+            memcpy( p_out, p_in, i_width );
+            p_in += p_src->i_pitch;
+            p_out += p_dst->i_pitch;
+        }
+    }
+}
+
+static void picture_CopyVisiblePixels( picture_t *p_dst, const picture_t *p_src )
+{
+    for( int i = 0; i < p_src->i_planes ; i++ )
+        plane_CopyVisiblePixels( p_dst->p+i, p_src->p+i );
+
+    assert( p_dst->context == NULL );
+
+    if( p_src->context != NULL )
+        p_dst->context = p_src->context->copy( p_src->context );
 }
 
 /*****************************************************************************
@@ -207,7 +255,7 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
         picture_CopyPixels( p_outpic, p_pic );
     }
 
-    /* zoom area selector */
+    /* */
     p_oyp = &p_outpic->p[Y_PLANE];
     if( b_visible )
     {
@@ -221,7 +269,7 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
                                      &p_pic->format, &fmt_out );
 
         /* It will put only what can be copied at the top left */
-        picture_CopyPixels( p_outpic, p_converted );
+        picture_CopyVisiblePixels( p_outpic, p_converted );
 
         picture_Release( p_converted );
 
@@ -242,15 +290,15 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
         v_h = 1;
     }
 
-    /* print a small hide/show toggle text control */
+    /* print a small "VLC ZOOM" */
 
-    if( b_visible || p_sys->i_last_activity + p_sys->i_hide_timeout > vlc_tick_now() )
-        DrawZoomStatus( p_oyp->p_pixels, p_oyp->i_pitch, p_oyp->i_visible_pitch, p_oyp->i_lines,
+    if( b_visible || p_sys->i_last_activity + p_sys->i_hide_timeout > mdate() )
+        DrawZoomStatus( p_oyp->p_pixels, p_oyp->i_visible_pitch, p_oyp->i_pitch, p_oyp->i_lines,
                         1, v_h, b_visible );
 
-    /* zoom gauge */
     if( b_visible )
     {
+        /* zoom gauge */
         memset( p_oyp->p_pixels + (v_h+9)*p_oyp->i_pitch, 0xff, 41 );
         for( int y = v_h + 10; y < v_h + 90; y++ )
         {
@@ -275,17 +323,17 @@ static void DrawZoomStatus( uint8_t *pb_dst, int i_pitch, int i_width, int i_hei
                             int i_offset_x, int i_offset_y, bool b_visible )
 {
     static const char *p_hide =
-        "X   X XXXXX XXXX  XXXXX   XXXXX  XXX   XXX  XX XXL"
-        "X   X   X   X   X X          X  X   X X   X X X XL"
-        "XXXXX   X   X   X XXXX      X   X   X X   X X   XL"
-        "X   X   X   X   X X        X    X   X X   X X   XL"
-        "X   X XXXXX XXXX  XXXXX   XXXXX  XXX   XXX  X   XL";
+        "X   X X      XXXX   XXXXX  XXX   XXX  XX XX   X   X XXXXX XXXX  XXXXXL"
+        "X   X X     X          X  X   X X   X X X X   X   X   X   X   X X    L"
+        " X X  X     X         X   X   X X   X X   X   XXXXX   X   X   X XXXX L"
+        " X X  X     X        X    X   X X   X X   X   X   X   X   X   X X    L"
+        "  X   XXXXX  XXXX   XXXXX  XXX   XXX  X   X   X   X XXXXX XXXX  XXXXXL";
     static const char *p_show =
-        " XXXX X   X  XXX  X   X   XXXXX  XXX   XXX  XX XXL"
-        "X     X   X X   X X   X      X  X   X X   X X X XL"
-        " XXX  XXXXX X   X X X X     X   X   X X   X X   XL"
-        "    X X   X X   X X X X    X    X   X X   X X   XL"
-        "XXXX  X   X  XXX   X X    XXXXX  XXX   XXX  X   XL";
+        "X   X X      XXXX   XXXXX  XXX   XXX  XX XX    XXXX X   X  XXX  X   XL"
+        "X   X X     X          X  X   X X   X X X X   X     X   X X   X X   XL"
+        " X X  X     X         X   X   X X   X X   X    XXX  XXXXX X   X X X XL"
+        " X X  X     X        X    X   X X   X X   X       X X   X X   X X X XL"
+        "  X   XXXXX  XXXX   XXXXX  XXX   XXX  X   X   XXXX  X   X  XXX   X X L";
     const char *p_draw = b_visible ? p_hide : p_show;
 
     for( int i = 0, x = i_offset_x, y = i_offset_y; p_draw[i] != '\0'; i++ )
@@ -409,7 +457,7 @@ static int Mouse( filter_t *p_filter, vlc_mouse_t *p_mouse, const vlc_mouse_t *p
     }
 
     if( vlc_mouse_HasMoved( p_old, p_new ) )
-        p_sys->i_last_activity = vlc_tick_now();
+        p_sys->i_last_activity = mdate();
 
     if( b_grab )
         return VLC_EGENERIC;

@@ -2,6 +2,7 @@
  * svg.c : Put SVG on the video
  *****************************************************************************
  * Copyright (C) 2002, 2003 VLC authors and VideoLAN
+ * $Id: 71fe7e54579ef886ba554ea000958b8737b21737 $
  *
  * Authors: Olivier Aubert <oaubert@lisi.univ-lyon1.fr>
  *
@@ -53,11 +54,11 @@ static int  RenderText( filter_t *p_filter, subpicture_region_t *p_region_out,
                         subpicture_region_t *p_region_in,
                         const vlc_fourcc_t * );
 
-typedef struct
+struct filter_sys_t
 {
     char *psz_file_template;
     const char *psz_token;
-} filter_sys_t;
+};
 
 /*****************************************************************************
  * Module descriptor
@@ -179,10 +180,9 @@ static int Create( vlc_object_t *p_this )
 {
     filter_t *p_filter = ( filter_t * )p_this;
 
-    filter_sys_t *p_sys = calloc( 1, sizeof(*p_sys) );
-    if( !p_sys )
+    p_filter->p_sys = calloc( 1, sizeof(*p_filter->p_sys) );
+    if( !p_filter->p_sys )
         return VLC_ENOMEM;
-    p_filter->p_sys = p_sys;
 
     p_filter->pf_render = RenderText;
     svg_LoadTemplate( p_filter );
@@ -202,12 +202,11 @@ static int Create( vlc_object_t *p_this )
 static void Destroy( vlc_object_t *p_this )
 {
     filter_t *p_filter = ( filter_t * )p_this;
-    filter_sys_t *p_sys = p_filter->p_sys;
 #if (GLIB_MAJOR_VERSION < 2 || GLIB_MINOR_VERSION < 36)
     rsvg_term();
 #endif
-    free( p_sys->psz_file_template );
-    free( p_sys );
+    free( p_filter->p_sys->psz_file_template );
+    free( p_filter->p_sys );
 }
 
 static void svg_RescaletoFit( filter_t *p_filter, int *width, int *height, float *scale )

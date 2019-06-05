@@ -42,6 +42,7 @@ Representation::Representation  ( BaseAdaptationSet *set ) :
 {
     b_live = true;
     b_loaded = false;
+    switchpolicy = SegmentInformation::SWITCH_SEGMENT_ALIGNED; /* FIXME: based on streamformat */
     nextUpdateTime = 0;
     targetDuration = 0;
     streamFormat = StreamFormat::UNKNOWN;
@@ -104,29 +105,29 @@ void Representation::scheduleNextUpdate(uint64_t number)
     const time_t now = time(NULL);
 
     /* Compute new update time */
-    vlc_tick_t minbuffer = getMinAheadTime(number);
+    mtime_t minbuffer = getMinAheadTime(number);
 
     /* Update frequency must always be at least targetDuration (if any)
      * but we need to update before reaching that last segment, thus -1 */
     if(targetDuration)
     {
-        if(minbuffer > vlc_tick_from_sec( 2 * targetDuration + 1 ))
-            minbuffer -= vlc_tick_from_sec( targetDuration + 1 );
+        if(minbuffer > CLOCK_FREQ * ( 2 * targetDuration + 1 ))
+            minbuffer -= CLOCK_FREQ * ( targetDuration + 1 );
         else
-            minbuffer = vlc_tick_from_sec( targetDuration - 1 );
+            minbuffer = CLOCK_FREQ * ( targetDuration - 1 );
     }
     else
     {
-        if(minbuffer < VLC_TICK_FROM_SEC(10))
-            minbuffer = VLC_TICK_FROM_SEC(4);
+        if(minbuffer < 10 * CLOCK_FREQ)
+            minbuffer = 4 * CLOCK_FREQ;
         else
             minbuffer /= 2;
     }
 
-    nextUpdateTime = now + SEC_FROM_VLC_TICK(minbuffer);
+    nextUpdateTime = now + minbuffer / CLOCK_FREQ;
 
     msg_Dbg(playlist->getVLCObject(), "Updated playlist ID %s, next update in %" PRId64 "s",
-            getID().str().c_str(), (int64_t) nextUpdateTime - now);
+            getID().str().c_str(), (mtime_t) nextUpdateTime - now);
 
     debug(playlist->getVLCObject(), 0);
 }
@@ -136,16 +137,21 @@ bool Representation::needsUpdate() const
     return !b_loaded || (isLive() && nextUpdateTime < time(NULL));
 }
 
-bool Representation::runLocalUpdates(SharedResources *res,
-                                     vlc_tick_t, uint64_t, bool)
+bool Representation::runLocalUpdates(mtime_t, uint64_t number, bool prune)
 {
     const time_t now = time(NULL);
     AbstractPlaylist *playlist = getPlaylist();
     if(!b_loaded || (isLive() && nextUpdateTime < now))
     {
-        M3U8Parser parser(res);
+        /* ugly hack */
+        M3U8 *m3u = dynamic_cast<M3U8 *>(playlist);
+        M3U8Parser parser((m3u) ? m3u->getAuth() : NULL);
+        /* !ugly hack */
         parser.appendSegmentsFromPlaylistURI(playlist->getVLCObject(), this);
         b_loaded = true;
+
+        if(prune)
+            pruneBySegmentNumber(number);
 
         return true;
     }
@@ -161,7 +167,7 @@ uint64_t Representation::translateSegmentNumber(uint64_t num, const SegmentInfor
     HLSSegment *fromHlsSeg = dynamic_cast<HLSSegment *>(fromSeg);
     if(!fromHlsSeg)
         return 1;
-    const vlc_tick_t utcTime = fromHlsSeg->getUTCTime();
+    const mtime_t utcTime = fromHlsSeg->getUTCTime();
 
     std::vector<ISegment *> list;
     std::vector<ISegment *>::const_iterator it;

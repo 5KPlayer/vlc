@@ -2,6 +2,7 @@
  * hqdn3d.c : high-quality denoise 3D ported from MPlayer
  *****************************************************************************
  * Copyright (C) 2011 VLC authors and VideoLAN
+ * $Id: c9b9bafab5a2023234bd23b3a1388632b21369ba $
  *
  * Authors: Cheng Sun <chengsun9@gmail.com>
  *
@@ -86,7 +87,7 @@ static const char *const filter_options[] = {
 /*****************************************************************************
  * filter_sys_t
  *****************************************************************************/
-typedef struct
+struct filter_sys_t
 {
     const vlc_chroma_description_t *chroma;
     int w[3], h[3];
@@ -95,7 +96,7 @@ typedef struct
     bool   b_recalc_coefs;
     vlc_mutex_t coefs_mutex;
     float  luma_spat, luma_temp, chroma_spat, chroma_temp;
-} filter_sys_t;
+};
 
 /*****************************************************************************
  * Open

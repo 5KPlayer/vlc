@@ -66,7 +66,7 @@ vlc_module_end ()
  * Local structures
  ****************************************************************************/
 
-typedef struct
+struct decoder_sys_t
 {
     bool              b_a_profile;
     bool              b_ignore_ruby;
@@ -75,7 +75,7 @@ typedef struct
 
     arib_instance_t  *p_arib_instance;
     char             *psz_arib_base_dir;
-} decoder_sys_t;
+};
 
 /*****************************************************************************
  * Local prototypes
@@ -197,7 +197,7 @@ static void messages_callback_handler( void *p_opaque, const char *psz_message )
 
 static char* get_arib_base_dir()
 {
-    char *psz_data_dir = config_GetUserDir( VLC_USERDATA_DIR );
+    char *psz_data_dir = config_GetUserDir( VLC_DATA_DIR );
     if( psz_data_dir == NULL )
     {
         return NULL;
@@ -264,11 +264,11 @@ static subpicture_t *render( decoder_t *p_dec, arib_parser_t *p_parser,
     }
 
     p_spu->i_start = p_block->i_pts;
-    p_spu->i_stop = p_block->i_pts + VLC_TICK_FROM_US(arib_decoder_get_time( p_arib_decoder ));
+    p_spu->i_stop = p_block->i_pts + arib_decoder_get_time( p_arib_decoder );
     p_spu->b_ephemer  = (p_spu->i_start == p_spu->i_stop);
     p_spu->b_absolute = true;
 
-    arib_spu_updater_sys_t *p_spu_sys = p_spu->updater.p_sys;
+    subpicture_updater_sys_t *p_spu_sys = p_spu->updater.p_sys;
 
     arib_text_region_t *p_region = p_spu_sys->p_region =
         (arib_text_region_t*) calloc( 1, sizeof(arib_text_region_t) );

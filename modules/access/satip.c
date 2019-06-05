@@ -92,8 +92,7 @@ enum rtsp_result {
 };
 
 #define UDP_ADDRESS_LEN 16
-typedef struct
-{
+struct access_sys_t {
     char *content_base;
     char *control;
     char session_id[64];
@@ -116,24 +115,7 @@ typedef struct
     uint16_t last_seq_nr;
 
     bool woken;
-} access_sys_t;
-
-VLC_FORMAT(3, 4)
-static void net_Printf(stream_t *access, int fd, const char *fmt, ...)
-{
-    va_list ap;
-    char *str;
-    int val;
-
-    va_start(ap, fmt);
-    val = vasprintf(&str, fmt, ap);
-    va_end(ap);
-
-    if (val >= 0) {
-        net_Write(access, fd, str, val);
-        free(str);
-    }
-}
+};
 
 static void parse_session(char *request_line, char *session, unsigned max, int *timeout) {
     char *state;
@@ -142,7 +124,7 @@ static void parse_session(char *request_line, char *session, unsigned max, int *
     tok = strtok_r(request_line, ";", &state);
     if (tok == NULL)
         return;
-    memcpy(session, tok, __MIN(strlen(tok), max - 1));
+    strncpy(session, tok, __MIN(strlen(tok), max - 1));
 
     while ((tok = strtok_r(NULL, ";", &state)) != NULL) {
         if (strncmp(tok, "timeout=", 8) == 0) {
@@ -182,13 +164,13 @@ static int parse_transport(stream_t *access, char *request_line) {
 
     while ((tok = strtok_r(NULL, ";", &state)) != NULL) {
         if (strncmp(tok, "destination=", 12) == 0) {
-            memcpy(sys->udp_address, tok + 12, __MIN(strlen(tok + 12), UDP_ADDRESS_LEN - 1));
+            strncpy(sys->udp_address, tok + 12, __MIN(strlen(tok + 12), UDP_ADDRESS_LEN - 1));
         } else if (strncmp(tok, "port=", 5) == 0) {
             char port[6];
             char *end;
 
             memset(port, 0x00, 6);
-            memcpy(port, tok + 5, __MIN(strlen(tok + 5), 5));
+            strncpy(port, tok + 5, __MIN(strlen(tok + 5), 5));
             if ((end = strstr(port, "-")) != NULL)
                 *end = '\0';
             err = parse_port(port, &sys->udp_port);
@@ -432,19 +414,19 @@ static void satip_teardown(void *data) {
 
             /* Extra sleep for compatibility with some satip servers, that
              * can't handle new sessions right after teardown */
-            vlc_tick_sleep(VLC_TICK_FROM_MS(150));
+            msleep(150000);
         }
     }
 }
 
-#define RECV_TIMEOUT VLC_TICK_FROM_SEC(2)
+#define RECV_TIMEOUT 2 * 1000 * 1000
 static void *satip_thread(void *data) {
     stream_t *access = data;
     access_sys_t *sys = access->p_sys;
     int sock = sys->udp_sock;
-    vlc_tick_t last_recv = vlc_tick_now();
+    mtime_t last_recv = mdate();
     ssize_t len;
-    vlc_tick_t next_keepalive = vlc_tick_now() + vlc_tick_from_sec(sys->keepalive_interval);
+    mtime_t next_keepalive = mdate() + sys->keepalive_interval * 1000 * 1000;
 #ifdef HAVE_RECVMMSG
     struct mmsghdr msgs[VLEN];
     struct iovec iovecs[VLEN];
@@ -466,7 +448,7 @@ static void *satip_thread(void *data) {
     ufd.events = POLLIN;
 #endif
 
-    while (last_recv > vlc_tick_now() - RECV_TIMEOUT) {
+    while (last_recv > mdate() - RECV_TIMEOUT) {
 #ifdef HAVE_RECVMMSG
         for (size_t i = 0; i < VLEN; i++) {
             if (input_blocks[i] != NULL)
@@ -485,7 +467,7 @@ static void *satip_thread(void *data) {
         if (retval == -1)
             continue;
 
-        last_recv = vlc_tick_now();
+        last_recv = mdate();
         for (int i = 0; i < retval; ++i) {
             block_t *block = input_blocks[i];
 
@@ -521,13 +503,13 @@ static void *satip_thread(void *data) {
             block_Release(block);
             continue;
         }
-        last_recv = vlc_tick_now();
+        last_recv = mdate();
         block->p_buffer += RTP_HEADER_SIZE;
         block->i_buffer = len - RTP_HEADER_SIZE;
         block_FifoPut(sys->fifo, block);
 #endif
 
-        if (sys->keepalive_interval > 0 && vlc_tick_now() > next_keepalive) {
+        if (sys->keepalive_interval > 0 && mdate() > next_keepalive) {
             net_Printf(access, sys->tcp_sock,
                     "OPTIONS %s RTSP/1.0\r\n"
                     "CSeq: %d\r\n"
@@ -536,7 +518,7 @@ static void *satip_thread(void *data) {
             if (rtsp_handle(access, NULL) != RTSP_RESULT_OK)
                 msg_Warn(access, "Failed to keepalive RTSP session");
 
-            next_keepalive = vlc_tick_now() + vlc_tick_from_sec(sys->keepalive_interval);
+            next_keepalive = mdate() + sys->keepalive_interval * 1000 * 1000;
         }
     }
 
@@ -574,6 +556,7 @@ static block_t* satip_block(stream_t *access, bool *restrict eof) {
 
 static int satip_control(stream_t *access, int i_query, va_list args) {
     bool *pb_bool;
+    int64_t *pi_64;
 
     switch(i_query)
     {
@@ -585,8 +568,8 @@ static int satip_control(stream_t *access, int i_query, va_list args) {
             break;
 
         case STREAM_GET_PTS_DELAY:
-            *va_arg(args, vlc_tick_t *) =
-                VLC_TICK_FROM_MS(var_InheritInteger(access, "live-caching"));
+            pi_64 = va_arg(args, int64_t *);
+            *pi_64 = INT64_C(1000) * var_InheritInteger(access, "live-caching");
             break;
 
         default:
@@ -683,7 +666,7 @@ static int satip_open(vlc_object_t *obj)
     }
 
     msg_Dbg(access, "connect to host '%s'", psz_host);
-    sys->tcp_sock = net_Connect(access, psz_host, url.i_port, SOCK_STREAM, 0);
+    sys->tcp_sock = net_ConnectTCP(access, psz_host, url.i_port);
     if (sys->tcp_sock < 0) {
         msg_Err(access, "Failed to connect to RTSP server %s:%d",
                 psz_host, url.i_port);
@@ -757,7 +740,7 @@ static int satip_open(vlc_object_t *obj)
 
     /* Extra sleep for compatibility with some satip servers, that
      * can't handle PLAY right after SETUP */
-    if (vlc_msleep_i11e(VLC_TICK_FROM_MS(50)) < 0)
+    if (vlc_msleep_i11e(50000) < 0)
         goto error;
 
     /* Open UDP socket for reading if not done */

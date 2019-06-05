@@ -97,7 +97,6 @@ namespace hls
                     EXTXMAP,
                     EXTXMEDIA,
                     EXTXSTREAMINF,
-                    EXTXSESSIONKEY,
                 };
                 AttributesTag(int, const std::string &);
                 virtual ~AttributesTag();

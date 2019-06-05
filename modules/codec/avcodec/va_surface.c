@@ -34,10 +34,9 @@
 #include <vlc_codec.h>
 #include <vlc_picture.h>
 
-typedef struct
-{
+struct picture_sys_t {
     void *dummy;
-} picture_sys_t;
+};
 #include "va_surface_internal.h"
 
 #include "avcodec.h"
@@ -161,7 +160,7 @@ static picture_context_t *GetSurface(va_pool_t *va_pool)
 
 int va_pool_Get(va_pool_t *va_pool, picture_t *pic)
 {
-    unsigned tries = (VLC_TICK_FROM_SEC(1) + VOUT_OUTMEM_SLEEP) / VOUT_OUTMEM_SLEEP;
+    unsigned tries = (CLOCK_FREQ + VOUT_OUTMEM_SLEEP) / VOUT_OUTMEM_SLEEP;
     picture_context_t *field;
 
     if (va_pool->surface_count == 0)
@@ -173,7 +172,7 @@ int va_pool_Get(va_pool_t *va_pool, picture_t *pic)
             return VLC_ENOITEM;
         /* Pool empty. Wait for some time as in src/input/decoder.c.
          * XXX: Both this and the core should use a semaphore or a CV. */
-        vlc_tick_sleep(VOUT_OUTMEM_SLEEP);
+        msleep(VOUT_OUTMEM_SLEEP);
     }
     pic->context = field;
     return VLC_SUCCESS;

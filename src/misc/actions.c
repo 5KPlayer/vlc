@@ -210,9 +210,9 @@ uint_fast32_t vlc_str2keycode (const char *name)
     return code;
 }
 
-static const char *nooptext (const char *txt)
+static char *nooptext (const char *txt)
 {
-    return txt;
+    return (char *)txt;
 }
 
 /**
@@ -225,7 +225,7 @@ static const char *nooptext (const char *txt)
  */
 char *vlc_keycode2str (uint_fast32_t code, bool locale)
 {
-    const char *(*tr)(const char *) = locale ? vlc_gettext : nooptext;
+    char *(*tr) (const char *) = locale ? vlc_gettext : nooptext;
     const char *name;
     char *str, buf[5];
     uintptr_t key = code & ~KEY_MODIFIER;
@@ -281,7 +281,7 @@ static const struct name2action
     { "deinterlace", ACTIONID_DEINTERLACE, },
     { "deinterlace-mode", ACTIONID_DEINTERLACE_MODE, },
     { "disc-menu", ACTIONID_DISC_MENU, },
-    { "faster", ACTIONID_RATE_FASTER, },
+    { "faster", ACTIONID_FASTER, },
     { "frame-next", ACTIONID_FRAME_NEXT, },
     { "incr-scalefactor", ACTIONID_SCALE_UP, },
     { "intf-boss", ACTIONID_INTF_BOSS, },
@@ -336,7 +336,7 @@ static const struct name2action
     { "set-bookmark7", ACTIONID_SET_BOOKMARK7, },
     { "set-bookmark8", ACTIONID_SET_BOOKMARK8, },
     { "set-bookmark9", ACTIONID_SET_BOOKMARK9, },
-    { "slower", ACTIONID_RATE_SLOWER, },
+    { "slower", ACTIONID_SLOWER, },
     { "snapshot", ACTIONID_SNAPSHOT, },
     { "stop", ACTIONID_STOP, },
     { "subdelay-down", ACTIONID_SUBDELAY_DOWN, },
@@ -637,6 +637,6 @@ vlc_actions_get_keycodes(vlc_object_t *p_obj, const char *psz_key_name,
 const char* const*
 vlc_actions_get_key_names(vlc_object_t *p_obj)
 {
-    vlc_actions_t *as = libvlc_priv(vlc_object_instance(p_obj))->actions;
+    vlc_actions_t *as = libvlc_priv(p_obj->obj.libvlc)->actions;
     return as->ppsz_keys;
 }

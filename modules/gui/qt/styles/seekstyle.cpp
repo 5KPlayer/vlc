@@ -22,6 +22,7 @@
 
 #include "seekstyle.hpp"
 #include "util/input_slider.hpp"
+#include "adapters/seekpoints.hpp"
 
 #include <QProxyStyle>
 #include <QStyleFactory>
@@ -176,9 +177,9 @@ void SeekStyle::drawComplexControl( ComplexControl cc, const QStyleOptionComplex
                                         ( background.value() + foreground.value() ) / 2 );
                         if ( slideroptions->orientation == Qt::Horizontal ) /* TODO: vertical */
                         {
-                            foreach( vlc_tick_t time, slideroptions->points )
+                            foreach( int64_t time, slideroptions->points )
                             {
-                                int x = groove.x() + time / (double)CLOCK_FREQ / slideroptions->length * groove.width();
+                                int x = groove.x() + time / 1000000.0 / slideroptions->length * groove.width();
                                 painter->setPen( foreground );
                                 painter->setBrush( Qt::NoBrush );
                                 painter->drawLine( x, slideroptions->rect.height(), x, slideroptions->rect.height() - CHAPTERSSPOTSIZE );

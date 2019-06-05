@@ -96,7 +96,7 @@ vlc_module_begin ()
     set_description (N_("Real-Time Protocol (RTP) input"))
     set_category (CAT_INPUT)
     set_subcategory (SUBCAT_INPUT_DEMUX)
-    set_capability ("access", 0)
+    set_capability ("access_demux", 0)
     set_callbacks (Open, Close)
 
     add_integer ("rtcp-port", 0, RTCP_PORT_TEXT,
@@ -162,19 +162,16 @@ static int Open (vlc_object_t *obj)
     demux_t *demux = (demux_t *)obj;
     int tp; /* transport protocol */
 
-    if (demux->out == NULL)
-        return VLC_EGENERIC;
-
-    if (!strcasecmp(demux->psz_name, "dccp"))
+    if (!strcmp (demux->psz_access, "dccp"))
         tp = IPPROTO_DCCP;
     else
-    if (!strcasecmp(demux->psz_name, "rtptcp"))
+    if (!strcmp (demux->psz_access, "rtptcp"))
         tp = IPPROTO_TCP;
     else
-    if (!strcasecmp(demux->psz_name, "rtp"))
+    if (!strcmp (demux->psz_access, "rtp"))
         tp = IPPROTO_UDP;
     else
-    if (!strcasecmp(demux->psz_name, "udplite"))
+    if (!strcmp (demux->psz_access, "udplite"))
         tp = IPPROTO_UDPLITE;
     else
         return VLC_EGENERIC;
@@ -263,7 +260,8 @@ static int Open (vlc_object_t *obj)
     p_sys->fd           = fd;
     p_sys->rtcp_fd      = rtcp_fd;
     p_sys->max_src      = var_CreateGetInteger (obj, "rtp-max-src");
-    p_sys->timeout      = vlc_tick_from_sec( var_CreateGetInteger (obj, "rtp-timeout") );
+    p_sys->timeout      = var_CreateGetInteger (obj, "rtp-timeout")
+                        * CLOCK_FREQ;
     p_sys->max_dropout  = var_CreateGetInteger (obj, "rtp-max-dropout");
     p_sys->max_misorder = var_CreateGetInteger (obj, "rtp-max-misorder");
     p_sys->thread_ready = false;
@@ -382,8 +380,8 @@ static int Control (demux_t *demux, int query, va_list args)
     {
         case DEMUX_GET_PTS_DELAY:
         {
-            *va_arg (args, vlc_tick_t *) =
-                VLC_TICK_FROM_MS( var_InheritInteger (demux, "network-caching") );
+            int64_t *v = va_arg (args, int64_t *);
+            *v = INT64_C(1000) * var_InheritInteger (demux, "network-caching");
             return VLC_SUCCESS;
         }
 
@@ -412,7 +410,8 @@ static int Control (demux_t *demux, int query, va_list args)
         case DEMUX_GET_LENGTH:
         case DEMUX_GET_TIME:
         {
-            *va_arg (args, vlc_tick_t *) = 0;
+            int64_t *v = va_arg (args, int64_t *);
+            *v = 0;
             return VLC_SUCCESS;
         }
     }
@@ -443,7 +442,7 @@ void codec_decode (demux_t *demux, void *data, block_t *block)
 {
     if (data)
     {
-        block->i_dts = VLC_TICK_INVALID; /* RTP does not specify this */
+        block->i_dts = VLC_TS_INVALID; /* RTP does not specify this */
         es_out_SetPCR(demux->out, block->i_pts);
         es_out_Send (demux->out, (es_out_id_t *)data, block);
     }
@@ -491,6 +490,11 @@ static void stream_decode (demux_t *demux, void *data, block_t *block)
     else
         block_Release (block);
     (void)demux;
+}
+
+static void *demux_init (demux_t *demux)
+{
+    return stream_init (demux, demux->psz_demux);
 }
 
 /*
@@ -638,7 +642,12 @@ static void mpv_decode (demux_t *demux, void *data, block_t *block)
  */
 static void *ts_init (demux_t *demux)
 {
-    return stream_init (demux, "ts");
+    char const* name = demux->psz_demux;
+
+    if (*name == '\0' || !strcasecmp(name, "any"))
+        name = NULL;
+
+    return stream_init (demux, name ? name : "ts");
 }
 
 
@@ -720,6 +729,20 @@ void rtp_autodetect (demux_t *demux, rtp_session_t *session,
         break;
 
       default:
+        /*
+         * If the rtp payload type is unknown then check demux if it is specified
+         */
+        if (!strcmp(demux->psz_demux, "h264")
+         || !strcmp(demux->psz_demux, "ts"))
+        {
+            msg_Dbg (demux, "dynamic payload format %s specified by demux",
+                     demux->psz_demux);
+            pt.init = demux_init;
+            pt.destroy = stream_destroy;
+            pt.decode = stream_decode;
+            pt.frequency = 90000;
+            break;
+        }
         if (ptype >= 96)
         {
             char *dynamic = var_InheritString(demux, "rtp-dynamic-pt");

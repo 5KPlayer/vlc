@@ -2,6 +2,7 @@
  * http.c: HTTP input module
  *****************************************************************************
  * Copyright (C) 2001-2008 VLC authors and VideoLAN
+ * $Id: 1d58a034b899673c03cdab3af990c64a22be8afe $
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *          Christophe Massiot <massiot@via.ecp.fr>
@@ -30,20 +31,17 @@
 # include "config.h"
 #endif
 
-#undef MODULE_STRING
-#define MODULE_STRING "oldhttp"
-
 #include <errno.h>
 
 #include <vlc_common.h>
 #include <vlc_plugin.h>
 #include <vlc_access.h>
 #include <vlc_meta.h>
-#include <vlc_tls.h>
+#include <vlc_network.h>
 #include <vlc_url.h>
 #include <vlc_strings.h>
 #include <vlc_charset.h>
-#include <vlc_input_item.h>
+#include <vlc_input.h>
 #include <vlc_http.h>
 #include <vlc_interrupt.h>
 #include <vlc_keystore.h>
@@ -81,9 +79,9 @@ vlc_module_end ()
  * Local prototypes
  *****************************************************************************/
 
-typedef struct
+struct access_sys_t
 {
-    vlc_tls_t *stream;
+    int fd;
 
     /* From uri */
     vlc_url_t url;
@@ -117,7 +115,7 @@ typedef struct
 
     bool b_reconnect;
     bool b_has_size;
-} access_sys_t;
+};
 
 /* */
 static ssize_t Read( stream_t *, void *, size_t );
@@ -147,7 +145,7 @@ static int Open( vlc_object_t *p_this )
     if( unlikely(p_sys == NULL) )
         return VLC_ENOMEM;
 
-    p_sys->stream = NULL;
+    p_sys->fd = -1;
     p_sys->b_proxy = false;
     p_sys->psz_proxy_passbuf = NULL;
     p_sys->psz_mime = NULL;
@@ -395,7 +393,7 @@ static int ReadData( stream_t *p_access, int *pi_read,
 {
     access_sys_t *p_sys = p_access->p_sys;
 
-    *pi_read = vlc_tls_Read(p_sys->stream, p_buffer, i_len, false);
+    *pi_read = vlc_recv_i11e( p_sys->fd, p_buffer, i_len, 0 );
     if( *pi_read < 0 && errno != EINTR && errno != EAGAIN )
         return VLC_EGENERIC;
     return VLC_SUCCESS;
@@ -411,7 +409,7 @@ static ssize_t Read( stream_t *p_access, void *p_buffer, size_t i_len )
 {
     access_sys_t *p_sys = p_access->p_sys;
 
-    if (p_sys->stream == NULL)
+    if( p_sys->fd == -1 )
         return 0;
 
     int i_chunk = i_len;
@@ -523,9 +521,13 @@ static int ReadICYMeta( stream_t *p_access )
                 free( psz_tmp );
 
             msg_Dbg( p_access, "New Icy-Title=%s", p_sys->psz_icy_title );
-            if( p_access->p_input_item )
-                input_item_SetMeta( p_access->p_input_item, vlc_meta_NowPlaying,
-                                    p_sys->psz_icy_title );
+            input_thread_t *p_input = p_access->p_input;
+            if( p_input )
+            {
+                input_item_t *p_input_item = input_GetItem( p_access->p_input );
+                if( p_input_item )
+                    input_item_SetMeta( p_input_item, vlc_meta_NowPlaying, p_sys->psz_icy_title );
+            }
         }
     }
     free( psz_meta );
@@ -549,6 +551,7 @@ static int Control( stream_t *p_access, int i_query, va_list args )
 {
     access_sys_t *p_sys = p_access->p_sys;
     bool       *pb_bool;
+    int64_t    *pi_64;
 
     switch( i_query )
     {
@@ -566,8 +569,9 @@ static int Control( stream_t *p_access, int i_query, va_list args )
 
         /* */
         case STREAM_GET_PTS_DELAY:
-            *va_arg( args, vlc_tick_t * ) =
-                VLC_TICK_FROM_MS(var_InheritInteger( p_access, "network-caching" ));
+            pi_64 = va_arg( args, int64_t * );
+            *pi_64 = INT64_C(1000)
+                * var_InheritInteger( p_access, "network-caching" );
             break;
 
         case STREAM_GET_SIZE:
@@ -703,18 +707,18 @@ static int Connect( stream_t *p_access )
         return -1;
 
     /* Open connection */
-    assert(p_sys->stream == NULL); /* No open sockets (leaking fds is BAD) */
-    p_sys->stream = vlc_tls_SocketOpenTCP(VLC_OBJECT(p_access),
-                                          srv.psz_host, srv.i_port);
-    if (p_sys->stream == NULL)
+    assert( p_sys->fd == -1 ); /* No open sockets (leaking fds is BAD) */
+    p_sys->fd = net_ConnectTCP( p_access, srv.psz_host, srv.i_port );
+    if( p_sys->fd == -1 )
     {
         msg_Err( p_access, "cannot connect to %s:%d", srv.psz_host, srv.i_port );
         free( stream.ptr );
         return -1;
     }
+    setsockopt (p_sys->fd, SOL_SOCKET, SO_KEEPALIVE, &(int){ 1 }, sizeof (int));
 
     msg_Dbg( p_access, "sending request:\n%s", stream.ptr );
-    val = vlc_tls_Write(p_sys->stream, stream.ptr, stream.length);
+    val = net_Write( p_access, p_sys->fd, stream.ptr, stream.length );
     free( stream.ptr );
 
     if( val < (ssize_t)stream.length )
@@ -725,7 +729,7 @@ static int Connect( stream_t *p_access )
     }
 
     /* Read Answer */
-    char *psz = vlc_tls_GetLine(p_sys->stream);
+    char *psz = net_Gets( p_access, p_sys->fd );
     if( psz == NULL )
     {
         msg_Err( p_access, "failed to read answer" );
@@ -767,7 +771,7 @@ static int Connect( stream_t *p_access )
     {
         char *p, *p_trailing;
 
-        psz = vlc_tls_GetLine(p_sys->stream);
+        psz = net_Gets( p_access, p_sys->fd );
         if( psz == NULL )
         {
             msg_Err( p_access, "failed to read answer" );
@@ -890,9 +894,13 @@ static int Connect( stream_t *p_access )
             else
                 vlc_xml_decode( p_sys->psz_icy_name );
             msg_Dbg( p_access, "Icy-Name: %s", p_sys->psz_icy_name );
-            if ( p_access->p_input_item )
-                input_item_SetMeta( p_access->p_input_item, vlc_meta_Title,
-                                    p_sys->psz_icy_name );
+            input_thread_t *p_input = p_access->p_input;
+            if ( p_input )
+            {
+                input_item_t *p_input_item = input_GetItem( p_access->p_input );
+                if ( p_input_item )
+                    input_item_SetMeta( p_input_item, vlc_meta_Title, p_sys->psz_icy_name );
+            }
 
             p_sys->b_icecast = true; /* be on the safeside. set it here as well. */
             p_sys->b_reconnect = true;
@@ -907,9 +915,13 @@ static int Connect( stream_t *p_access )
             else
                 vlc_xml_decode( p_sys->psz_icy_genre );
             msg_Dbg( p_access, "Icy-Genre: %s", p_sys->psz_icy_genre );
-            if( p_access->p_input_item )
-                input_item_SetMeta( p_access->p_input_item, vlc_meta_Genre,
-                                    p_sys->psz_icy_genre );
+            input_thread_t *p_input = p_access->p_input;
+            if( p_input )
+            {
+                input_item_t *p_input_item = input_GetItem( p_access->p_input );
+                if( p_input_item )
+                    input_item_SetMeta( p_input_item, vlc_meta_Genre, p_sys->psz_icy_genre );
+            }
         }
         else if( !strncasecmp( psz, "Icy-Notice", 10 ) )
         {
@@ -962,9 +974,9 @@ static void Disconnect( stream_t *p_access )
 {
     access_sys_t *p_sys = p_access->p_sys;
 
-    if (p_sys->stream != NULL)
-        vlc_tls_Close(p_sys->stream);
-    p_sys->stream = NULL;
+    if( p_sys->fd != -1)
+        net_Close(p_sys->fd);
+    p_sys->fd = -1;
 
     vlc_http_auth_Deinit( &p_sys->auth );
     vlc_http_auth_Deinit( &p_sys->proxy_auth );

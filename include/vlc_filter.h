@@ -36,24 +36,23 @@
  * Filter modules interface
  */
 
-struct filter_video_callbacks
-{
-    picture_t *(*buffer_new)(filter_t *);
-};
-
-struct filter_subpicture_callbacks
-{
-    subpicture_t *(*buffer_new)(filter_t *);
-};
+typedef struct filter_owner_sys_t filter_owner_sys_t;
 
 typedef struct filter_owner_t
 {
+    void *sys;
+
     union
     {
-        const struct filter_video_callbacks *video;
-        const struct filter_subpicture_callbacks *sub;
+        struct
+        {
+            picture_t * (*buffer_new)( filter_t * );
+        } video;
+        struct
+        {
+            subpicture_t * (*buffer_new)( filter_t * );
+        } sub;
     };
-    void *sys;
 } filter_owner_t;
 
 struct vlc_mouse_t;
@@ -65,11 +64,11 @@ struct vlc_mouse_t;
  */
 struct filter_t
 {
-    struct vlc_object_t obj;
+    VLC_COMMON_MEMBERS
 
     /* Module properties */
     module_t *          p_module;
-    void               *p_sys;
+    filter_sys_t *      p_sys;
 
     /* Input format */
     es_format_t         fmt_in;
@@ -96,7 +95,7 @@ struct filter_t
                                  int, int, int );
 
         /** Generate a subpicture (sub source) */
-        subpicture_t *(*pf_sub_source)( filter_t *, vlc_tick_t );
+        subpicture_t *(*pf_sub_source)( filter_t *, mtime_t );
 
         /** Filter a subpicture (sub filter) */
         subpicture_t *(*pf_sub_filter)( filter_t *, subpicture_t * );
@@ -139,13 +138,16 @@ struct filter_t
         int (*pf_video_mouse)( filter_t *, struct vlc_mouse_t *,
                                const struct vlc_mouse_t *p_old,
                                const struct vlc_mouse_t *p_new );
+        int (*pf_sub_mouse)( filter_t *, const struct vlc_mouse_t *p_old,
+                             const struct vlc_mouse_t *p_new,
+                             const video_format_t * );
     };
 
     /* Input attachments
      * XXX use filter_GetInputAttachments */
     int (*pf_get_attachments)( filter_t *, input_attachment_t ***, int * );
 
-    /** Private structure for the owner of the filter */
+    /* Private structure for the owner of the decoder */
     filter_owner_t      owner;
 };
 
@@ -160,7 +162,7 @@ struct filter_t
  */
 static inline picture_t *filter_NewPicture( filter_t *p_filter )
 {
-    picture_t *pic = p_filter->owner.video->buffer_new( p_filter );
+    picture_t *pic = p_filter->owner.video.buffer_new( p_filter );
     if( pic == NULL )
         msg_Warn( p_filter, "can't get output picture" );
     return pic;
@@ -206,7 +208,7 @@ static inline block_t *filter_DrainAudio( filter_t *p_filter )
  */
 static inline subpicture_t *filter_NewSubpicture( filter_t *p_filter )
 {
-    subpicture_t *subpic = p_filter->owner.sub->buffer_new( p_filter );
+    subpicture_t *subpic = p_filter->owner.sub.buffer_new( p_filter );
     if( subpic == NULL )
         msg_Warn( p_filter, "can't get output subpicture" );
     return subpic;
@@ -405,7 +407,7 @@ VLC_API bool filter_chain_IsEmpty(const filter_chain_t *chain);
  *
  * \param chain filter chain
  */
-VLC_API const es_format_t *filter_chain_GetFmtOut(const filter_chain_t *chain);
+VLC_API const es_format_t *filter_chain_GetFmtOut(filter_chain_t *chain);
 
 /**
  * Apply the filter chain to a video picture.
@@ -429,7 +431,7 @@ VLC_API void filter_chain_VideoFlush( filter_chain_t * );
  * \param display_date of subpictures
  */
 void filter_chain_SubSource(filter_chain_t *chain, spu_t *,
-                            vlc_tick_t display_date);
+                            mtime_t display_date);
 
 /**
  * Apply filter chain to subpictures.
@@ -451,6 +453,15 @@ VLC_API subpicture_t *filter_chain_SubFilter(filter_chain_t *chain,
  */
 VLC_API int filter_chain_MouseFilter( filter_chain_t *, struct vlc_mouse_t *,
                                       const struct vlc_mouse_t * );
+
+/**
+ * Inform the filter chain of mouse state.
+ *
+ * It makes sense only for a sub source chain.
+ */
+VLC_API int filter_chain_MouseEvent( filter_chain_t *,
+                                     const struct vlc_mouse_t *,
+                                     const video_format_t * );
 
 int filter_chain_ForEach( filter_chain_t *chain,
                           int (*cb)( filter_t *, void * ), void *opaque );

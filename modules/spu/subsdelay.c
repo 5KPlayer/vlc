@@ -2,6 +2,7 @@
  * subsdelay.c : Subsdelay plugin for vlc
  *****************************************************************************
  * Copyright © 2011 VideoLAN
+ * $Id: 5f05cf0fc28164afebbfc9b294da4196f5410dea $
  *
  * Authors: Yuval Tze <yuvaltze@gmail.com>
  *
@@ -96,6 +97,14 @@ static const char * const ppsz_mode_descriptions[] = { N_( "Absolute delay" ), N
 /* max subtitles handled on the heap */
 #define SUBSDELAY_MAX_ENTRIES 16
 
+/* factor convert macros */
+#define INT_FACTOR_BASE                  1000
+#define FLOAT_FACTOR_TO_INT_FACTOR( x )  (int)( ( x ) * INT_FACTOR_BASE )
+#define INT_FACTOR_TO_MICROSEC( x )      ( ( x ) * ( 1000000 / INT_FACTOR_BASE ) )
+#define INT_FACTOR_TO_RANK_FACTOR( x )   ( x )
+#define MILLISEC_TO_MICROSEC( x )        ( ( x ) * 1000 )
+
+
 #define SUBSDELAY_MODE_ABSOLUTE                0
 #define SUBSDELAY_MODE_RELATIVE_SOURCE_DELAY   1
 #define SUBSDELAY_MODE_RELATIVE_SOURCE_CONTENT 2
@@ -105,9 +114,9 @@ static const char * const ppsz_mode_descriptions[] = { N_( "Absolute delay" ), N
  * subsdelay_heap_entry_t: Heap entry
  *****************************************************************************/
 
-typedef struct subsdelay_heap_entry_t subsdelay_heap_entry_t;
+typedef subpicture_updater_sys_t subsdelay_heap_entry_t;
 
-struct subsdelay_heap_entry_t
+struct subpicture_updater_sys_t
 {
     subpicture_t *p_subpic; /* local subtitle */
 
@@ -125,7 +134,7 @@ struct subsdelay_heap_entry_t
 
     bool b_check_empty; /* subtitle content should be checked */
 
-    vlc_tick_t i_new_stop; /* new stop value */
+    mtime_t i_new_stop; /* new stop value */
 
     /* last region data*/
 
@@ -160,24 +169,24 @@ typedef struct
 * filter_sys_t: Subsdelay filter descriptor
  *****************************************************************************/
 
-typedef struct
+struct filter_sys_t
 {
     int i_mode; /* delay calculation mode */
 
-    float f_factor; /* calculation factor */
+    int i_factor; /* calculation factor */
 
     int i_overlap; /* max overlap */
 
     int i_min_alpha; /* oldest subtitle alpha value */
 
-    vlc_tick_t i_min_stops_interval;
+    int64_t i_min_stops_interval;
 
-    vlc_tick_t i_min_stop_start_interval;
+    int64_t i_min_stop_start_interval;
 
-    vlc_tick_t i_min_start_stop_interval;
+    int64_t i_min_start_stop_interval;
 
     subsdelay_heap_t heap; /* subpictures list */
-} filter_sys_t;
+};
 
 
 /*****************************************************************************
@@ -199,7 +208,7 @@ static int SubsdelayCallback( vlc_object_t *p_this, char const *psz_var, vlc_val
 
 static void SubsdelayEnforceDelayRules( filter_t *p_filter );
 
-static vlc_tick_t SubsdelayEstimateDelay( filter_t *p_filter, subsdelay_heap_entry_t *p_entry );
+static int64_t SubsdelayEstimateDelay( filter_t *p_filter, subsdelay_heap_entry_t *p_entry );
 
 static void SubsdelayRecalculateDelays( filter_t *p_filter );
 
@@ -214,14 +223,14 @@ static bool SubsdelayIsTextEmpty( const text_segment_t* p_segment );
  *****************************************************************************/
 
 static int SubpicValidateWrapper( subpicture_t *p_subpic, bool has_src_changed, const video_format_t *p_fmt_src,
-                                  bool has_dst_changed, const video_format_t *p_fmt_dst, vlc_tick_t i_ts );
+                                  bool has_dst_changed, const video_format_t *p_fmt_dst, mtime_t i_ts );
 
 static void SubpicUpdateWrapper( subpicture_t *p_subpic, const video_format_t *p_fmt_src,
-                                  const video_format_t *p_fmt_dst, vlc_tick_t i_ts );
+                                  const video_format_t *p_fmt_dst, mtime_t i_ts );
 
 static void SubpicDestroyWrapper( subpicture_t *p_subpic );
 
-static void SubpicLocalUpdate( subpicture_t* p_subpic, vlc_tick_t i_ts );
+static void SubpicLocalUpdate( subpicture_t* p_subpic, mtime_t i_ts );
 
 static bool SubpicIsEmpty( subpicture_t* p_subpic );
 
@@ -253,7 +262,7 @@ static void SubsdelayEntryDestroy( subsdelay_heap_entry_t *p_entry );
 
 /* heap / entries special functionality */
 
-static int SubsdelayHeapCountOverlap( subsdelay_heap_t *p_heap, subsdelay_heap_entry_t *p_entry, vlc_tick_t i_date );
+static int SubsdelayHeapCountOverlap( subsdelay_heap_t *p_heap, subsdelay_heap_entry_t *p_entry, mtime_t i_date );
 
 static void SubsdelayEntryNewStopValueUpdated( subsdelay_heap_entry_t *p_entry );
 
@@ -314,7 +323,7 @@ static int SubsdelayCreate( vlc_object_t *p_this )
     p_sys->i_mode = var_CreateGetIntegerCommand( p_filter, CFG_MODE );
     var_AddCallback( p_filter, CFG_MODE, SubsdelayCallback, p_sys );
 
-    p_sys->f_factor = var_CreateGetFloatCommand( p_filter, CFG_FACTOR );
+    p_sys->i_factor = FLOAT_FACTOR_TO_INT_FACTOR( var_CreateGetFloatCommand( p_filter, CFG_FACTOR ) );
     var_AddCallback( p_filter, CFG_FACTOR, SubsdelayCallback, p_sys );
 
     p_sys->i_overlap = var_CreateGetIntegerCommand( p_filter, CFG_OVERLAP );
@@ -324,15 +333,15 @@ static int SubsdelayCreate( vlc_object_t *p_this )
     var_AddCallback( p_filter, CFG_MIN_ALPHA, SubsdelayCallback, p_sys );
 
     p_sys->i_min_stops_interval
-            = VLC_TICK_FROM_MS( var_CreateGetIntegerCommand( p_filter, CFG_MIN_STOPS_INTERVAL ) );
+            = MILLISEC_TO_MICROSEC( var_CreateGetIntegerCommand( p_filter, CFG_MIN_STOPS_INTERVAL ) );
     var_AddCallback( p_filter, CFG_MIN_STOPS_INTERVAL, SubsdelayCallback, p_sys );
 
     p_sys->i_min_stop_start_interval
-            = VLC_TICK_FROM_MS( var_CreateGetIntegerCommand( p_filter, CFG_MIN_STOP_START_INTERVAL ) );
+            = MILLISEC_TO_MICROSEC( var_CreateGetIntegerCommand( p_filter, CFG_MIN_STOP_START_INTERVAL ) );
     var_AddCallback( p_filter, CFG_MIN_STOP_START_INTERVAL, SubsdelayCallback, p_sys );
 
     p_sys->i_min_start_stop_interval
-            = VLC_TICK_FROM_MS( var_CreateGetIntegerCommand( p_filter, CFG_MIN_START_STOP_INTERVAL ) );
+            = MILLISEC_TO_MICROSEC( var_CreateGetIntegerCommand( p_filter, CFG_MIN_START_STOP_INTERVAL ) );
     var_AddCallback( p_filter, CFG_MIN_START_STOP_INTERVAL, SubsdelayCallback, p_sys );
 
     p_filter->p_sys = p_sys;
@@ -404,8 +413,7 @@ static subpicture_t * SubsdelayFilter( filter_t *p_filter, subpicture_t* p_subpi
         return NULL;
     }
 
-    filter_sys_t *p_sys = p_filter->p_sys;
-    p_heap = &p_sys->heap;
+    p_heap = &p_filter->p_sys->heap;
 
     /* add subpicture to the heap */
 
@@ -428,7 +436,7 @@ static subpicture_t * SubsdelayFilter( filter_t *p_filter, subpicture_t* p_subpi
         /* set a relativly long delay in hope that the next subtitle
            will arrive in this time and the real delay could be determined */
 
-        p_subpic->i_stop = p_subpic->i_start + VLC_TICK_FROM_SEC(20); /* start + 20 sec */
+        p_subpic->i_stop = p_subpic->i_start + 20000000; /* start + 20 sec */
         p_subpic->b_ephemer = false;
     }
 
@@ -458,7 +466,7 @@ static int SubsdelayCallback( vlc_object_t *p_this, char const *psz_var, vlc_val
     }
     else if( !strcmp( psz_var, CFG_FACTOR ) )
     {
-        p_sys->f_factor = newval.f_float;
+        p_sys->i_factor = FLOAT_FACTOR_TO_INT_FACTOR( newval.f_float );
     }
     else if( !strcmp( psz_var, CFG_OVERLAP ) )
     {
@@ -470,19 +478,20 @@ static int SubsdelayCallback( vlc_object_t *p_this, char const *psz_var, vlc_val
     }
     else if( !strcmp( psz_var, CFG_MIN_STOPS_INTERVAL ) )
     {
-        p_sys->i_min_stops_interval = VLC_TICK_FROM_MS( newval.i_int );
+        p_sys->i_min_stops_interval = MILLISEC_TO_MICROSEC( newval.i_int );
     }
     else if( !strcmp( psz_var, CFG_MIN_STOP_START_INTERVAL ) )
     {
-        p_sys->i_min_stop_start_interval = VLC_TICK_FROM_MS( newval.i_int );
+        p_sys->i_min_stop_start_interval = MILLISEC_TO_MICROSEC( newval.i_int );
     }
     else if( !strcmp( psz_var, CFG_MIN_START_STOP_INTERVAL ) )
     {
-        p_sys->i_min_start_stop_interval = VLC_TICK_FROM_MS( newval.i_int );
+        p_sys->i_min_start_stop_interval = MILLISEC_TO_MICROSEC( newval.i_int );
     }
     else
     {
-        vlc_assert_unreachable();
+        SubsdelayHeapUnlock( &p_sys->heap );
+        return VLC_ENOVAR;
     }
 
     SubsdelayRecalculateDelays( (filter_t *) p_this );
@@ -719,7 +728,7 @@ static void SubsdelayEntryDestroy( subsdelay_heap_entry_t *p_entry )
 /*****************************************************************************
  * SubsdelayHeapCountOverlap: Count overlapping subtitles at a given time
  *****************************************************************************/
-static int SubsdelayHeapCountOverlap( subsdelay_heap_t *p_heap, subsdelay_heap_entry_t *p_entry, vlc_tick_t i_date )
+static int SubsdelayHeapCountOverlap( subsdelay_heap_t *p_heap, subsdelay_heap_entry_t *p_entry, mtime_t i_date )
 {
     int i_overlaps;
 
@@ -752,7 +761,7 @@ static void SubsdelayEntryNewStopValueUpdated( subsdelay_heap_entry_t *p_entry )
 {
     if( !p_entry->b_update_stop )
     {
-        p_entry->p_subpic->i_stop = p_entry->i_new_stop - VLC_TICK_FROM_MS(100); /* 0.1 sec less */
+        p_entry->p_subpic->i_stop = p_entry->i_new_stop - 100000; /* 0.1 sec less */
     }
 }
 
@@ -764,20 +773,18 @@ static void SubsdelayEnforceDelayRules( filter_t *p_filter )
 {
     subsdelay_heap_entry_t ** p_list;
     int i_count, i_overlap;
-    vlc_tick_t i_offset;
-    vlc_tick_t i_min_stops_interval;
-    vlc_tick_t i_min_stop_start_interval;
-    vlc_tick_t i_min_start_stop_interval;
+    int64_t i_offset;
+    int64_t i_min_stops_interval;
+    int64_t i_min_stop_start_interval;
+    int64_t i_min_start_stop_interval;
 
-    filter_sys_t *p_sys = p_filter->p_sys;
+    p_list = p_filter->p_sys->heap.p_list;
+    i_count = p_filter->p_sys->heap.i_count;
 
-    p_list = p_sys->heap.p_list;
-    i_count = p_sys->heap.i_count;
-
-    i_overlap = p_sys->i_overlap;
-    i_min_stops_interval = p_sys->i_min_stops_interval;
-    i_min_stop_start_interval = p_sys->i_min_stop_start_interval;
-    i_min_start_stop_interval = p_sys->i_min_start_stop_interval;
+    i_overlap = p_filter->p_sys->i_overlap;
+    i_min_stops_interval = p_filter->p_sys->i_min_stops_interval;
+    i_min_stop_start_interval = p_filter->p_sys->i_min_stop_start_interval;
+    i_min_start_stop_interval = p_filter->p_sys->i_min_start_stop_interval;
 
     /* step 1 - enforce min stops interval rule (extend delays) */
 
@@ -880,7 +887,10 @@ static void SubsdelayEnforceDelayRules( filter_t *p_filter )
 
     for( int i = 0; i < i_count - i_overlap; i++ )
     {
-        p_list[i]->i_new_stop = __MIN(p_list[i]->i_new_stop, p_list[i + i_overlap]->p_source->i_start);
+        if( p_list[i]->i_new_stop > p_list[i + i_overlap]->p_source->i_start )
+        {
+            p_list[i]->i_new_stop = p_list[i + i_overlap]->p_source->i_start;
+        }
     }
 
     /* finally - update all */
@@ -897,8 +907,7 @@ static void SubsdelayEnforceDelayRules( filter_t *p_filter )
  *****************************************************************************/
 static void SubsdelayRecalculateDelays( filter_t *p_filter )
 {
-    filter_sys_t *p_sys = p_filter->p_sys;
-    for( subsdelay_heap_entry_t *p_curr = p_sys->heap.p_head;
+    for( subsdelay_heap_entry_t *p_curr = p_filter->p_sys->heap.p_head;
          p_curr != NULL; p_curr = p_curr->p_next )
     {
         if( !p_curr->b_update_ephemer )
@@ -915,10 +924,10 @@ static void SubsdelayRecalculateDelays( filter_t *p_filter )
  * SubpicValidateWrapper: Subpicture validate callback wrapper
  *****************************************************************************/
 static int SubpicValidateWrapper( subpicture_t *p_subpic, bool has_src_changed, const video_format_t *p_fmt_src,
-                                  bool has_dst_changed, const video_format_t *p_fmt_dst, vlc_tick_t i_ts )
+                                  bool has_dst_changed, const video_format_t *p_fmt_dst, mtime_t i_ts )
 {
     subsdelay_heap_entry_t *p_entry;
-    vlc_tick_t i_new_ts;
+    mtime_t i_new_ts;
     int i_result = VLC_SUCCESS;
 
     p_entry = p_subpic->updater.p_sys;
@@ -964,10 +973,10 @@ static int SubpicValidateWrapper( subpicture_t *p_subpic, bool has_src_changed, 
  * SubpicUpdateWrapper: Subpicture update callback wrapper
  *****************************************************************************/
 static void SubpicUpdateWrapper( subpicture_t *p_subpic, const video_format_t *p_fmt_src,
-                                  const video_format_t *p_fmt_dst, vlc_tick_t i_ts )
+                                  const video_format_t *p_fmt_dst, mtime_t i_ts )
 {
     subsdelay_heap_entry_t *p_entry;
-    vlc_tick_t i_new_ts;
+    mtime_t i_new_ts;
 
     p_entry = p_subpic->updater.p_sys;
     if( !p_entry )
@@ -1009,8 +1018,7 @@ static void SubpicDestroyWrapper( subpicture_t *p_subpic )
 
     if( p_entry->p_filter )
     {
-        filter_sys_t *p_sys = p_entry->p_filter->p_sys;
-        p_heap = &p_sys->heap;
+        p_heap = &p_entry->p_filter->p_sys->heap;
 
         SubsdelayHeapLock( p_heap );
         SubsdelayHeapRemove( p_heap, p_entry );
@@ -1023,7 +1031,7 @@ static void SubpicDestroyWrapper( subpicture_t *p_subpic )
 /*****************************************************************************
  * SubpicLocalUpdate: rewrite some of the subpicture parameters
  *****************************************************************************/
-static void SubpicLocalUpdate( subpicture_t* p_subpic, vlc_tick_t i_ts )
+static void SubpicLocalUpdate( subpicture_t* p_subpic, mtime_t i_ts )
 {
     subsdelay_heap_entry_t *p_entry;
     subsdelay_heap_t *p_heap;
@@ -1038,8 +1046,7 @@ static void SubpicLocalUpdate( subpicture_t* p_subpic, vlc_tick_t i_ts )
     }
 
     p_filter = p_entry->p_filter;
-    filter_sys_t *p_sys = p_filter->p_sys;
-    p_heap = &p_sys->heap;
+    p_heap = &p_filter->p_sys->heap;
 
     SubsdelayHeapLock( p_heap );
 
@@ -1156,18 +1163,18 @@ static void SubpicDestroyClone( subpicture_t *p_subpic )
  * SubsdelayEstimateDelay: Calculate new subtitle delay according to its
  *     content and the calculation mode
  *****************************************************************************/
-static vlc_tick_t SubsdelayEstimateDelay( filter_t *p_filter, subsdelay_heap_entry_t *p_entry )
+static int64_t SubsdelayEstimateDelay( filter_t *p_filter, subsdelay_heap_entry_t *p_entry )
 {
     int i_mode;
+    int i_factor;
     int i_rank;
 
-    filter_sys_t *p_sys = p_filter->p_sys;
-
-    i_mode = p_sys->i_mode;
+    i_mode = p_filter->p_sys->i_mode;
+    i_factor = p_filter->p_sys->i_factor;
 
     if( i_mode == SUBSDELAY_MODE_ABSOLUTE )
     {
-        return ( p_entry->p_source->i_stop - p_entry->p_source->i_start + vlc_tick_from_sec( p_sys->f_factor ) );
+        return ( p_entry->p_source->i_stop - p_entry->p_source->i_start + INT_FACTOR_TO_MICROSEC( i_factor ) );
     }
 
     if( i_mode == SUBSDELAY_MODE_RELATIVE_SOURCE_CONTENT )
@@ -1177,19 +1184,19 @@ static vlc_tick_t SubsdelayEstimateDelay( filter_t *p_filter, subsdelay_heap_ent
             //FIXME: We only use a single segment here
             i_rank = SubsdelayGetTextRank( p_entry->p_subpic->p_region->p_text->psz_text );
 
-            return vlc_tick_from_sec( p_sys->f_factor * i_rank );
+            return ( i_rank * INT_FACTOR_TO_RANK_FACTOR( i_factor ) );
         }
 
         /* content is unavailable, calculation mode should be based on source delay */
         i_mode = SUBSDELAY_MODE_RELATIVE_SOURCE_DELAY;
     }
 
-    if( likely(i_mode == SUBSDELAY_MODE_RELATIVE_SOURCE_DELAY) )
+    if( i_mode == SUBSDELAY_MODE_RELATIVE_SOURCE_DELAY )
     {
-        return (vlc_tick_t)( p_sys->f_factor * ( p_entry->p_source->i_stop - p_entry->p_source->i_start ) );
+        return ( ( i_factor * ( p_entry->p_source->i_stop - p_entry->p_source->i_start ) ) / INT_FACTOR_BASE );
     }
 
-    return VLC_TICK_FROM_SEC(10); /* 10 sec */
+    return 10000000; /* 10 sec */
 }
 
 /*****************************************************************************
@@ -1201,16 +1208,14 @@ static int SubsdelayCalculateAlpha( filter_t *p_filter, int i_overlapping, int i
     int i_new_alpha;
     int i_min_alpha;
 
-    filter_sys_t *p_sys = p_filter->p_sys;
+    i_min_alpha = p_filter->p_sys->i_min_alpha;
 
-    i_min_alpha = p_sys->i_min_alpha;
-
-    if( i_overlapping > p_sys->i_overlap - 1)
+    if( i_overlapping > p_filter->p_sys->i_overlap - 1)
     {
-        i_overlapping = p_sys->i_overlap - 1;
+        i_overlapping = p_filter->p_sys->i_overlap - 1;
     }
 
-    switch ( p_sys->i_overlap )
+    switch ( p_filter->p_sys->i_overlap )
     {
     case 1:
         i_new_alpha = 255;

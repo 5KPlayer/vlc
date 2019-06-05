@@ -2,6 +2,7 @@
  * rtp.h: rtp stream output module header
  *****************************************************************************
  * Copyright (C) 2003-2007 VLC authors and VideoLAN
+ * $Id: 93adcd3c2764befb560754691e6282382ce3ef08 $
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *          Rémi Denis-Courmont
@@ -23,7 +24,6 @@
 
 typedef struct rtsp_stream_t rtsp_stream_t;
 typedef struct rtsp_stream_id_t rtsp_stream_id_t;
-typedef struct sout_stream_id_sys_t sout_stream_id_sys_t;
 
 rtsp_stream_t *RtspSetup( vlc_object_t *owner, vod_media_t *media,
                           const char *path );
@@ -45,22 +45,22 @@ void RtspTrackDetach( rtsp_stream_t *rtsp, const char *name,
 char *SDPGenerate( sout_stream_t *p_stream, const char *rtsp_url );
 char *SDPGenerateVoD( const vod_media_t *p_media, const char *rtsp_url );
 
-uint32_t rtp_compute_ts( unsigned i_clock_rate, vlc_tick_t i_pts );
+uint32_t rtp_compute_ts( unsigned i_clock_rate, int64_t i_pts );
 int rtp_add_sink( sout_stream_id_sys_t *id, int fd, bool rtcp_mux, uint16_t *seq );
 void rtp_del_sink( sout_stream_id_sys_t *id, int fd );
 uint16_t rtp_get_seq( sout_stream_id_sys_t *id );
-vlc_tick_t rtp_get_ts( const sout_stream_t *p_stream, const sout_stream_id_sys_t *id,
+int64_t rtp_get_ts( const sout_stream_t *p_stream, const sout_stream_id_sys_t *id,
                     const vod_media_t *p_media, const char *psz_vod_session,
-                    vlc_tick_t *p_npt );
+                    int64_t *p_npt );
 
 /* RTP packetization */
 void rtp_packetize_common (sout_stream_id_sys_t *id, block_t *out,
-                           bool b_m_bit, vlc_tick_t i_pts);
+                           bool b_m_bit, int64_t i_pts);
 void rtp_packetize_send (sout_stream_id_sys_t *id, block_t *out);
 size_t rtp_mtu (const sout_stream_id_sys_t *id);
 
 int rtp_packetize_xiph_config( sout_stream_id_sys_t *id, const char *fmtp,
-                               vlc_tick_t i_pts );
+                               int64_t i_pts );
 
 /* RTCP */
 typedef struct rtcp_sender_t rtcp_sender_t;
@@ -98,10 +98,10 @@ int  OpenVoD ( vlc_object_t * );
 void CloseVoD( vlc_object_t * );
 
 int vod_check_range(vod_media_t *p_media, const char *psz_session,
-                    vlc_tick_t start, vlc_tick_t end);
+                    int64_t start, int64_t end);
 void vod_play(vod_media_t *p_media, const char *psz_session,
-              vlc_tick_t *start, vlc_tick_t end);
-void vod_pause(vod_media_t *p_media, const char *psz_session, vlc_tick_t *npt);
+              int64_t *start, int64_t end);
+void vod_pause(vod_media_t *p_media, const char *psz_session, int64_t *npt);
 void vod_stop(vod_media_t *p_media, const char *psz_session);
 
 const char *vod_get_mux(const vod_media_t *p_media);

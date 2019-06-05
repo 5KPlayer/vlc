@@ -2,6 +2,7 @@
  * scaletempo.c: Scale audio tempo while maintaining pitch
  *****************************************************************************
  * Copyright © 2008 VLC authors and VideoLAN
+ * $Id: d881b2e5ad7637d5dff6ddbd391ab0195d9a0874 $
  *
  * Authors: Rov Juvano <rovjuvano@users.sourceforge.net>
  *
@@ -30,9 +31,9 @@
 #include <vlc_common.h>
 #include <vlc_plugin.h>
 #include <vlc_aout.h>
-#include <vlc_atomic.h>
 #include <vlc_filter.h>
 #include <vlc_modules.h>
+#include <vlc_atomic.h>
 
 #include <string.h> /* for memset */
 #include <limits.h> /* form INT_MIN */
@@ -94,7 +95,7 @@ vlc_module_end ()
  * frame: a single set of samples, one for each channel
  * VLC uses these terms differently
  */
-typedef struct
+struct filter_sys_t
 {
     /* Filter static config */
     double    scale;
@@ -134,7 +135,7 @@ typedef struct
     filter_t * resampler;
     vlc_atomic_float rate_shift;
 #endif
-} filter_sys_t;
+};
 
 /*****************************************************************************
  * best_overlap_offset: calculate best offset for overlap
@@ -237,33 +238,42 @@ static size_t fill_queue( filter_t      *p_filter,
 /*****************************************************************************
  * transform_buffer: main filter loop
  *****************************************************************************/
-static size_t transform_buffer( filter_t *p_filter,
-                                uint8_t *pout, size_t i_max_bytes_out )
+static size_t transform_buffer( filter_t        *p_filter,
+                                uint8_t         *p_buffer,
+                                size_t           i_buffer,
+                                uint8_t         *pout )
 {
     filter_sys_t *p = p_filter->p_sys;
-    unsigned bytes_out, bytes_off = 0;
 
-    assert( i_max_bytes_out >= p->bytes_stride );
-    // output stride
-    if( p->output_overlap ) {
-        if( p->best_overlap_offset ) {
-            bytes_off = p->best_overlap_offset( p_filter );
+    size_t offset_in = fill_queue( p_filter, p_buffer, i_buffer, 0 );
+    unsigned bytes_out = 0;
+    while( p->bytes_queued >= p->bytes_queue_max ) {
+        unsigned bytes_off = 0;
+
+        // output stride
+        if( p->output_overlap ) {
+            if( p->best_overlap_offset ) {
+                bytes_off = p->best_overlap_offset( p_filter );
+            }
+            p->output_overlap( p_filter, pout, bytes_off );
         }
-        p->output_overlap( p_filter, pout, bytes_off );
-    }
-    memcpy( pout + p->bytes_overlap,
-            p->buf_queue + bytes_off + p->bytes_overlap,
-            p->bytes_standing );
-    bytes_out = p->bytes_stride;
+        memcpy( pout + p->bytes_overlap,
+                p->buf_queue + bytes_off + p->bytes_overlap,
+                p->bytes_standing );
+        pout += p->bytes_stride;
+        bytes_out += p->bytes_stride;
 
-    // input stride
-    memcpy( p->buf_overlap,
-            p->buf_queue + bytes_off + p->bytes_stride,
-            p->bytes_overlap );
-    double frames_to_slide = p->frames_stride_scaled + p->frames_stride_error;
-    unsigned frames_to_stride_whole = (int)frames_to_slide;
-    p->bytes_to_slide       = frames_to_stride_whole * p->bytes_per_frame;
-    p->frames_stride_error  = frames_to_slide - frames_to_stride_whole;
+        // input stride
+        memcpy( p->buf_overlap,
+                p->buf_queue + bytes_off + p->bytes_stride,
+                p->bytes_overlap );
+        double frames_to_slide = p->frames_stride_scaled + p->frames_stride_error;
+        unsigned frames_to_stride_whole = (int)frames_to_slide;
+        p->bytes_to_slide       = frames_to_stride_whole * p->bytes_per_frame;
+        p->frames_stride_error  = frames_to_slide - frames_to_stride_whole;
+
+        offset_in += fill_queue( p_filter, p_buffer, i_buffer, offset_in );
+    }
 
     return bytes_out;
 }
@@ -474,13 +484,12 @@ static filter_t *ResamplerCreate(filter_t *p_filter)
     if( unlikely( p_resampler == NULL ) )
         return NULL;
 
-    filter_sys_t *p_sys = p_filter->p_sys;
     p_resampler->owner.sys = NULL;
     p_resampler->p_cfg = NULL;
     p_resampler->fmt_in = p_filter->fmt_in;
     p_resampler->fmt_out = p_filter->fmt_in;
     p_resampler->fmt_out.audio.i_rate =
-        vlc_atomic_load_float( &p_sys->rate_shift );
+        vlc_atomic_load_float( &p_filter->p_sys->rate_shift );
     aout_FormatPrepare( &p_resampler->fmt_out.audio );
     p_resampler->p_module = module_need( p_resampler, "audio resampler", NULL,
                                          false );
@@ -488,7 +497,7 @@ static filter_t *ResamplerCreate(filter_t *p_filter)
     if( p_resampler->p_module == NULL )
     {
         msg_Err( p_filter, "Could not load resampler" );
-        vlc_object_delete(p_resampler);
+        vlc_object_release( p_resampler );
         return NULL;
     }
     return p_resampler;
@@ -501,7 +510,7 @@ static int OpenPitch( vlc_object_t *p_this )
         return err;
 
     filter_t     *p_filter = (filter_t *)p_this;
-    vlc_object_t *p_aout = vlc_object_parent(p_filter);
+    vlc_object_t *p_aout = p_filter->obj.parent;
     filter_sys_t *p_sys = p_filter->p_sys;
 
     float pitch_shift  = var_CreateGetFloat( p_aout, "pitch-shift" );
@@ -535,11 +544,11 @@ static void ClosePitch( vlc_object_t *p_this )
 {
     filter_t *p_filter = (filter_t *)p_this;
     filter_sys_t *p_sys = p_filter->p_sys;
-    vlc_object_t *p_aout = vlc_object_parent(p_filter);
+    vlc_object_t *p_aout = p_filter->obj.parent;
     var_DelCallback( p_aout, "pitch-shift", PitchCallback, p_sys );
     var_Destroy( p_aout, "pitch-shift" );
     module_unneed( p_sys->resampler, p_sys->resampler->p_module );
-    vlc_object_delete(p_sys->resampler);
+    vlc_object_release( p_sys->resampler );
     Close( p_this );
 }
 #endif
@@ -556,44 +565,33 @@ static block_t *DoWork( filter_t * p_filter, block_t * p_in_buf )
 
     double scale = p_filter->fmt_in.audio.i_rate / (double)p->sample_rate;
     if( scale != p->scale ) {
-        p->scale = scale;
-        p->bytes_stride_scaled  = p->bytes_stride * p->scale;
-        p->frames_stride_scaled = p->bytes_stride_scaled / p->bytes_per_frame;
-        p->bytes_to_slide = 0;
-        msg_Dbg( p_filter, "%.3f scale, %.3f stride_in, %i stride_out rate: %u",
-                 p->scale, p->frames_stride_scaled,
-                 (int)( p->bytes_stride / p->bytes_per_frame ), p->sample_rate );
+      p->scale = scale;
+      p->bytes_stride_scaled  = p->bytes_stride * p->scale;
+      p->frames_stride_scaled = p->bytes_stride_scaled / p->bytes_per_frame;
+      p->bytes_to_slide = 0;
+      msg_Dbg( p_filter, "%.3f scale, %.3f stride_in, %i stride_out",
+               p->scale,
+               p->frames_stride_scaled,
+               (int)( p->bytes_stride / p->bytes_per_frame ) );
     }
 
-    block_t *p_out_buf = NULL;
     size_t i_outsize = calculate_output_buffer_size ( p_filter, p_in_buf->i_buffer );
-
-    size_t offset_in = fill_queue( p_filter, p_in_buf->p_buffer,
-                                   p_in_buf->i_buffer, 0 );
-    if( i_outsize > 0 )
+    block_t *p_out_buf = block_Alloc( i_outsize );
+    if( p_out_buf == NULL )
     {
-        p_out_buf = block_Alloc( i_outsize );
-        if( p_out_buf == NULL )
-        {
-            block_Release( p_in_buf );
-            return NULL;
-        }
-        size_t bytes_out = 0;
-        while( p->bytes_queued >= p->bytes_queue_max )
-        {
-            bytes_out += transform_buffer( p_filter,
-                                           &p_out_buf->p_buffer[bytes_out],
-                                           p_out_buf->i_buffer - bytes_out );
-            offset_in += fill_queue( p_filter, p_in_buf->p_buffer,
-                                     p_in_buf->i_buffer, offset_in );
-        }
-        p_out_buf->i_buffer     = bytes_out;
-        p_out_buf->i_nb_samples = bytes_out / p->bytes_per_frame;
-        p_out_buf->i_dts        = p_in_buf->i_dts;
-        p_out_buf->i_pts        = p_in_buf->i_pts;
-        p_out_buf->i_length = vlc_tick_from_samples(p_out_buf->i_nb_samples,
-                                                    p_filter->fmt_out.audio.i_rate);
+        block_Release( p_in_buf );
+        return NULL;
     }
+
+    size_t bytes_out = transform_buffer( p_filter,
+        p_in_buf->p_buffer, p_in_buf->i_buffer,
+        p_out_buf->p_buffer );
+
+    p_out_buf->i_buffer     = bytes_out;
+    p_out_buf->i_nb_samples = bytes_out / p->bytes_per_frame;
+    p_out_buf->i_dts        = p_in_buf->i_dts;
+    p_out_buf->i_pts        = p_in_buf->i_pts;
+    p_out_buf->i_length     = p_in_buf->i_length;
 
     block_Release( p_in_buf );
     return p_out_buf;

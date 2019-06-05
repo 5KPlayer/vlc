@@ -2,6 +2,7 @@
  * mmal.c: MMAL-based deinterlace plugin for Raspberry Pi
  *****************************************************************************
  * Copyright © 2014 jusst technologies GmbH
+ * $Id: 4b08eee9b63f9cdc6dbebc65c00d5ad35b382b71 $
  *
  * Authors: Julian Scheel <julian@jusst.de>
  *          Dennis Hamester <dennis.hamester@gmail.com>
@@ -25,12 +26,11 @@
 #include "config.h"
 #endif
 
-#include <stdatomic.h>
-
-#include <vlc_common.h>
 #include <vlc_picture_pool.h>
+#include <vlc_common.h>
 #include <vlc_plugin.h>
 #include <vlc_filter.h>
+#include <vlc_atomic.h>
 
 #include "mmal_picture.h"
 
@@ -60,8 +60,7 @@ vlc_module_begin()
                     MMAL_DEINTERLACE_QPU_LONGTEXT, true);
 vlc_module_end()
 
-typedef struct
-{
+struct filter_sys_t {
     MMAL_COMPONENT_T *component;
     MMAL_PORT_T *input;
     MMAL_PORT_T *output;
@@ -74,7 +73,7 @@ typedef struct
     /* statistics */
     int output_in_transit;
     int input_in_transit;
-} filter_sys_t;
+};
 
 static void control_port_cb(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer);
 static void input_port_cb(MMAL_PORT_T *port, MMAL_BUFFER_HEADER_T *buffer);
@@ -87,8 +86,8 @@ static void flush(filter_t *filter);
 static int Open(filter_t *filter)
 {
     int32_t frame_duration = filter->fmt_in.video.i_frame_rate != 0 ?
-            vlc_tick_from_samples( filter->fmt_in.video.i_frame_rate_base,
-            filter->fmt_in.video.i_frame_rate ) : 0;
+            (int64_t)1000000 * filter->fmt_in.video.i_frame_rate_base /
+            filter->fmt_in.video.i_frame_rate : 0;
     bool use_qpu = var_InheritBool(filter, MMAL_DEINTERLACE_QPU);
 
     MMAL_PARAMETER_IMAGEFX_PARAMETERS_T imfx_param = {

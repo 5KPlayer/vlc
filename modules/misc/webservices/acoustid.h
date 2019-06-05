@@ -17,17 +17,16 @@
  * along with this program; if not, write to the Free Software Foundation,
  * Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
-#define ACOUSTID_ANON_SERVER "fingerprint.videolan.org"
-#define ACOUSTID_ANON_SERVER_PATH   "/acoustid.php"
+
 #define MB_ID_SIZE 36
 
-struct acoustid_mb_result_t
+struct musicbrainz_recording_t
 {
     char *psz_artist;
     char *psz_title;
     char s_musicbrainz_id[MB_ID_SIZE];
 };
-typedef struct acoustid_mb_result_t acoustid_mb_result_t;
+typedef struct musicbrainz_recording_t musicbrainz_recording_t;
 
 struct acoustid_result_t
 {
@@ -36,7 +35,7 @@ struct acoustid_result_t
     struct
     {
         unsigned int count;
-        acoustid_mb_result_t *p_recordings;
+        musicbrainz_recording_t *p_recordings;
     } recordings;
 };
 typedef struct acoustid_result_t acoustid_result_t;
@@ -56,12 +55,5 @@ struct acoustid_fingerprint_t
 };
 typedef struct acoustid_fingerprint_t acoustid_fingerprint_t;
 
-typedef struct
-{
-    vlc_object_t *p_obj;
-    char *psz_server;
-    char *psz_apikey;
-} acoustid_config_t;
-
-int acoustid_lookup_fingerprint( const acoustid_config_t *, acoustid_fingerprint_t * );
-void acoustid_result_release( acoustid_result_t * );
+int DoAcoustIdWebRequest( vlc_object_t *p_obj, acoustid_fingerprint_t *p_data );
+void free_acoustid_result_t( acoustid_result_t * r );

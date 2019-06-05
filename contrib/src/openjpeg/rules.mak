@@ -3,10 +3,6 @@
 OPENJPEG_VERSION := 2.3.0
 OPENJPEG_URL := https://github.com/uclouvain/openjpeg/archive/v$(OPENJPEG_VERSION).tar.gz
 
-ifdef HAVE_WIN32
-DEPS_openjpeg += pthreads $(DEPS_pthreads)
-endif
-
 $(TARBALLS)/openjpeg-v$(OPENJPEG_VERSION).tar.gz:
 	$(call download_pkg,$(OPENJPEG_URL),openjpeg)
 

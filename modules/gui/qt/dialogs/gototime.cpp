@@ -2,6 +2,7 @@
  * gototime.cpp : GotoTime and About dialogs
  ****************************************************************************
  * Copyright (C) 2007 the VideoLAN team
+ * $Id: 727a8a3c3138974680b1cf1790d76cc78f6bd408 $
  *
  * Authors: Jean-Baptiste Kempf <jb (at) videolan.org>
  *
@@ -25,7 +26,7 @@
 
 #include "dialogs/gototime.hpp"
 
-#include "components/player_controller.hpp"
+#include "input_manager.hpp"
 
 #include <QTabWidget>
 #include <QLabel>
@@ -85,10 +86,10 @@ GotoTimeDialog::~GotoTimeDialog()
 void GotoTimeDialog::toggleVisible()
 {
     reset();
-    if ( !isVisible() && THEMIM->hasInput() )
+    if ( !isVisible() && THEMIM->getIM()->hasInput() )
     {
-        vlc_tick_t i_time = THEMIM->getTime();
-        timeEdit->setTime( timeEdit->time().addSecs( SEC_FROM_VLC_TICK(i_time) ) );
+        int64_t i_time = var_GetInteger( THEMIM->getInput(), "time" );
+        timeEdit->setTime( timeEdit->time().addSecs( i_time / CLOCK_FREQ ) );
     }
     QVLCDialog::toggleVisible();
     if(isVisible())
@@ -103,10 +104,11 @@ void GotoTimeDialog::cancel()
 
 void GotoTimeDialog::close()
 {
-    if ( THEMIM->hasInput() )
+    if ( THEMIM->getIM()->hasInput() )
     {
-        int i_time = QTime( 0, 0, 0 ).msecsTo( timeEdit->time() );
-        THEMIM->jumpToTime( VLC_TICK_FROM_MS(i_time) );
+        int64_t i_time = (int64_t)
+            ( QTime( 0, 0, 0 ).msecsTo( timeEdit->time() ) ) * 1000;
+        var_SetInteger( THEMIM->getInput(), "time", i_time );
     }
     toggleVisible();
 }

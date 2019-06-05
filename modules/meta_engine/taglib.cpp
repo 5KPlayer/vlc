@@ -2,6 +2,7 @@
  * taglib.cpp: Taglib tag parser/writer
  *****************************************************************************
  * Copyright (C) 2003-2016 VLC authors and VideoLAN
+ * $Id: 123d09c94fdce884486d2a5aaeb31ea62da2b1d3 $
  *
  * Authors: Clément Stenac <zorglub@videolan.org>
  *          Rafaël Carré <funman@videolanorg>
@@ -55,13 +56,17 @@
                                    TAGLIB_MINOR_VERSION, \
                                    TAGLIB_PATCH_VERSION)
 
+#define TAGLIB_VERSION_1_11 VERSION_INT(1,11,0)
+
 #include <fileref.h>
 #include <tag.h>
 #include <tbytevector.h>
 
 /* Support for stream-based metadata */
-#include <vlc_access.h>
-#include <tiostream.h>
+#if TAGLIB_VERSION >= TAGLIB_VERSION_1_11
+# include <vlc_access.h>
+# include <tiostream.h>
+#endif
 
 #include <apefile.h>
 #include <asffile.h>
@@ -131,7 +136,10 @@ File *VLCTagLib::ExtResolver<T>::createFile(FileName fileName, bool, AudioProper
     return 0;
 }
 
+#if TAGLIB_VERSION >= TAGLIB_VERSION_1_11
 static VLCTagLib::ExtResolver<MPEG::File> aacresolver(".aac");
+#endif
+static VLCTagLib::ExtResolver<MP4::File> m4vresolver(".m4v");
 static bool b_extensions_registered = false;
 
 // taglib is not thread safe
@@ -149,6 +157,7 @@ vlc_module_begin ()
         set_callbacks( WriteMeta, NULL )
 vlc_module_end ()
 
+#if TAGLIB_VERSION >= TAGLIB_VERSION_1_11
 class VlcIostream : public IOStream
 {
 public:
@@ -246,6 +255,7 @@ private:
     stream_t* m_stream;
     int64_t m_previousPos;
 };
+#endif /* TAGLIB_VERSION_1_11 */
 
 static int ExtractCoupleNumberValues( vlc_meta_t* p_meta, const char *psz_value,
         vlc_meta_type_t first, vlc_meta_type_t second)
@@ -825,7 +835,15 @@ static int ReadMeta( vlc_object_t* p_this)
     if( unlikely(psz_uri == NULL) )
         return VLC_ENOMEM;
 
-#if VLC_WINSTORE_APP
+    char *psz_path = vlc_uri2path( psz_uri );
+#if VLC_WINSTORE_APP && TAGLIB_VERSION >= TAGLIB_VERSION_1_11
+    if( psz_path == NULL )
+    {
+        free( psz_uri );
+        return VLC_EGENERIC;
+    }
+    free( psz_path );
+
     stream_t *p_stream = vlc_access_NewMRL( p_this, psz_uri );
     free( psz_uri );
     if( p_stream == NULL )
@@ -834,14 +852,16 @@ static int ReadMeta( vlc_object_t* p_this)
     VlcIostream s( p_stream );
     f = FileRef( &s );
 #else /* VLC_WINSTORE_APP */
-    char *psz_path = vlc_uri2path( psz_uri );
     free( psz_uri );
     if( psz_path == NULL )
         return VLC_EGENERIC;
 
     if( !b_extensions_registered )
     {
+#if TAGLIB_VERSION >= TAGLIB_VERSION_1_11
         FileRef::addFileTypeResolver( &aacresolver );
+#endif
+        FileRef::addFileTypeResolver( &m4vresolver );
         b_extensions_registered = true;
     }
 

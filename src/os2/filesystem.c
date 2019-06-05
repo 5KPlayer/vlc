@@ -38,9 +38,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <dirent.h>
-#ifdef HAVE_SYS_SOCKET_H
 #include <sys/socket.h>
-#endif
 #include <signal.h>
 
 #include <vlc_common.h>

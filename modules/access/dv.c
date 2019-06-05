@@ -2,6 +2,7 @@
  * dv.c: Digital video/Firewire input (file: access plug-in)
  *****************************************************************************
  * Copyright (C) 2005 M2X
+ * $Id: b15b22f49080fecd841e153b6cf13cb8080170dc $
  *
  * Authors: Jean-Paul Saman <jpsaman at m2x dot nl>
  *
@@ -91,7 +92,7 @@ static int AVCPlay( stream_t *, int );
 static int AVCPause( stream_t *, int );
 static int AVCStop( stream_t *, int );
 
-typedef struct
+struct access_sys_t
 {
     raw1394handle_t p_avc1394;
     raw1394handle_t p_raw1394;
@@ -107,7 +108,7 @@ typedef struct
     event_thread_t *p_ev;
     vlc_mutex_t lock;
     block_t *p_frame;
-} access_sys_t;
+};
 
 #define ISOCHRONOUS_QUEUE_LENGTH 1000
 #define ISOCHRONOUS_MAX_PACKET_SIZE 4096
@@ -281,8 +282,8 @@ static int Control( stream_t *p_access, int i_query, va_list args )
             break;
 
         case STREAM_GET_PTS_DELAY:
-            *va_arg( args, vlc_tick_t * ) =
-                VLC_TICK_FROM_MS( var_InheritInteger( p_access, "live-caching" ) );
+            *va_arg( args, int64_t * ) =
+                INT64_C(1000) * var_InheritInteger( p_access, "live-caching" );
             break;
 
         /* */
@@ -388,7 +389,7 @@ Raw1394Handler(raw1394handle_t handle, unsigned char *data,
             if( p_sys->p_ev->p_frame )
             {
                 /* Push current frame to p_access thread. */
-                //p_sys->p_ev->p_frame->i_pts = vlc_tick_now();
+                //p_sys->p_ev->p_frame->i_pts = mdate();
                 block_ChainAppend( &p_sys->p_frame, p_sys->p_ev->p_frame );
             }
             /* reset list */

@@ -2,6 +2,7 @@
  * extract.c : Extract RGB components
  *****************************************************************************
  * Copyright (C) 2000-2006 VLC authors and VideoLAN
+ * $Id: 870db76b0f318a12eaf0836c1d7f1e9f113de3de $
  *
  * Authors: Antoine Cellerier <dionoea .t videolan d@t org>
  *
@@ -82,12 +83,12 @@ static const char *const ppsz_filter_options[] = {
 };
 
 enum { RED=0xFF0000, GREEN=0x00FF00, BLUE=0x0000FF };
-typedef struct
+struct filter_sys_t
 {
     vlc_mutex_t lock;
     int *projection_matrix;
     uint32_t i_color;
-} filter_sys_t;
+};
 
 /*****************************************************************************
  * Create
@@ -118,29 +119,27 @@ static int Create( vlc_object_t *p_this )
     }
 
     /* Allocate structure */
-    filter_sys_t *p_sys = malloc( sizeof( filter_sys_t ) );
-    if( p_sys == NULL )
+    p_filter->p_sys = malloc( sizeof( filter_sys_t ) );
+    if( p_filter->p_sys == NULL )
         return VLC_ENOMEM;
-    p_filter->p_sys = p_sys;
-
-    p_sys->projection_matrix = malloc( 9 * sizeof( int ) );
-    if( !p_sys->projection_matrix )
+    p_filter->p_sys->projection_matrix = malloc( 9 * sizeof( int ) );
+    if( !p_filter->p_sys->projection_matrix )
     {
-        free( p_sys );
+        free( p_filter->p_sys );
         return VLC_ENOMEM;
     }
 
     config_ChainParse( p_filter, FILTER_PREFIX, ppsz_filter_options,
                        p_filter->p_cfg );
 
-    p_sys->i_color = var_CreateGetIntegerCommand( p_filter,
+    p_filter->p_sys->i_color = var_CreateGetIntegerCommand( p_filter,
                                                FILTER_PREFIX "component" );
     /* Matrix won't be used for RED, GREEN or BLUE in planar formats */
-    make_projection_matrix( p_filter, p_sys->i_color,
-                            p_sys->projection_matrix );
-    vlc_mutex_init( &p_sys->lock );
+    make_projection_matrix( p_filter, p_filter->p_sys->i_color,
+                            p_filter->p_sys->projection_matrix );
+    vlc_mutex_init( &p_filter->p_sys->lock );
     var_AddCallback( p_filter, FILTER_PREFIX "component",
-                     ExtractCallback, p_sys );
+                     ExtractCallback, p_filter->p_sys );
 
     p_filter->pf_video_filter = Filter;
 

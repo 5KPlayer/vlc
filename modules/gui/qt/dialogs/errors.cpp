@@ -2,6 +2,7 @@
  * errors.cpp : Errors
  ****************************************************************************
  * Copyright ( C ) 2006 the VideoLAN team
+ * $Id: ad568f04f56358b7565402a94d97b4498a33cf81 $
  *
  * Authors: Clément Stenac <zorglub@videolan.org>
  *          Jean-Baptiste Kempf <jb@videolan.org>
@@ -98,6 +99,6 @@ void ErrorsDialog::dontShow()
 {
     if( stopShowing->isChecked() )
     {
-        config_PutInt( "qt-error-dialogs", 0 );
+        config_PutInt( p_intf, "qt-error-dialogs", 0 );
     }
 }

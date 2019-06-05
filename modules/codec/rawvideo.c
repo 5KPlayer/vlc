@@ -2,6 +2,7 @@
  * rawvideo.c: Pseudo video decoder/packetizer for raw video data
  *****************************************************************************
  * Copyright (C) 2001, 2002 VLC authors and VideoLAN
+ * $Id: e98061dc60dc788c30e9e375c9c348b3cd9030dc $
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *
@@ -34,7 +35,7 @@
 /*****************************************************************************
  * decoder_sys_t : raw video decoder descriptor
  *****************************************************************************/
-typedef struct
+struct decoder_sys_t
 {
     /*
      * Input properties
@@ -47,7 +48,7 @@ typedef struct
      * Common properties
      */
     date_t pts;
-} decoder_sys_t;
+};
 
 /****************************************************************************
  * Local prototypes
@@ -136,7 +137,7 @@ static void Flush( decoder_t *p_dec )
 {
     decoder_sys_t *p_sys = p_dec->p_sys;
 
-    date_Set( &p_sys->pts, VLC_TICK_INVALID );
+    date_Set( &p_sys->pts, VLC_TS_INVALID );
 }
 
 /****************************************************************************
@@ -158,8 +159,8 @@ static block_t *DecodeBlock( decoder_t *p_dec, block_t *p_block )
         }
     }
 
-    if( p_block->i_pts == VLC_TICK_INVALID && p_block->i_dts == VLC_TICK_INVALID &&
-        date_Get( &p_sys->pts ) == VLC_TICK_INVALID )
+    if( p_block->i_pts <= VLC_TS_INVALID && p_block->i_dts <= VLC_TS_INVALID &&
+        !date_Get( &p_sys->pts ) )
     {
         /* We've just started the stream, wait for the first PTS. */
         block_Release( p_block );
@@ -167,11 +168,11 @@ static block_t *DecodeBlock( decoder_t *p_dec, block_t *p_block )
     }
 
     /* Date management: If there is a pts avaliable, use that. */
-    if( p_block->i_pts != VLC_TICK_INVALID )
+    if( p_block->i_pts > VLC_TS_INVALID )
     {
         date_Set( &p_sys->pts, p_block->i_pts );
     }
-    else if( p_block->i_dts != VLC_TICK_INVALID )
+    else if( p_block->i_dts > VLC_TS_INVALID )
     {
         /* NB, davidf doesn't quite agree with this in general, it is ok
          * for rawvideo since it is in order (ie pts=dts), however, it
@@ -243,7 +244,7 @@ static int DecodeFrame( decoder_t *p_dec, block_t *p_block )
     FillPicture( p_dec, p_block, p_pic );
 
     /* Date management: 1 frame per packet */
-    p_pic->date = date_Get( &p_sys->pts );
+    p_pic->date = date_Get( &p_dec->p_sys->pts );
     date_Increment( &p_sys->pts, 1 );
 
     if( p_block->i_flags & BLOCK_FLAG_INTERLACED_MASK )
@@ -307,10 +308,7 @@ static int OpenPacketizer( vlc_object_t *p_this )
 
     int ret = OpenCommon( p_dec );
     if( ret == VLC_SUCCESS )
-    {
         p_dec->pf_packetize = SendFrame;
-        p_dec->pf_flush = Flush;
-    }
     return ret;
 }
 

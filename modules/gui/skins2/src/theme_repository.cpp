@@ -2,6 +2,7 @@
  * theme_repository.cpp
  *****************************************************************************
  * Copyright (C) 2004 the VideoLAN team
+ * $Id: 9d02b310ae97ff57afcc10adb15269847141f0f9 $
  *
  * Authors: Cyril Deguet     <asmax@via.ecp.fr>
  *
@@ -50,11 +51,12 @@ void ThemeRepository::destroy( intf_thread_t *pIntf )
 
 ThemeRepository::ThemeRepository( intf_thread_t *pIntf ): SkinObject( pIntf )
 {
-    vlc_value_t val;
+    vlc_value_t val, text;
 
     // Create a variable to add items in wxwindows popup menu
     var_Create( pIntf, "intf-skins", VLC_VAR_STRING | VLC_VAR_ISCOMMAND );
-    var_Change( pIntf, "intf-skins", VLC_VAR_SETTEXT, _("Select skin") );
+    text.psz_string = _("Select skin");
+    var_Change( pIntf, "intf-skins", VLC_VAR_SETTEXT, &text, NULL );
 
     // Scan vlt files in the resource path
     OSFactory *pOsFactory = OSFactory::instance( pIntf );
@@ -73,8 +75,9 @@ ThemeRepository::ThemeRepository( intf_thread_t *pIntf ): SkinObject( pIntf )
         std::string name = itmap->first;
         std::string path = itmap->second;
         val.psz_string = (char*) path.c_str();
-        var_Change( getIntf(), "intf-skins", VLC_VAR_ADDCHOICE, val,
-                    name.c_str() );
+        text.psz_string = (char*) name.c_str();
+        var_Change( getIntf(), "intf-skins", VLC_VAR_ADDCHOICE, &val,
+                    &text );
 
         if( name == "Default" )
         {
@@ -99,7 +102,7 @@ ThemeRepository::ThemeRepository( intf_thread_t *pIntf ): SkinObject( pIntf )
         current = itdefault->second;
 
     // save this valid skins for reuse
-    config_PutPsz( "skins2-last", current.c_str() );
+    config_PutPsz( getIntf(), "skins2-last", current.c_str() );
 
     // Update repository
     updateRepository();
@@ -110,8 +113,8 @@ ThemeRepository::ThemeRepository( intf_thread_t *pIntf ): SkinObject( pIntf )
     // variable for opening a dialog box to change skins
     var_Create( pIntf, "intf-skins-interactive", VLC_VAR_VOID |
                 VLC_VAR_ISCOMMAND );
-    var_Change( pIntf, "intf-skins-interactive", VLC_VAR_SETTEXT,
-                _("Open skin...") );
+    text.psz_string = _("Open skin...");
+    var_Change( pIntf, "intf-skins-interactive", VLC_VAR_SETTEXT, &text, NULL );
 
     // Set the callback
     var_AddCallback( pIntf, "intf-skins-interactive", changeSkin, this );
@@ -201,14 +204,15 @@ int ThemeRepository::changeSkin( vlc_object_t *pIntf, char const *pVariable,
 
 void ThemeRepository::updateRepository()
 {
-    vlc_value_t val;
+    vlc_value_t val, text;
 
     // retrieve the current skin
-    char* psz_current = config_GetPsz( "skins2-last" );
+    char* psz_current = config_GetPsz( getIntf(), "skins2-last" );
     if( !psz_current )
         return;
 
     val.psz_string = psz_current;
+    text.psz_string = psz_current;
 
     // add this new skins if not yet present in repository
     std::string current( psz_current );
@@ -220,14 +224,14 @@ void ThemeRepository::updateRepository()
     }
     if( it == m_skinsMap.end() )
     {
-        var_Change( getIntf(), "intf-skins", VLC_VAR_ADDCHOICE, val,
-                    (const char *)psz_current );
+        var_Change( getIntf(), "intf-skins", VLC_VAR_ADDCHOICE, &val,
+                    &text );
         std::string name = psz_current;
         m_skinsMap[name] = name;
     }
 
     // mark this current skins as 'checked' in list
-    var_Change( getIntf(), "intf-skins", VLC_VAR_SETVALUE, val );
+    var_Change( getIntf(), "intf-skins", VLC_VAR_SETVALUE, &val, NULL );
 
     free( psz_current );
 }

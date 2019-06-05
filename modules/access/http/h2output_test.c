@@ -34,17 +34,16 @@
 #include "h2frame.h"
 #include "h2output.h"
 
-#undef vlc_tick_sleep
+#undef msleep
 
 static unsigned char counter = 0;
 static bool send_failure = false;
 static bool expect_hello = true;
 static vlc_sem_t rx;
 
-static int fd_callback(vlc_tls_t *tls, short *restrict events)
+static int fd_callback(vlc_tls_t *tls)
 {
     (void) tls;
-    (void) events;
     return fileno(stderr); /* should be writable (at least most of the time) */
 }
 
@@ -52,7 +51,7 @@ static ssize_t send_callback(vlc_tls_t *tls, const struct iovec *iov,
                              unsigned count)
 {
     assert(count == 1);
-    assert(tls->ops->writev == send_callback);
+    assert(tls->writev == send_callback);
 
     const uint8_t *p = iov->iov_base;
     size_t len = iov->iov_len;
@@ -84,15 +83,10 @@ static ssize_t send_callback(vlc_tls_t *tls, const struct iovec *iov,
     return send_failure ? -1 : (ssize_t)len;
 }
 
-static const struct vlc_tls_operations fake_ops =
+static vlc_tls_t fake_tls =
 {
     .get_fd = fd_callback,
     .writev = send_callback,
-};
-
-static vlc_tls_t fake_tls =
-{
-    .ops = &fake_ops,
 };
 
 static struct vlc_h2_frame *frame(unsigned char c)
@@ -166,7 +160,7 @@ int main(void)
 
     assert(vlc_h2_output_send(out, frame(10)) == 0);
     for (unsigned char i = 11; vlc_h2_output_send(out, frame(i)) == 0; i++)
-        vlc_tick_sleep(VLC_TICK_FROM_MS(100)); /* eventually, it should start failing */
+        msleep(CLOCK_FREQ/10); /* eventually, it should start failing */
     assert(vlc_h2_output_send(out, frame(0)) == -1);
     assert(vlc_h2_output_send_prio(out, frame(0)) == -1);
     vlc_h2_output_destroy(out);
@@ -180,7 +174,7 @@ int main(void)
     vlc_sem_wait(&rx);
 
     for (unsigned char i = 1; vlc_h2_output_send_prio(out, frame(i)) == 0; i++)
-        vlc_tick_sleep(VLC_TICK_FROM_MS(100));
+        msleep(CLOCK_FREQ/10);
     assert(vlc_h2_output_send(out, frame(0)) == -1);
     assert(vlc_h2_output_send_prio(out, frame(0)) == -1);
     vlc_h2_output_destroy(out);

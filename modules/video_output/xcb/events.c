@@ -102,16 +102,15 @@ static const xcb_screen_t *FindScreen (vlc_object_t *obj,
 }
 
 vout_window_t *vlc_xcb_parent_Create(vout_display_t *vd,
-                                     const vout_display_cfg_t *cfg,
                                      xcb_connection_t **restrict pconn,
                                      const xcb_screen_t **restrict pscreen)
 {
-    if (cfg->window->type != VOUT_WINDOW_TYPE_XID)
+    vout_window_t *wnd = vout_display_NewWindow (vd, VOUT_WINDOW_TYPE_XID);
+    if (wnd == NULL)
     {
         msg_Err (vd, "window not available");
         return NULL;
     }
-    vout_window_t *wnd = cfg->window;
 
     xcb_connection_t *conn = Connect (VLC_OBJECT(vd), wnd->display.x11);
     if (conn == NULL)
@@ -137,16 +136,35 @@ vout_window_t *vlc_xcb_parent_Create(vout_display_t *vd,
 error:
     if (conn != NULL)
         xcb_disconnect (conn);
+    vout_display_DeleteWindow (vd, wnd);
     return NULL;
+}
+
+/* NOTE: we assume no other thread will be _setting_ our video output events
+ * variables. Afterall, only this plugin is supposed to know when these occur.
+  * Otherwise, we'd var_OrInteger() and var_NandInteger() functions...
+ */
+
+static void HandleVisibilityNotify (vout_display_t *vd, bool *visible,
+                                    const xcb_visibility_notify_event_t *ev)
+{
+    *visible = ev->state != XCB_VISIBILITY_FULLY_OBSCURED;
+    msg_Dbg (vd, "display is %svisible", *visible ? "" : "not ");
 }
 
 /**
  * Process an X11 event.
  */
-static int ProcessEvent(vout_display_t *vd, xcb_generic_event_t *ev)
+static int ProcessEvent (vout_display_t *vd,
+                         bool *visible, xcb_generic_event_t *ev)
 {
     switch (ev->response_type & 0x7f)
     {
+        case XCB_VISIBILITY_NOTIFY:
+            HandleVisibilityNotify (vd, visible,
+                                    (xcb_visibility_notify_event_t *)ev);
+            break;
+
         case XCB_MAPPING_NOTIFY:
             break;
 
@@ -158,12 +176,12 @@ static int ProcessEvent(vout_display_t *vd, xcb_generic_event_t *ev)
     return VLC_SUCCESS;
 }
 
-int vlc_xcb_Manage(vout_display_t *vd, xcb_connection_t *conn)
+int vlc_xcb_Manage(vout_display_t *vd, xcb_connection_t *conn, bool *visible)
 {
     xcb_generic_event_t *ev;
 
     while ((ev = xcb_poll_for_event (conn)) != NULL)
-        ProcessEvent(vd, ev);
+        ProcessEvent (vd, visible, ev);
 
     if (xcb_connection_has_error (conn))
     {

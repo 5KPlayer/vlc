@@ -39,7 +39,7 @@ static block_t *Filter ( filter_t *, block_t * );
 static int paramCallback( vlc_object_t *, char const *, vlc_value_t ,
                             vlc_value_t , void * );
 
-typedef struct
+struct filter_sys_t
 {
     float *pf_ringbuf;  /* circular buffer to store samples */
     float *pf_write;    /* where to write current sample    */
@@ -48,7 +48,7 @@ typedef struct
     float f_feedback;
     float f_crossfeed;
     float f_dry_mix;
-} filter_sys_t;
+};
 
 #define HELP_TEXT N_("This filter enhances the stereo effect by "\
             "suppressing mono (signal common to both channels) "\
@@ -117,7 +117,7 @@ static int MakeRingBuffer( float **pp_buffer, size_t *pi_buffer,
 static int Open( vlc_object_t *obj )
 {
     filter_t *p_filter  = (filter_t *)obj;
-    vlc_object_t *p_aout = vlc_object_parent(p_filter);
+    vlc_object_t *p_aout = p_filter->obj.parent;
     filter_sys_t *p_sys;
 
     if( p_filter->fmt_in.audio.i_format != VLC_CODEC_FL32 ||
@@ -197,7 +197,7 @@ static block_t *Filter( filter_t *p_filter, block_t *p_block )
 static void Close( vlc_object_t *obj )
 {
     filter_t *p_filter  = (filter_t *)obj;
-    vlc_object_t *p_aout = vlc_object_parent(p_filter);
+    vlc_object_t *p_aout = p_filter->obj.parent;
     filter_sys_t *p_sys = p_filter->p_sys;
 
 #define DEL_VAR(var) \

@@ -2,6 +2,7 @@
  * podcast.c:  Podcast services discovery module
  *****************************************************************************
  * Copyright (C) 2005-2009 the VideoLAN team
+ * $Id: a872cd63d00813f1d036cf4c15fd78946295e0ce $
  *
  * Authors: Antoine Cellerier <dionoea -at- videolan -dot- org>
  *
@@ -82,8 +83,12 @@ enum {
   UPDATE_REQUEST
 }; /* FIXME Temporary. Updating by compound urls string to be removed later. */
 
-typedef struct
+struct services_discovery_sys_t
 {
+    /* playlist node */
+    input_thread_t **pp_input;
+    int i_input;
+
     char **ppsz_urls;
     int i_urls;
 
@@ -97,7 +102,7 @@ typedef struct
     bool b_savedurls_loaded;
     char *psz_request;
     int update_type;
-} services_discovery_sys_t;
+};
 
 /*****************************************************************************
  * Local prototypes
@@ -116,7 +121,7 @@ static void SaveUrls( services_discovery_t *p_sd );
  *****************************************************************************/
 static int Open( vlc_object_t *p_this )
 {
-    if( strcmp( vlc_object_typename(vlc_object_parent(p_this)), "playlist" ) )
+    if( strcmp( p_this->obj.parent->obj.object_type, "playlist" ) )
         return VLC_EGENERIC; /* FIXME: support LibVLC SD too! */
 
     services_discovery_t *p_sd = ( services_discovery_t* )p_this;
@@ -126,6 +131,8 @@ static int Open( vlc_object_t *p_this )
 
     p_sys->i_urls = 0;
     p_sys->ppsz_urls = NULL;
+    p_sys->i_input = 0;
+    p_sys->pp_input = NULL;
     p_sys->pp_items = NULL;
     p_sys->i_items = 0;
     vlc_mutex_init( &p_sys->lock );
@@ -139,7 +146,7 @@ static int Open( vlc_object_t *p_this )
     p_sd->description = _("Podcasts");
 
     /* Launch the callback associated with this variable */
-    vlc_object_t *pl = vlc_object_parent(p_sd);
+    vlc_object_t *pl = p_sd->obj.parent;
     var_Create( pl, "podcast-urls", VLC_VAR_STRING | VLC_VAR_DOINHERIT );
     var_AddCallback( pl, "podcast-urls", UrlsChange, p_sys );
 
@@ -165,7 +172,7 @@ static void Close( vlc_object_t *p_this )
 {
     services_discovery_t *p_sd = ( services_discovery_t* )p_this;
     services_discovery_sys_t *p_sys = p_sd->p_sys;
-    vlc_object_t *pl = vlc_object_parent(p_sd);
+    vlc_object_t *pl = p_sd->obj.parent;
 
     vlc_cancel (p_sys->thread);
     vlc_join (p_sys->thread, NULL);
@@ -174,6 +181,19 @@ static void Close( vlc_object_t *p_this )
     var_DelCallback( pl, "podcast-request", Request, p_sys );
     vlc_cond_destroy( &p_sys->wait );
     vlc_mutex_destroy( &p_sys->lock );
+
+    for( int i = 0; i < p_sys->i_input; i++ )
+    {
+        input_thread_t *p_input = p_sd->p_sys->pp_input[i];
+        if( !p_input )
+            continue;
+
+        input_Stop( p_input );
+        input_Close( p_input );
+
+        p_sd->p_sys->pp_input[i] = NULL;
+    }
+    free( p_sd->p_sys->pp_input );
 
     for( int i = 0; i < p_sys->i_urls; i++ )
          free( p_sys->ppsz_urls[i] );
@@ -207,7 +227,7 @@ noreturn static void *Run( void *data )
 
         if( p_sys->update_type == UPDATE_URLS )
         {
-            char *psz_urls = var_GetNonEmptyString( vlc_object_parent(p_sd),
+            char *psz_urls = var_GetNonEmptyString( p_sd->obj.parent,
                                                     "podcast-urls" );
             ParseUrls( p_sd, psz_urls );
             free( psz_urls );
@@ -217,6 +237,21 @@ noreturn static void *Run( void *data )
 
         p_sys->b_update = false;
 
+        for( int i = 0; i < p_sd->p_sys->i_input; i++ )
+        {
+            input_thread_t *p_input = p_sd->p_sys->pp_input[i];
+            int state = var_GetInteger( p_input, "state" );
+
+            if( state == END_S || state == ERROR_S )
+            {
+                input_Stop( p_input );
+                input_Close( p_input );
+
+                p_sd->p_sys->pp_input[i] = NULL;
+                TAB_ERASE(p_sys->i_input, p_sys->pp_input, i);
+                i--;
+            }
+        }
         vlc_restorecancel (canc);
     }
     vlc_cleanup_pop();
@@ -269,10 +304,10 @@ static void ParseUrls( services_discovery_t *p_sd, char *psz_urls )
     char **ppsz_new_urls = NULL;
     p_sys->b_savedurls_loaded = true;
 
+    int i, j;
+
     for( ;; )
     {
-        int i;
-
         if( !psz_urls )
             break;
 
@@ -292,6 +327,9 @@ static void ParseUrls( services_discovery_t *p_sd, char *psz_urls )
 
             TAB_APPEND( i_new_items, pp_new_items, p_input );
             services_discovery_AddItem( p_sd, p_input );
+
+            TAB_APPEND( p_sys->i_input, p_sys->pp_input,
+                         input_CreateAndStart( p_sd, p_input, NULL ) );
         }
         else
         {
@@ -306,10 +344,8 @@ static void ParseUrls( services_discovery_t *p_sd, char *psz_urls )
     }
 
     /* delete removed items and signal the removal */
-    for( int i = 0; i<p_sys->i_items; ++i )
+    for( i = 0; i<p_sys->i_items; ++i )
     {
-        int j;
-
         for( j = 0; j < i_new_items; ++j )
             if( pp_new_items[j] == p_sys->pp_items[i] ) break;
         if( j == i_new_items )
@@ -343,7 +379,7 @@ static void ParseRequest( services_discovery_t *p_sd )
 
     if ( ! p_sys->b_savedurls_loaded )
     {
-        char *psz_urls = var_GetNonEmptyString( vlc_object_parent(p_sd),
+        char *psz_urls = var_GetNonEmptyString( p_sd->obj.parent,
                                                 "podcast-urls" );
         ParseUrls( p_sd, psz_urls );
         free( psz_urls );
@@ -367,6 +403,8 @@ static void ParseRequest( services_discovery_t *p_sd )
             TAB_APPEND( p_sys->i_items, p_sys->pp_items, p_input );
             services_discovery_AddItem( p_sd, p_input );
 
+            TAB_APPEND( p_sys->i_input, p_sys->pp_input,
+                        input_CreateAndStart( p_sd, p_input, NULL ) );
             SaveUrls( p_sd );
         }
     }
@@ -407,7 +445,7 @@ static void SaveUrls( services_discovery_t *p_sd )
         if( i < p_sys->i_urls - 1 ) strcat( psz_urls, "|" );
     }
 
-    config_PutPsz( "podcast-urls", psz_urls );
+    config_PutPsz( p_sd, "podcast-urls", psz_urls );
 
     free( psz_urls );
 }

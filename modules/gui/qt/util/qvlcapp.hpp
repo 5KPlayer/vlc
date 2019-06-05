@@ -2,6 +2,7 @@
  * qvlcapp.hpp : A few helpers
  *****************************************************************************
  * Copyright (C) 2008 the VideoLAN team
+ * $Id: 45b9e59e98c917a0e98a1c19cf52b594bcc8eab8 $
  *
  * Authors: Jean-Baptiste Kempf <jb@videolan.org>
  *
@@ -30,7 +31,7 @@
 #if defined(Q_OS_WIN)
 #   include "qt.hpp"
 #   include <windows.h>
-#   include "components/player_controller.hpp"
+#   include "input_manager.hpp"
 #endif
 
 class QVLCApp : public QApplication

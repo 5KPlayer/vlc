@@ -2,6 +2,7 @@
  * sap.c : SAP announce handler
  *****************************************************************************
  * Copyright (C) 2002-2008 VLC authors and VideoLAN
+ * $Id: 2b5b0e13a2bcb20a2ae91f907c1db41971b0b67d $
  *
  * Authors: Clément Stenac <zorglub@videolan.org>
  *          Rémi Denis-Courmont <rem # videolan.org>
@@ -141,18 +142,18 @@ noreturn static void *RunThread (void *self)
     for (;;)
     {
         session_descriptor_t *p_session;
-        vlc_tick_t deadline;
+        mtime_t deadline;
 
         while (addr->first == NULL)
             vlc_cond_wait (&addr->wait, &addr->lock);
 
         assert (addr->session_count > 0);
 
-        deadline = vlc_tick_now ();
+        deadline = mdate ();
         for (p_session = addr->first; p_session; p_session = p_session->next)
         {
             send (addr->fd, p_session->data, p_session->length, 0);
-            deadline += vlc_tick_from_samples(addr->interval, addr->session_count);
+            deadline += addr->interval * CLOCK_FREQ / addr->session_count;
 
             if (vlc_cond_timedwait (&addr->wait, &addr->lock, deadline) == 0)
                 break; /* list may have changed! */
@@ -191,13 +192,13 @@ sout_AnnounceRegisterSDP (vlc_object_t *obj, const char *sdp,
 
     if (vlc_getaddrinfo (dst, 0, NULL, &res) == 0)
     {
-        if ((size_t)res->ai_addrlen <= sizeof (addr))
+        if (res->ai_addrlen <= sizeof (addr))
             memcpy (&addr, res->ai_addr, res->ai_addrlen);
         addrlen = res->ai_addrlen;
         freeaddrinfo (res);
     }
 
-    if (addrlen == 0 || (size_t)addrlen > sizeof (addr))
+    if (addrlen == 0 || addrlen > sizeof (addr))
     {
         msg_Err (obj, "No/invalid address specified for SAP announce" );
         return NULL;
@@ -259,8 +260,8 @@ sout_AnnounceRegisterSDP (vlc_object_t *obj, const char *sdp,
         }
 
         default:
-            msg_Err (obj, "Address family %u not supported by SAP",
-                     (unsigned)addr.a.sa_family);
+            msg_Err (obj, "Address family %d not supported by SAP",
+                     addr.a.sa_family);
             return NULL;
     }
 
@@ -316,7 +317,7 @@ sout_AnnounceRegisterSDP (vlc_object_t *obj, const char *sdp,
 #endif
     vlc_memstream_putc(&stream, flags);
     vlc_memstream_putc(&stream, 0x00); /* No authentication length */
-    vlc_memstream_write(&stream, &(uint16_t){ vlc_tick_now() }, 2); /* ID hash */
+    vlc_memstream_write(&stream, &(uint16_t){ mdate() }, 2); /* ID hash */
 
     switch (sap_addr->orig.ss_family)
     {

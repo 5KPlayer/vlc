@@ -2,6 +2,7 @@
  * spudec.h : sub picture unit decoder thread interface
  *****************************************************************************
  * Copyright (C) 1999, 2000, 2006 VLC authors and VideoLAN
+ * $Id: ab53413bbc8625ecb173b804916797dfea579cee $
  *
  * Authors: Sam Hocevar <sam@zoy.org>
  *
@@ -22,12 +23,12 @@
 
 /* #define DEBUG_SPUDEC 1 */
 
-typedef struct
+struct decoder_sys_t
 {
     bool b_packetizer;
     bool b_disabletrans;
 
-    vlc_tick_t i_pts;
+    mtime_t i_pts;
     unsigned int i_spu_size;
     unsigned int i_rle_size;
     unsigned int i_spu;
@@ -36,7 +37,7 @@ typedef struct
 
     /* We will never overflow */
     uint8_t buffer[65536];
-} decoder_sys_t;
+};
 
 /*****************************************************************************
  * Amount of bytes we GetChunk() in one go

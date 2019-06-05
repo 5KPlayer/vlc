@@ -25,8 +25,6 @@
 #include <vlc_demux.h>
 #include <vlc_meta.h>
 
-#include "../mpeg/timestamps.h"
-
 extern "C"
 {
     #include "../meta_engine/ID3Tag.h"
@@ -49,7 +47,7 @@ HLSStream::~HLSStream()
         vlc_meta_Delete(p_meta);
 }
 
-void HLSStream::setTimeOffset(vlc_tick_t i_offset)
+void HLSStream::setTimeOffset(mtime_t i_offset)
 {
     if(i_offset >= 0)
     {
@@ -57,7 +55,7 @@ void HLSStream::setTimeOffset(vlc_tick_t i_offset)
         {
             if(!b_id3_timestamps_offset_set)
             {
-                fakeEsOut()->setTimestampOffset(i_offset);
+                fakeesout->setTimestampOffset(i_offset);
             }
             return;
         }
@@ -76,7 +74,7 @@ int HLSStream::ParseID3PrivTag(const uint8_t *p_payload, size_t i_payload)
     {
         if(!b_id3_timestamps_offset_set)
         {
-            const vlc_tick_t i_aac_offset = FROM_SCALE_NZ(GetQWBE(&p_payload[45]));
+            const mtime_t i_aac_offset = GetQWBE(&p_payload[45]) * 100 / 9;
             setTimeOffset(i_aac_offset);
             b_id3_timestamps_offset_set = true;
         }
@@ -116,9 +114,9 @@ block_t * HLSStream::checkBlock(block_t *p_block, bool b_first)
     if( b_meta_updated )
     {
         b_meta_updated = false;
-        AbstractCommand *command = fakeEsOut()->commandsQueue()->factory()->createEsOutMetaCommand( -1, p_meta );
+        AbstractCommand *command = commandsqueue->factory()->createEsOutMetaCommand( -1, p_meta );
         if( command )
-            fakeEsOut()->commandsQueue()->Schedule( command );
+            commandsqueue->Schedule( command );
     }
 
     return p_block;
@@ -137,23 +135,17 @@ AbstractDemuxer *HLSStream::newDemux(demux_t *p_realdemux, const StreamFormat &f
         case StreamFormat::MPEG2TS:
             ret = new Demuxer(p_realdemux, "ts", out, source);
             if(ret)
-                ret->setBitstreamSwitchCompatible(false); /* HLS and unique PAT/PMT versions */
+                ret->setCanDetectSwitches(false); /* HLS and unique PAT/PMT versions */
             break;
 
         case StreamFormat::MP4:
             ret = AbstractStream::newDemux(p_realdemux, format, out, source);
             break;
 
-/* Disabled until we can handle empty segments/cue and absolute time
         case StreamFormat::WEBVTT:
             ret = new Demuxer(p_realdemux, "webvttstream", out, source);
             if(ret)
                 ret->setRestartsOnEachSegment(true);
-            break;
-*/
-
-        case StreamFormat::UNKNOWN:
-            ret = new MimeDemuxer(p_realdemux, this, out, source);
             break;
 
         default:
@@ -163,11 +155,11 @@ AbstractDemuxer *HLSStream::newDemux(demux_t *p_realdemux, const StreamFormat &f
     return ret;
 }
 
-AbstractStream * HLSStreamFactory::create(demux_t *realdemux, const StreamFormat &format,
+AbstractStream * HLSStreamFactory::create(demux_t *realdemux, const StreamFormat &,
                                SegmentTracker *tracker, AbstractConnectionManager *manager) const
 {
     HLSStream *stream = new (std::nothrow) HLSStream(realdemux);
-    if(stream && !stream->init(format, tracker, manager))
+    if(stream && !stream->init(StreamFormat(StreamFormat::UNKNOWN), tracker, manager))
     {
         delete stream;
         return NULL;

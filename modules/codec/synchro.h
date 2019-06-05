@@ -2,6 +2,7 @@
  * vlc_codec_synchro.h: frame-dropping structures
  *****************************************************************************
  * Copyright (C) 1999-2005 VLC authors and VideoLAN
+ * $Id: 13180e6fea9943b1023fefe7e26584afb5fdc639 $
  *
  * Authors: Christophe Massiot <massiot@via.ecp.fr>
  *          Jean-Marc Dressler <polux@via.ecp.fr>
@@ -39,10 +40,10 @@
 decoder_synchro_t * decoder_SynchroInit( decoder_t *, int ) VLC_USED;
 void decoder_SynchroRelease( decoder_synchro_t * );
 void decoder_SynchroReset( decoder_synchro_t * );
-bool decoder_SynchroChoose( decoder_synchro_t *, int, vlc_tick_t, bool );
+bool decoder_SynchroChoose( decoder_synchro_t *, int, int, bool );
 void decoder_SynchroTrash( decoder_synchro_t * );
 void decoder_SynchroDecode( decoder_synchro_t * );
 void decoder_SynchroEnd( decoder_synchro_t *, int, bool );
-vlc_tick_t decoder_SynchroDate( decoder_synchro_t * ) VLC_USED;
-void decoder_SynchroNewPicture( decoder_synchro_t *, int, int, vlc_tick_t, vlc_tick_t, bool );
+mtime_t decoder_SynchroDate( decoder_synchro_t * ) VLC_USED;
+void decoder_SynchroNewPicture( decoder_synchro_t *, int, int, mtime_t, mtime_t, bool );
 

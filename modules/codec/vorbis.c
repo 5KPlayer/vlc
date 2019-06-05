@@ -5,6 +5,7 @@
  * Copyright (C) 2007 Société des arts technologiques
  * Copyright (C) 2007 Savoir-faire Linux
  *
+ * $Id: b4a8bda30fa8761536512b50c0ab7bf301e523c7 $
  *
  * Authors: Gildas Bazin <gbazin@videolan.org>
  *
@@ -35,7 +36,7 @@
 #include <vlc_codec.h>
 #include <vlc_charset.h>
 #include <vlc_aout.h>
-#include <vlc_input_item.h>
+#include <vlc_input.h>
 #include <vlc_sout.h>
 #include "../demux/xiph.h"
 
@@ -61,7 +62,7 @@
 /*****************************************************************************
  * decoder_sys_t : vorbis decoder descriptor
  *****************************************************************************/
-typedef struct
+struct decoder_sys_t
 {
     /* Module mode */
     bool b_packetizer;
@@ -89,7 +90,7 @@ typedef struct
     ** Channel reordering
     */
     uint8_t pi_chan_table[AOUT_CHAN_MAX];
-} decoder_sys_t;
+};
 
 static const int pi_channels_maps[9] =
 {
@@ -226,7 +227,10 @@ static const char *const ppsz_enc_options[] = {
 };
 #endif
 
-static int OpenCommon( vlc_object_t *p_this, bool b_packetizer )
+/*****************************************************************************
+ * OpenDecoder: probe the decoder and return score
+ *****************************************************************************/
+static int OpenDecoder( vlc_object_t *p_this )
 {
     decoder_t *p_dec = (decoder_t*)p_this;
     decoder_sys_t *p_sys;
@@ -240,43 +244,43 @@ static int OpenCommon( vlc_object_t *p_this, bool b_packetizer )
         return VLC_ENOMEM;
 
     /* Misc init */
-    date_Set( &p_sys->end_date, VLC_TICK_INVALID );
+    date_Set( &p_sys->end_date, 0 );
     p_sys->i_last_block_size = 0;
-    p_sys->b_packetizer = b_packetizer;
+    p_sys->b_packetizer = false;
     p_sys->b_has_headers = false;
 
     /* Take care of vorbis init */
     vorbis_info_init( &p_sys->vi );
     vorbis_comment_init( &p_sys->vc );
 
-    if( b_packetizer )
-    {
-        p_dec->fmt_out.i_codec = VLC_CODEC_VORBIS;
-        p_dec->pf_packetize  = Packetize;
-    }
-    else
-    {
+    /* Set output properties */
 #ifdef MODULE_NAME_IS_tremor
-        p_dec->fmt_out.i_codec = VLC_CODEC_S32N;
+    p_dec->fmt_out.i_codec = VLC_CODEC_S32N;
 #else
-        p_dec->fmt_out.i_codec = VLC_CODEC_FL32;
+    p_dec->fmt_out.i_codec = VLC_CODEC_FL32;
 #endif
-        p_dec->pf_decode     = DecodeAudio;
-    }
 
+    /* Set callbacks */
+    p_dec->pf_decode     = DecodeAudio;
+    p_dec->pf_packetize  = Packetize;
     p_dec->pf_flush      = Flush;
 
     return VLC_SUCCESS;
 }
 
-static int OpenDecoder( vlc_object_t *p_this )
-{
-    return OpenCommon( p_this, false );
-}
-
 static int OpenPacketizer( vlc_object_t *p_this )
 {
-    return OpenCommon( p_this, true );
+    decoder_t *p_dec = (decoder_t*)p_this;
+
+    int i_ret = OpenDecoder( p_this );
+
+    if( i_ret == VLC_SUCCESS )
+    {
+        p_dec->p_sys->b_packetizer = true;
+        p_dec->fmt_out.i_codec = VLC_CODEC_VORBIS;
+    }
+
+    return i_ret;
 }
 
 /****************************************************************************
@@ -450,7 +454,7 @@ static void Flush( decoder_t *p_dec )
 {
     decoder_sys_t *p_sys = p_dec->p_sys;
 
-    date_Set( &p_sys->end_date, VLC_TICK_INVALID );
+    date_Set( &p_sys->end_date, 0 );
 }
 
 /*****************************************************************************
@@ -477,13 +481,13 @@ static block_t *ProcessPacket( decoder_t *p_dec, ogg_packet *p_oggpacket,
     }
 
     /* Date management */
-    if( p_block->i_pts != VLC_TICK_INVALID &&
+    if( p_block->i_pts > VLC_TS_INVALID &&
         p_block->i_pts != date_Get( &p_sys->end_date ) )
     {
         date_Set( &p_sys->end_date, p_block->i_pts );
     }
 
-    if( date_Get( &p_sys->end_date ) == VLC_TICK_INVALID )
+    if( !date_Get( &p_sys->end_date ) )
     {
         /* We've just started the stream, wait for the first PTS. */
         if( p_block ) block_Release( p_block );
@@ -604,11 +608,9 @@ static void ParseVorbisComments( decoder_t *p_dec )
     char *psz_name, *psz_value, *psz_comment;
     int i = 0;
 
-    decoder_sys_t *p_sys = p_dec->p_sys;
-
-    while( i < p_sys->vc.comments )
+    while( i < p_dec->p_sys->vc.comments )
     {
-        psz_comment = strdup( p_sys->vc.user_comments[i] );
+        psz_comment = strdup( p_dec->p_sys->vc.user_comments[i] );
         if( !psz_comment )
             break;
         psz_name = psz_comment;
@@ -726,7 +728,7 @@ static void CloseDecoder( vlc_object_t *p_this )
 /*****************************************************************************
  * encoder_sys_t : vorbis encoder descriptor
  *****************************************************************************/
-typedef struct
+struct encoder_sys_t
 {
     /*
      * Vorbis properties
@@ -747,7 +749,7 @@ typedef struct
     */
     uint8_t pi_chan_table[AOUT_CHAN_MAX];
 
-} encoder_sys_t;
+};
 
 /*****************************************************************************
  * OpenEncoder: probe the encoder and return score
@@ -801,9 +803,7 @@ static int OpenEncoder( vlc_object_t *p_this )
         {
             vorbis_info_clear( &p_sys->vi );
             free( p_enc->p_sys );
-            msg_Err( p_enc, "VBR mode initialisation failed %"PRIu8"x(%uHz,q=%d)",
-                     p_enc->fmt_in.audio.i_channels,
-                     p_enc->fmt_in.audio.i_rate, i_quality );
+            msg_Err( p_enc, "VBR mode initialisation failed" );
             return VLC_EGENERIC;
         }
 
@@ -835,10 +835,7 @@ static int OpenEncoder( vlc_object_t *p_this )
               i_max_bitrate > 0 ? i_max_bitrate * 1000: -1 ) )
           {
               vorbis_info_clear( &p_sys->vi );
-              msg_Err( p_enc, "CBR mode initialisation failed %"PRIu8"x(%uHz,r=%u)",
-                       p_enc->fmt_in.audio.i_channels,
-                       p_enc->fmt_in.audio.i_rate,
-                       p_enc->fmt_out.i_bitrate);
+              msg_Err( p_enc, "CBR mode initialisation failed" );
               free( p_enc->p_sys );
               return VLC_EGENERIC;
           }
@@ -900,9 +897,9 @@ static block_t *Encode( encoder_t *p_enc, block_t *p_aout_buf )
     /* Packets are already flushed, see bellow. */
     if( unlikely( !p_aout_buf ) ) return NULL;
 
-    vlc_tick_t i_pts = p_aout_buf->i_pts -
-                vlc_tick_from_samples( p_sys->i_samples_delay,
-                                       p_enc->fmt_in.audio.i_rate );
+    mtime_t i_pts = p_aout_buf->i_pts -
+                (mtime_t)1000000 * (mtime_t)p_sys->i_samples_delay /
+                (mtime_t)p_enc->fmt_in.audio.i_rate;
 
     p_sys->i_samples_delay += p_aout_buf->i_nb_samples;
 
@@ -940,8 +937,8 @@ static block_t *Encode( encoder_t *p_enc, block_t *p_aout_buf )
             i_samples = ( p_sys->i_last_block_size + i_block_size ) >> 2;
             p_sys->i_last_block_size = i_block_size;
 
-            p_block->i_length = vlc_tick_from_samples(i_samples,
-                                                      p_enc->fmt_in.audio.i_rate);
+            p_block->i_length = (mtime_t)1000000 *
+                (mtime_t)i_samples / (mtime_t)p_enc->fmt_in.audio.i_rate;
 
             p_block->i_dts = p_block->i_pts = i_pts;
 

@@ -73,8 +73,8 @@
 #include <assert.h>
 
 /* BC pts are multiple of 100ns */
-#define TO_BC_PTS( a )   ( MSFTIME_FROM_VLC_TICK(a) + 1 )
-#define FROM_BC_PTS( a ) VLC_TICK_FROM_MSFTIME(a - 1)
+#define TO_BC_PTS( a ) ( a * 10 + 1 )
+#define FROM_BC_PTS( a ) ((a - 1) /10)
 
 //#define DEBUG_CRYSTALHD 1
 
@@ -103,7 +103,7 @@ static int crystal_insert_sps_pps(decoder_t *, uint8_t *, uint32_t);
 /*****************************************************************************
  * decoder_sys_t : CrysalHD decoder structure
  *****************************************************************************/
-typedef struct
+struct decoder_sys_t
 {
     HANDLE bcm_handle;       /* Device Handle */
 
@@ -130,7 +130,7 @@ typedef struct
                             BC_DTS_PROC_OUT *pOut );
     BC_STATUS (WINAPI *OurDtsIsEndOfStream)( HANDLE hDevice, U8* bEOS );
 #endif
-} decoder_sys_t;
+};
 
 /*****************************************************************************
 * OpenDecoder: probe the decoder and return score
@@ -183,8 +183,8 @@ static int OpenDecoder( vlc_object_t *p_this )
     p_sys->i_nal_size       = 4; // assume 4 byte start codes
     p_sys->i_sps_pps_size   = 0;
     p_sys->p_sps_pps_buf    = NULL;
-    p_sys->p_pic            = NULL;
-    p_sys->proc_out         = NULL;
+    p_dec->p_sys->p_pic     = NULL;
+    p_dec->p_sys->proc_out  = NULL;
 
     /* Win32 code *
      * We cannot link and ship BCM dll, even with LGPL license (too big)
@@ -193,7 +193,7 @@ static int OpenDecoder( vlc_object_t *p_this )
 #ifdef USE_DL_OPENING
 #  define DLL_NAME "bcmDIL.dll"
 #  define PATHS_NB 3
-    static const WCHAR *psz_paths[PATHS_NB] = {
+    static const TCHAR *psz_paths[PATHS_NB] = {
         TEXT(DLL_NAME),
         TEXT("C:\\Program Files\\Broadcom\\Broadcom CrystalHD Decoder\\" DLL_NAME),
         TEXT("C:\\Program Files (x86)\\Broadcom\\Broadcom CrystalHD Decoder\\" DLL_NAME),
@@ -392,8 +392,7 @@ static BC_STATUS ourCallback(void *shnd, uint32_t width, uint32_t height, uint32
     VLC_UNUSED(width); VLC_UNUSED(height); VLC_UNUSED(stride);
 
     decoder_t *p_dec          = (decoder_t *)shnd;
-    decoder_sys_t *p_sys      = p_dec->p_sys;
-    BC_DTS_PROC_OUT *proc_out = p_sys->proc_out;
+    BC_DTS_PROC_OUT *proc_out = p_dec->p_sys->proc_out;
     BC_DTS_PROC_OUT *proc_in  = (BC_DTS_PROC_OUT*)pOut;
 
     /* Direct Rendering */
@@ -402,11 +401,11 @@ static BC_STATUS ourCallback(void *shnd, uint32_t width, uint32_t height, uint32
         !(proc_in->PicInfo.flags & VDEC_FLAG_FIELDPAIR) )
     {
         if( !decoder_UpdateVideoFormat( p_dec ) )
-            p_sys->p_pic = decoder_NewPicture( p_dec );
+            p_dec->p_sys->p_pic = decoder_NewPicture( p_dec );
     }
 
     /* */
-    picture_t *p_pic = p_sys->p_pic;
+    picture_t *p_pic = p_dec->p_sys->p_pic;
     if( !p_pic )
         return BC_STS_ERROR;
 
@@ -453,7 +452,7 @@ static int DecodeBlock( decoder_t *p_dec, block_t *p_block )
             BC_STATUS status = BC_FUNC_PSYS(DtsProcInput)( p_sys->bcm_handle,
                                             p_block->p_buffer,
                                             p_block->i_buffer,
-                                            p_block->i_pts != VLC_TICK_INVALID ? TO_BC_PTS(p_block->i_pts) : 0, false );
+                                            p_block->i_pts >= VLC_TS_INVALID ? TO_BC_PTS(p_block->i_pts) : 0, false );
 
             block_Release( p_block );
 
@@ -510,7 +509,7 @@ static int DecodeBlock( decoder_t *p_dec, block_t *p_block )
 
             //  crystal_CopyPicture( p_pic, &proc_out );
             p_pic->date = proc_out.PicInfo.timeStamp > 0 ?
-                          FROM_BC_PTS(proc_out.PicInfo.timeStamp) : VLC_TICK_INVALID;
+                          FROM_BC_PTS(proc_out.PicInfo.timeStamp) : VLC_TS_INVALID;
             //p_pic->date += 100 * 1000;
 #ifdef DEBUG_CRYSTALHD
             msg_Dbg( p_dec, "TS Output is %"PRIu64, p_pic->date);

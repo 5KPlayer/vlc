@@ -2,6 +2,7 @@
  * mjpeg.c : demuxes mjpeg webcam http streams
  *****************************************************************************
  * Copyright (C) 2004 VLC authors and VideoLAN
+ * $Id: 2d7dde7c3c1d861981412a8a7d7a06d425e10c22 $
  *
  * Authors: Henry Jen (slowhog) <henryjen@ztune.net>
  *          Derk-Jan Hartman (thedj)
@@ -40,6 +41,7 @@
  * Module descriptor
  *****************************************************************************/
 static int  Open ( vlc_object_t * );
+static void Close( vlc_object_t * );
 
 #define FPS_TEXT N_("Frames per Second")
 #define FPS_LONGTEXT N_("This is the desired frame rate when " \
@@ -50,7 +52,7 @@ vlc_module_begin ()
     set_shortname( "MJPEG")
     set_description( N_("M-JPEG camera demuxer") )
     set_capability( "demux", 5 )
-    set_callbacks( Open, NULL )
+    set_callbacks( Open, Close )
     set_category( CAT_INPUT )
     set_subcategory( SUBCAT_INPUT_DEMUX )
     add_float( "mjpeg-fps", 0.0, FPS_TEXT, FPS_LONGTEXT, false )
@@ -63,21 +65,21 @@ static int MimeDemux( demux_t * );
 static int MjpgDemux( demux_t * );
 static int Control( demux_t *, int i_query, va_list args );
 
-typedef struct
+struct demux_sys_t
 {
     es_format_t     fmt;
     es_out_id_t     *p_es;
 
     bool            b_still;
-    vlc_tick_t      i_still_end;
-    vlc_tick_t      i_time;
-    vlc_tick_t      i_frame_length;
+    mtime_t         i_still_end;
+    mtime_t         i_time;
+    mtime_t         i_frame_length;
     char            *psz_separator;
     int             i_frame_size_estimate;
     const uint8_t   *p_peek;
     int             i_data_peeked;
     int             i_level;
-} demux_sys_t;
+};
 
 /*****************************************************************************
  * Peek: Helper function to peek data with incremental size.
@@ -263,27 +265,28 @@ static int SendBlock( demux_t *p_demux, int i )
     if( ( p_block = vlc_stream_Block( p_demux->s, i ) ) == NULL )
     {
         msg_Warn( p_demux, "cannot read data" );
-        return VLC_DEMUXER_EOF;
+        return 0;
     }
 
-    if( p_sys->i_frame_length != VLC_TICK_INVALID )
+    if( p_sys->i_frame_length )
     {
         p_block->i_pts = p_sys->i_time;
         p_sys->i_time += p_sys->i_frame_length;
     }
     else
     {
-        p_block->i_pts = vlc_tick_now();
+        p_block->i_pts = mdate();
     }
     p_block->i_dts = p_block->i_pts;
 
+    /* set PCR */
     es_out_SetPCR( p_demux->out, p_block->i_pts );
     es_out_Send( p_demux->out, p_sys->p_es, p_block );
 
     if( p_sys->b_still )
-        p_sys->i_still_end = vlc_tick_now() + p_sys->i_frame_length;
+        p_sys->i_still_end = mdate() + p_sys->i_frame_length;
 
-    return VLC_DEMUXER_SUCCESS;
+    return 1;
 }
 
 /*****************************************************************************
@@ -299,13 +302,14 @@ static int Open( vlc_object_t * p_this )
         // let avformat handle this case
         return VLC_EGENERIC;
 
-    demux_sys_t *p_sys = vlc_obj_malloc( p_this, sizeof (*p_sys) );
+    demux_sys_t *p_sys = malloc( sizeof( demux_sys_t ) );
     if( unlikely(p_sys == NULL) )
         return VLC_ENOMEM;
 
+    p_demux->pf_control = Control;
     p_demux->p_sys      = p_sys;
     p_sys->p_es         = NULL;
-    p_sys->i_time       = VLC_TICK_0;
+    p_sys->i_time       = VLC_TS_0;
     p_sys->i_level      = 0;
 
     p_sys->psz_separator = NULL;
@@ -326,11 +330,11 @@ static int Open( vlc_object_t * p_this )
                 boundary[len-1] = '\0';
                 boundary++;
             }
-            p_sys->psz_separator = vlc_obj_strdup( p_this, boundary );
+            p_sys->psz_separator = strdup( boundary );
             if( !p_sys->psz_separator )
             {
                 free( content_type );
-                return VLC_ENOMEM;
+                goto error;
             }
         }
         free( content_type );
@@ -341,7 +345,7 @@ static int Open( vlc_object_t * p_this )
     {
         p_demux->pf_demux = MimeDemux;
         if( vlc_stream_Read( p_demux->s, NULL, i_size ) < i_size )
-            return VLC_EGENERIC;
+            goto error;
     }
     else if( i_size == 0 )
     {
@@ -354,18 +358,18 @@ static int Open( vlc_object_t * p_this )
         }
         else
         {
-            return VLC_EGENERIC;
+            goto error;
         }
     }
     else
     {
-        return VLC_EGENERIC;
+        goto error;
     }
 
     /* Frame rate */
     float f_fps = var_InheritFloat( p_demux, "mjpeg-fps" );
 
-    p_sys->i_still_end = VLC_TICK_INVALID;
+    p_sys->i_still_end = 0;
     if( demux_IsPathExtension( p_demux, ".jpeg" ) ||
         demux_IsPathExtension( p_demux, ".jpg" ) )
     {
@@ -377,16 +381,17 @@ static int Open( vlc_object_t * p_this )
     }
     else
         p_sys->b_still = false;
-    p_sys->i_frame_length = f_fps ? vlc_tick_rate_duration(f_fps) : VLC_TICK_INVALID;
+    p_sys->i_frame_length = f_fps ? (CLOCK_FREQ / f_fps) : 0;
 
     es_format_Init( &p_sys->fmt, VIDEO_ES, VLC_CODEC_MJPG );
 
     p_sys->p_es = es_out_Add( p_demux->out, &p_sys->fmt );
-    if( unlikely(p_sys->p_es == NULL) )
-        return VLC_ENOMEM;
-
-    p_demux->pf_control = Control;
     return VLC_SUCCESS;
+
+error:
+    free( p_sys->psz_separator );
+    free( p_sys );
+    return VLC_EGENERIC;
 }
 
 /*****************************************************************************
@@ -399,23 +404,23 @@ static int MjpgDemux( demux_t *p_demux )
     demux_sys_t *p_sys = p_demux->p_sys;
     int i;
 
-    if( p_sys->b_still && p_sys->i_still_end != VLC_TICK_INVALID )
+    if( p_sys->b_still && p_sys->i_still_end )
     {
         /* Still frame, wait until the pause delay is gone */
-        vlc_tick_wait( p_sys->i_still_end );
-        p_sys->i_still_end = VLC_TICK_INVALID;
-        return VLC_DEMUXER_SUCCESS;
+        mwait( p_sys->i_still_end );
+        p_sys->i_still_end = 0;
+        return 1;
     }
 
     if( !Peek( p_demux, true ) )
     {
         msg_Warn( p_demux, "cannot peek data" );
-        return VLC_DEMUXER_EOF;
+        return 0;
     }
     if( p_sys->i_data_peeked < 4 )
     {
         msg_Warn( p_demux, "data shortage" );
-        return VLC_DEMUXER_EOF;
+        return 0;
     }
     i = 3;
 FIND_NEXT_EOI:
@@ -434,7 +439,7 @@ FIND_NEXT_EOI:
             if( !Peek( p_demux, false ) )
             {
                 msg_Warn( p_demux, "no more data is available at the moment" );
-                return VLC_DEMUXER_EOF;
+                return 0;
             }
         }
     }
@@ -458,11 +463,11 @@ static int MimeDemux( demux_t *p_demux )
     if( i_size > 0 )
     {
         if( vlc_stream_Read( p_demux->s, NULL, i_size ) != i_size )
-            return VLC_DEMUXER_EOF;
+            return 0;
     }
     else if( i_size < 0 )
     {
-        return VLC_DEMUXER_EOF;
+        return 0;
     }
     else
     {
@@ -473,7 +478,7 @@ static int MimeDemux( demux_t *p_demux )
     if( !Peek( p_demux, true ) )
     {
         msg_Warn( p_demux, "cannot peek data" );
-        return VLC_DEMUXER_EOF;
+        return 0;
     }
 
     i = 0;
@@ -481,7 +486,7 @@ static int MimeDemux( demux_t *p_demux )
     if( p_sys->i_data_peeked < i_size )
     {
         msg_Warn( p_demux, "data shortage" );
-        return VLC_DEMUXER_EOF;
+        return 0;
     }
 
     for( ;; )
@@ -499,7 +504,7 @@ static int MimeDemux( demux_t *p_demux )
                 {
                     msg_Warn( p_demux, "no more data is available at the "
                               "moment" );
-                    return VLC_DEMUXER_EOF;
+                    return 0;
                 }
             }
         }
@@ -522,10 +527,22 @@ static int MimeDemux( demux_t *p_demux )
     if( !b_match )
     {
         msg_Err( p_demux, "discard non-JPEG part" );
-        return VLC_DEMUXER_EOF;
+        return 0;
     }
 
     return SendBlock( p_demux, i );
+}
+
+/*****************************************************************************
+ * Close: frees unused data
+ *****************************************************************************/
+static void Close ( vlc_object_t * p_this )
+{
+    demux_t     *p_demux = (demux_t*)p_this;
+    demux_sys_t *p_sys  = p_demux->p_sys;
+
+    free( p_sys->psz_separator );
+    free( p_sys );
 }
 
 /*****************************************************************************

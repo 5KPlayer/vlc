@@ -33,7 +33,7 @@
 #include <unistd.h>
 
 #ifndef TEST_NET
-#define RAND_FILE_SIZE (1024 * 1024)
+#define RAND_FILE_SIZE (25 * 1024 * 1024)
 #else
 #define HTTP_URL "http://streams.videolan.org/streams/ogm/MJPEG.ogm"
 #define HTTP_MD5 "4eaf9e8837759b670694398a33f02bc0"
@@ -234,8 +234,8 @@ read_at( struct reader **pp_readers, unsigned int i_readers,
         const uint8_t *p_peek = NULL;
         struct reader *p_reader = pp_readers[i];
 
-        test_log( "%s: %s %zu @ %"PRIu64" (size: %" PRIu64 ")\n", p_reader->psz_name,
-                  p_buf ? "read" : "peek", i_read, i_offset, i_size );
+        log( "%s: %s %zu @ %"PRIu64" (size: %" PRIu64 ")\n", p_reader->psz_name,
+              p_buf ? "read" : "peek", i_read, i_offset, i_size );
         assert( p_reader->pf_seek( p_reader, i_offset ) != -1 );
 
         i_last_pos = p_reader->pf_tell( p_reader );
@@ -301,7 +301,7 @@ test( struct reader **pp_readers, unsigned int i_readers, const char *psz_md5 )
     i_size = pp_readers[0]->pf_getsize( pp_readers[0] );
     assert( i_size > 0 );
 
-    test_log( "stream size: %"PRIu64"\n", i_size );
+    log( "stream size: %"PRIu64"\n", i_size );
     for( unsigned int i = 1; i < i_readers; ++i )
         assert( pp_readers[i]->pf_getsize( pp_readers[i] ) == i_size );
 
@@ -374,10 +374,9 @@ main( void )
     char *psz_url;
     int i_tmp_fd;
 
-    test_log( "Generating random file...\n" );
+    log( "Test random file with libc, and stream\n" );
     i_tmp_fd = vlc_mkstemp( psz_tmp_path );
     fill_rand( i_tmp_fd, RAND_FILE_SIZE );
-    test_log( "Testing random file with libc, and stream...\n" );
     assert( i_tmp_fd != -1 );
     assert( asprintf( &psz_url, "file://%s", psz_tmp_path ) != -1 );
 
@@ -392,11 +391,11 @@ main( void )
     close( i_tmp_fd );
 #else
 
-    test_log( "Testing http url with stream...\n" );
+    log( "Test http url with stream\n" );
     alarm( 0 );
     if( !( pp_readers[0] = stream_open( HTTP_URL ) ) )
     {
-        test_log( "WARNING: can't test http url" );
+        log( "WARNING: can't test http url" );
         return 0;
     }
 

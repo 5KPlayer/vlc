@@ -2,6 +2,7 @@
  * avcodec.c: video and audio decoder and encoder using libavcodec
  *****************************************************************************
  * Copyright (C) 1999-2008 VLC authors and VideoLAN
+ * $Id: 9325b1fb0efafdaef0efd1e952cabfbb920fdfb8 $
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *          Gildas Bazin <gbazin@videolan.org>
@@ -131,7 +132,7 @@ vlc_module_begin ()
     add_obsolete_string( "ffmpeg-codec" ) /* removed since 2.1.0 */
     add_string( "avcodec-codec", NULL, CODEC_TEXT, CODEC_LONGTEXT, true )
     add_obsolete_bool( "ffmpeg-hw" ) /* removed since 2.1.0 */
-    add_module("avcodec-hw", "hw decoder", "any", HW_TEXT, HW_LONGTEXT)
+    add_module( "avcodec-hw", "hw decoder", "any", HW_TEXT, HW_LONGTEXT, false )
 #if defined(FF_THREAD_FRAME)
     add_obsolete_integer( "ffmpeg-threads" ) /* removed since 2.1.0 */
     add_integer( "avcodec-threads", 0, THREADS_TEXT, THREADS_LONGTEXT, true );
@@ -255,8 +256,7 @@ AVCodecContext *ffmpeg_AllocContext( decoder_t *p_dec,
 
     /* *** determine codec type *** */
     if( !GetFfmpegCodec( p_dec->fmt_in.i_cat, p_dec->fmt_in.i_codec,
-                         &i_codec_id, &psz_namecodec ) ||
-         i_codec_id == AV_CODEC_ID_RAWVIDEO )
+                         &i_codec_id, &psz_namecodec ) )
          return NULL;
 
     msg_Dbg( p_dec, "using %s %s", AVPROVIDER(LIBAVCODEC), LIBAVCODEC_IDENT );

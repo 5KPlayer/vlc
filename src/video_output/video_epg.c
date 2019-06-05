@@ -66,24 +66,25 @@
 #define RGB_COLOR1   0x2badde
 #define ARGB_BGCOLOR 0xc003182d
 
-typedef struct
+struct subpicture_updater_sys_t
 {
     vlc_epg_t *epg;
     int64_t    time;
     char      *art;
     vlc_object_t *obj;
-} epg_spu_updater_sys_t;
+};
 
 static char * GetDefaultArtUri( void )
 {
     char *psz_uri = NULL;
-    char *psz_path = config_GetSysPath(VLC_SYSDATA_DIR, "icons/hicolor/"
-                                       "128x128/"PACKAGE_NAME".png");
-    if( psz_path != NULL )
+    char *psz_path;
+    char *psz_datadir = config_GetDataDir();
+    if( asprintf( &psz_path, "%s/icons/128x128/vlc.png", psz_datadir ) >= 0 )
     {
         psz_uri = vlc_path2uri( psz_path, NULL );
         free( psz_path );
     }
+    free( psz_datadir );
     return psz_uri;
 }
 
@@ -316,7 +317,7 @@ static subpicture_region_t * vout_OSDEpgEvent(const vlc_epg_event_t *p_evt,
     return vout_OSDTextRegion(p_segment, x, y);
 }
 
-static void vout_FillRightPanel(epg_spu_updater_sys_t *p_sys,
+static void vout_FillRightPanel(subpicture_updater_sys_t *p_sys,
                                 int x, int y,
                                 int width, int height,
                                 int rx, int ry,
@@ -410,7 +411,7 @@ static void vout_FillRightPanel(epg_spu_updater_sys_t *p_sys,
     }
 }
 
-static subpicture_region_t * vout_BuildOSDEpg(epg_spu_updater_sys_t *p_sys,
+static subpicture_region_t * vout_BuildOSDEpg(subpicture_updater_sys_t *p_sys,
                                               int x, int y,
                                               int visible_width,
                                               int visible_height)
@@ -499,7 +500,7 @@ static subpicture_region_t * vout_BuildOSDEpg(epg_spu_updater_sys_t *p_sys,
 static int OSDEpgValidate(subpicture_t *subpic,
                           bool has_src_changed, const video_format_t *fmt_src,
                           bool has_dst_changed, const video_format_t *fmt_dst,
-                          vlc_tick_t ts)
+                          mtime_t ts)
 {
     VLC_UNUSED(subpic); VLC_UNUSED(ts);
     VLC_UNUSED(fmt_src); VLC_UNUSED(has_src_changed);
@@ -513,9 +514,9 @@ static int OSDEpgValidate(subpicture_t *subpic,
 static void OSDEpgUpdate(subpicture_t *subpic,
                          const video_format_t *fmt_src,
                          const video_format_t *fmt_dst,
-                         vlc_tick_t ts)
+                         mtime_t ts)
 {
-    epg_spu_updater_sys_t *sys = subpic->updater.p_sys;
+    subpicture_updater_sys_t *sys = subpic->updater.p_sys;
     VLC_UNUSED(fmt_src); VLC_UNUSED(ts);
 
     video_format_t fmt = *fmt_dst;
@@ -535,7 +536,7 @@ static void OSDEpgUpdate(subpicture_t *subpic,
 
 static void OSDEpgDestroy(subpicture_t *subpic)
 {
-    epg_spu_updater_sys_t *sys = subpic->updater.p_sys;
+    subpicture_updater_sys_t *sys = subpic->updater.p_sys;
     if( sys->epg )
         vlc_epg_Delete(sys->epg);
     free( sys->art );
@@ -617,7 +618,7 @@ int vout_OSDEpg(vout_thread_t *vout, input_item_t *input )
     if(epg->psz_name == NULL) /* Fallback (title == channel name) */
         epg->psz_name = input_item_GetMeta( input, vlc_meta_Title );
 
-    epg_spu_updater_sys_t *sys = malloc(sizeof(*sys));
+    subpicture_updater_sys_t *sys = malloc(sizeof(*sys));
     if (!sys) {
         vlc_epg_Delete(epg);
         return VLC_EGENERIC;
@@ -636,7 +637,7 @@ int vout_OSDEpg(vout_thread_t *vout, input_item_t *input )
         .p_sys       = sys
     };
 
-    const vlc_tick_t now = vlc_tick_now();
+    const mtime_t now = mdate();
     subpicture_t *subpic = subpicture_New(&updater);
     if (!subpic) {
         vlc_epg_Delete(sys->epg);
@@ -646,7 +647,7 @@ int vout_OSDEpg(vout_thread_t *vout, input_item_t *input )
 
     subpic->i_channel  = VOUT_SPU_CHANNEL_OSD;
     subpic->i_start    = now;
-    subpic->i_stop     = now + VLC_TICK_FROM_SEC(3);
+    subpic->i_stop     = now + 3000 * INT64_C(1000);
     subpic->b_ephemer  = true;
     subpic->b_absolute = false;
     subpic->b_fade     = true;

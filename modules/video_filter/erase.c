@@ -2,6 +2,7 @@
  * erase.c : logo erase video filter
  *****************************************************************************
  * Copyright (C) 2007 VLC authors and VideoLAN
+ * $Id: 2bce92bce3aeceab7904688fa2c0741038e702f7 $
  *
  * Authors: Antoine Cellerier <dionoea -at- videolan -dot- org>
  *
@@ -71,7 +72,8 @@ vlc_module_begin ()
     set_category( CAT_VIDEO )
     set_subcategory( SUBCAT_VIDEO_VFILTER )
 
-    add_loadfile(CFG_PREFIX "mask", NULL, MASK_TEXT, MASK_LONGTEXT)
+    add_loadfile( CFG_PREFIX "mask", NULL,
+                  MASK_TEXT, MASK_LONGTEXT, false )
     add_integer( CFG_PREFIX "x", 0, POSX_TEXT, POSX_LONGTEXT, false )
     add_integer( CFG_PREFIX "y", 0, POSY_TEXT, POSY_LONGTEXT, false )
 
@@ -86,34 +88,36 @@ static const char *const ppsz_filter_options[] = {
 /*****************************************************************************
  * filter_sys_t
  *****************************************************************************/
-typedef struct
+struct filter_sys_t
 {
     int i_x;
     int i_y;
     picture_t *p_mask;
     vlc_mutex_t lock;
-} filter_sys_t;
+};
 
 static void LoadMask( filter_t *p_filter, const char *psz_filename )
 {
-    filter_sys_t *p_sys = p_filter->p_sys;
     image_handler_t *p_image;
-    video_format_t fmt_out;
-    picture_t *p_old_mask = p_sys->p_mask;
+    video_format_t fmt_in, fmt_out;
+    picture_t *p_old_mask = p_filter->p_sys->p_mask;
+    video_format_Init( &fmt_in, 0 );
     video_format_Init( &fmt_out, VLC_CODEC_YUVA );
     p_image = image_HandlerCreate( p_filter );
     char *psz_url = vlc_path2uri( psz_filename, NULL );
-    p_sys->p_mask = image_ReadUrl( p_image, psz_url, &fmt_out );
+    p_filter->p_sys->p_mask =
+        image_ReadUrl( p_image, psz_url, &fmt_in, &fmt_out );
     free( psz_url );
+    video_format_Clean( &fmt_in );
     video_format_Clean( &fmt_out );
-    if( p_sys->p_mask )
+    if( p_filter->p_sys->p_mask )
     {
         if( p_old_mask )
             picture_Release( p_old_mask );
     }
     else if( p_old_mask )
     {
-        p_sys->p_mask = p_old_mask;
+        p_filter->p_sys->p_mask = p_old_mask;
         msg_Err( p_filter, "Error while loading new mask. Keeping old mask." );
     }
     else

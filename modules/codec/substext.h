@@ -25,9 +25,9 @@
 #include <vlc_text_style.h>
 #include <vlc_subpicture.h>
 
-typedef struct substext_updater_region_t substext_updater_region_t;
+typedef struct subpicture_updater_sys_region_t subpicture_updater_sys_region_t;
 
-enum substext_updater_region_flags_e
+enum subpicture_updater_sys_region_flags_e
 {
     UPDT_REGION_ORIGIN_X_IS_RATIO      = 1 << 0,
     UPDT_REGION_ORIGIN_Y_IS_RATIO      = 1 << 1,
@@ -38,7 +38,7 @@ enum substext_updater_region_flags_e
     UPDT_REGION_FIXED_DONE             = 1 << 31,
 };
 
-struct substext_updater_region_t
+struct subpicture_updater_sys_region_t
 {
     struct
     {
@@ -51,46 +51,46 @@ struct substext_updater_region_t
     int inner_align; /* alignment of content inside the region */
     text_style_t *p_region_style;
     text_segment_t *p_segments;
-    substext_updater_region_t *p_next;
+    subpicture_updater_sys_region_t *p_next;
 };
 
-typedef struct
-{
+struct subpicture_updater_sys_t {
+
     /* a min of one region */
-    substext_updater_region_t region;
+    subpicture_updater_sys_region_t region;
 
     /* styling */
     text_style_t *p_default_style; /* decoder (full or partial) defaults */
     float margin_ratio;
-    vlc_tick_t i_next_update;
+    mtime_t i_next_update;
     bool b_blink_even;
-} subtext_updater_sys_t;
+};
 
-static inline void SubpictureUpdaterSysRegionClean(substext_updater_region_t *p_updtregion)
+static inline void SubpictureUpdaterSysRegionClean(subpicture_updater_sys_region_t *p_updtregion)
 {
     text_segment_ChainDelete( p_updtregion->p_segments );
     text_style_Delete( p_updtregion->p_region_style );
 }
 
-static inline void SubpictureUpdaterSysRegionInit(substext_updater_region_t *p_updtregion)
+static inline void SubpictureUpdaterSysRegionInit(subpicture_updater_sys_region_t *p_updtregion)
 {
     memset(p_updtregion, 0, sizeof(*p_updtregion));
     p_updtregion->align = SUBPICTURE_ALIGN_BOTTOM;
     p_updtregion->inner_align = 0;
 }
 
-static inline substext_updater_region_t *SubpictureUpdaterSysRegionNew( )
+static inline subpicture_updater_sys_region_t *SubpictureUpdaterSysRegionNew( )
 {
-    substext_updater_region_t *p_region = malloc(sizeof(*p_region));
+    subpicture_updater_sys_region_t *p_region = malloc(sizeof(*p_region));
     if(p_region)
         SubpictureUpdaterSysRegionInit(p_region);
     return p_region;
 }
 
-static inline void SubpictureUpdaterSysRegionAdd(substext_updater_region_t *p_prev,
-                                                 substext_updater_region_t *p_new)
+static inline void SubpictureUpdaterSysRegionAdd(subpicture_updater_sys_region_t *p_prev,
+                                                 subpicture_updater_sys_region_t *p_new)
 {
-    substext_updater_region_t **pp_next = &p_prev->p_next;
+    subpicture_updater_sys_region_t **pp_next = &p_prev->p_next;
     for(; *pp_next; pp_next = &(*pp_next)->p_next);
     *pp_next = p_new;
 }
@@ -98,16 +98,16 @@ static inline void SubpictureUpdaterSysRegionAdd(substext_updater_region_t *p_pr
 static int SubpictureTextValidate(subpicture_t *subpic,
                                   bool has_src_changed, const video_format_t *fmt_src,
                                   bool has_dst_changed, const video_format_t *fmt_dst,
-                                  vlc_tick_t ts)
+                                  mtime_t ts)
 {
-    subtext_updater_sys_t *sys = subpic->updater.p_sys;
+    subpicture_updater_sys_t *sys = subpic->updater.p_sys;
     VLC_UNUSED(fmt_src); VLC_UNUSED(fmt_dst);
 
     if (!has_src_changed && !has_dst_changed &&
-        (sys->i_next_update == VLC_TICK_INVALID || sys->i_next_update > ts))
+        (sys->i_next_update == VLC_TS_INVALID || sys->i_next_update > ts))
         return VLC_SUCCESS;
 
-    substext_updater_region_t *p_updtregion = &sys->region;
+    subpicture_updater_sys_region_t *p_updtregion = &sys->region;
 
     if (!(p_updtregion->flags & UPDT_REGION_FIXED_DONE) &&
         subpic->b_absolute && subpic->p_region &&
@@ -129,9 +129,9 @@ static int SubpictureTextValidate(subpicture_t *subpic,
 static void SubpictureTextUpdate(subpicture_t *subpic,
                                  const video_format_t *fmt_src,
                                  const video_format_t *fmt_dst,
-                                 vlc_tick_t ts)
+                                 mtime_t ts)
 {
-    subtext_updater_sys_t *sys = subpic->updater.p_sys;
+    subpicture_updater_sys_t *sys = subpic->updater.p_sys;
     VLC_UNUSED(fmt_src);
 
     if (fmt_dst->i_sar_num <= 0 || fmt_dst->i_sar_den <= 0)
@@ -158,7 +158,7 @@ static void SubpictureTextUpdate(subpicture_t *subpic,
     bool b_schedule_blink_update = false;
     subpicture_region_t **pp_last_region = &subpic->p_region;
 
-    for( substext_updater_region_t *p_updtregion = &sys->region;
+    for( subpicture_updater_sys_region_t *p_updtregion = &sys->region;
                                           p_updtregion; p_updtregion = p_updtregion->p_next )
     {
         subpicture_region_t *r = *pp_last_region = subpicture_region_New(&fmt);
@@ -259,21 +259,21 @@ static void SubpictureTextUpdate(subpicture_t *subpic,
     }
 
     if( b_schedule_blink_update &&
-        (sys->i_next_update == VLC_TICK_INVALID || sys->i_next_update < ts) )
+        (sys->i_next_update == VLC_TS_INVALID || sys->i_next_update < ts) )
     {
-        sys->i_next_update = ts + VLC_TICK_FROM_SEC(1);
+        sys->i_next_update = ts + CLOCK_FREQ;
         sys->b_blink_even = !sys->b_blink_even;
     }
 }
 static void SubpictureTextDestroy(subpicture_t *subpic)
 {
-    subtext_updater_sys_t *sys = subpic->updater.p_sys;
+    subpicture_updater_sys_t *sys = subpic->updater.p_sys;
 
     SubpictureUpdaterSysRegionClean( &sys->region );
-    substext_updater_region_t *p_region = sys->region.p_next;
+    subpicture_updater_sys_region_t *p_region = sys->region.p_next;
     while( p_region )
     {
-        substext_updater_region_t *p_next = p_region->p_next;
+        subpicture_updater_sys_region_t *p_next = p_region->p_next;
         SubpictureUpdaterSysRegionClean( p_region );
         free( p_region );
         p_region = p_next;
@@ -284,7 +284,7 @@ static void SubpictureTextDestroy(subpicture_t *subpic)
 
 static inline subpicture_t *decoder_NewSubpictureText(decoder_t *decoder)
 {
-    subtext_updater_sys_t *sys = calloc(1, sizeof(*sys));
+    subpicture_updater_sys_t *sys = calloc(1, sizeof(*sys));
     subpicture_updater_t updater = {
         .pf_validate = SubpictureTextValidate,
         .pf_update   = SubpictureTextUpdate,

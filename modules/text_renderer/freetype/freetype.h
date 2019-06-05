@@ -2,6 +2,7 @@
  * freetype.h : Put text on the video, using freetype2
  *****************************************************************************
  * Copyright (C) 2015 VLC authors and VideoLAN
+ * $Id: b0ef9cf178a2ab378f041848d36bec8301bf164e $
  *
  * Authors: Sigmund Augdal Helberg <dnumgis@videolan.org>
  *          Gildas Bazin <gbazin@videolan.org>
@@ -72,7 +73,7 @@ typedef uint32_t uni_char_t;
  * It describes the freetype specific properties of an output thread.
  *****************************************************************************/
 typedef struct vlc_family_t vlc_family_t;
-typedef struct
+struct filter_sys_t
 {
     FT_Library     p_library;       /* handle to library     */
     FT_Face        p_face;          /* handle to face object */
@@ -140,7 +141,7 @@ typedef struct
 #if defined( _WIN32 )
     void *p_dw_sys;
 #endif
-} filter_sys_t;
+};
 
 /**
  * Selects and loads the right font

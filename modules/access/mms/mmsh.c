@@ -2,6 +2,7 @@
  * mmsh.c:
  *****************************************************************************
  * Copyright (C) 2001, 2002 VLC authors and VideoLAN
+ * $Id: d2f497dd947509e9a5cfe7e7c3aa7849ecb377d8 $
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *
@@ -33,7 +34,7 @@
 #include <vlc_strings.h>
 #include <vlc_input.h>
 
-#include <vlc_tls.h>
+#include <vlc_network.h>
 #include <vlc_url.h>
 #include <vlc_memstream.h>
 #include "asf.h"
@@ -83,7 +84,7 @@ int MMSHOpen( stream_t *p_access )
 
     p_access->p_sys = p_sys;
     p_sys->i_proto= MMS_PROTO_HTTP;
-    p_sys->stream = NULL;
+    p_sys->fd     = -1;
     p_sys->i_position = 0;
 
     /* Handle proxy */
@@ -182,6 +183,7 @@ static int Control( stream_t *p_access, int i_query, va_list args )
     access_sys_t *p_sys = p_access->p_sys;
     bool   *pb_bool;
     bool    b_bool;
+    int64_t      *pi_64;
     int          i_int;
 
     switch( i_query )
@@ -212,8 +214,9 @@ static int Control( stream_t *p_access, int i_query, va_list args )
         }
 
         case STREAM_GET_PTS_DELAY:
-            *va_arg( args, vlc_tick_t * ) =
-                VLC_TICK_FROM_MS(var_InheritInteger( p_access, "network-caching" ));
+            pi_64 = va_arg( args, int64_t * );
+            *pi_64 = INT64_C(1000)
+                   * var_InheritInteger( p_access, "network-caching" );
             break;
 
         case STREAM_GET_PRIVATE_ID_STATE:
@@ -527,9 +530,8 @@ static int OpenConnection( stream_t *p_access,
     if( vlc_memstream_close( stream ) )
         return VLC_ENOMEM;
 
-    vlc_tls_t *sock = vlc_tls_SocketOpenTCP( VLC_OBJECT(p_access),
-                                             srv->psz_host, srv->i_port );
-    if( sock == NULL )
+    int fd = net_ConnectTCP( p_access, srv->psz_host, srv->i_port );
+    if( fd < 0 )
     {
         free( stream->ptr );
         return VLC_EGENERIC;
@@ -537,17 +539,17 @@ static int OpenConnection( stream_t *p_access,
 
     msg_Dbg( p_access, "sending request:\n%s", stream->ptr );
 
-    ssize_t val = vlc_tls_Write( sock, stream->ptr, stream->length );
+    ssize_t val = net_Write( p_access, fd, stream->ptr, stream->length );
     free( stream->ptr );
     if( val < (ssize_t)stream->length )
     {
         msg_Err( p_access, "failed to send request" );
-        vlc_tls_Close( sock );
-        stream = NULL;
+        net_Close( fd );
+        fd = -1;
     }
 
-    p_sys->stream = sock;
-    return (sock != NULL) ? VLC_SUCCESS : VLC_EGENERIC;
+    p_sys->fd = fd;
+    return (fd >= 0) ? VLC_SUCCESS : VLC_EGENERIC;
 }
 
 /*****************************************************************************
@@ -585,7 +587,7 @@ static int Describe( stream_t  *p_access, char **ppsz_location )
         return VLC_EGENERIC;
 
     /* Receive the http header */
-    char *psz = vlc_tls_GetLine( p_sys->stream );
+    char *psz = net_Gets( p_access, p_sys->fd );
     if( psz == NULL )
     {
         msg_Err( p_access, "failed to read answer" );
@@ -610,7 +612,7 @@ static int Describe( stream_t  *p_access, char **ppsz_location )
     free( psz );
     for( ;; )
     {
-        psz = vlc_tls_GetLine( p_sys->stream );
+        psz = net_Gets( p_access, p_sys->fd );
 
         if( psz == NULL )
         {
@@ -689,8 +691,7 @@ static int Describe( stream_t  *p_access, char **ppsz_location )
         psz_location )
     {
         msg_Dbg( p_access, "redirection to %s", psz_location );
-        vlc_tls_Close( p_sys->stream );
-        p_sys->stream = NULL;
+        net_Close( p_sys->fd ); p_sys->fd = -1;
 
         *ppsz_location = psz_location;
         return VLC_SUCCESS;
@@ -705,8 +706,8 @@ static int Describe( stream_t  *p_access, char **ppsz_location )
         goto error;
     }
     /* close this connection */
-    vlc_tls_Close( p_sys->stream );
-    p_sys->stream = NULL;
+    net_Close( p_sys->fd );
+    p_sys->fd = -1;
 
     /* *** parse header and get stream and their id *** */
     /* get all streams properties,
@@ -730,10 +731,10 @@ static int Describe( stream_t  *p_access, char **ppsz_location )
     return VLC_SUCCESS;
 
 error:
-    if( p_sys->stream != NULL )
+    if( p_sys->fd >= 0 )
     {
-        vlc_tls_Close( p_sys->stream  );
-        p_sys->stream = NULL;
+        net_Close( p_sys->fd  );
+        p_sys->fd = -1;
     }
     return VLC_EGENERIC;
 }
@@ -826,7 +827,7 @@ static int Start( stream_t *p_access, uint64_t i_pos )
     if( OpenConnection( p_access, &stream ) )
         return VLC_EGENERIC;
 
-    char *psz = vlc_tls_GetLine( p_sys->stream );
+    char *psz = net_Gets( p_access, p_sys->fd );
     if( psz == NULL )
     {
         msg_Err( p_access, "cannot read data 0" );
@@ -845,7 +846,7 @@ static int Start( stream_t *p_access, uint64_t i_pos )
     /* FIXME check HTTP code */
     for( ;; )
     {
-        psz = vlc_tls_GetLine( p_sys->stream );
+        psz = net_Gets( p_access, p_sys->fd );
         if( psz == NULL )
         {
             msg_Err( p_access, "cannot read data 1" );
@@ -874,10 +875,10 @@ static void Stop( stream_t *p_access )
     access_sys_t *p_sys = p_access->p_sys;
 
     msg_Dbg( p_access, "closing stream" );
-    if( p_sys->stream != NULL )
+    if( p_sys->fd >= 0 )
     {
-        vlc_tls_Close( p_sys->stream );
-        p_sys->stream = NULL;
+        net_Close( p_sys->fd );
+        p_sys->fd = -1;
     }
 }
 
@@ -898,7 +899,7 @@ static int GetPacket( stream_t * p_access, chunk_t *p_ck )
      * (4 bytes), decode and then read up to 8 additional bytes to get the
      * entire header.
      */
-    if( vlc_tls_Read( p_sys->stream, p_sys->buffer, 4, true ) < 4 )
+    if( net_Read( p_access, p_sys->fd, p_sys->buffer, 4 ) < 4 )
     {
        msg_Err( p_access, "cannot read data 2" );
        return VLC_EGENERIC;
@@ -911,7 +912,7 @@ static int GetPacket( stream_t * p_access, chunk_t *p_ck )
     if( restsize > 8 )
         restsize = 8;
 
-    if( vlc_tls_Read( p_sys->stream, p_sys->buffer + 4, restsize, true ) < restsize )
+    if( net_Read( p_access, p_sys->fd, p_sys->buffer + 4, restsize ) < restsize )
     {
         msg_Err( p_access, "cannot read data 3" );
         return VLC_EGENERIC;
@@ -962,8 +963,8 @@ static int GetPacket( stream_t * p_access, chunk_t *p_ck )
     }
 
     if( (p_ck->i_data > 0) &&
-        (vlc_tls_Read( p_sys->stream, &p_sys->buffer[12], p_ck->i_data,
-                       true ) < p_ck->i_data) )
+        (net_Read( p_access, p_sys->fd, &p_sys->buffer[12],
+                   p_ck->i_data ) < p_ck->i_data) )
     {
         msg_Err( p_access, "cannot read data 4" );
         return VLC_EGENERIC;

@@ -35,12 +35,12 @@
 #include "d3d11_filters.h"
 
 static vlc_mutex_t inst_lock = VLC_STATIC_MUTEX;
-static d3d11_device_t device = { .context_mutex = INVALID_HANDLE_VALUE };
+static d3d11_device_t device = { .d3dcontext = NULL };
 static size_t instances = 0;
 
 void D3D11_FilterHoldInstance(filter_t *filter, d3d11_device_t *out, D3D11_TEXTURE2D_DESC *dstDesc)
 {
-    *out = (d3d11_device_t) { .context_mutex = INVALID_HANDLE_VALUE };
+    out->d3dcontext = NULL;
     picture_t *pic = filter_NewPicture(filter);
     if (!pic)
         return;
@@ -52,24 +52,12 @@ void D3D11_FilterHoldInstance(filter_t *filter, d3d11_device_t *out, D3D11_TEXTU
     {
         out->d3dcontext = p_sys->context;
         ID3D11DeviceContext_GetDevice(out->d3dcontext, &out->d3ddevice);
-
-        UINT dataSize = sizeof(out->context_mutex);
-        HRESULT hr = ID3D11DeviceContext_GetPrivateData(out->d3dcontext, &GUID_CONTEXT_MUTEX,
-                                                        &dataSize, &out->context_mutex);
-        if (FAILED(hr) || dataSize != sizeof(out->context_mutex))
-        {
-            msg_Warn(filter, "No mutex found to lock the decoder");
-            out->context_mutex = INVALID_HANDLE_VALUE;
-        }
-
         ID3D11Device_Release(out->d3ddevice);
         if (device.d3dcontext == NULL)
         {
             device = *out;
             instances++;
         }
-        if (device.context_mutex == INVALID_HANDLE_VALUE)
-            device.context_mutex = out->context_mutex;
 
         ID3D11Texture2D_GetDesc(p_sys->texture[KNOWN_DXGI_INDEX], dstDesc);
     }
@@ -80,16 +68,10 @@ void D3D11_FilterHoldInstance(filter_t *filter, d3d11_device_t *out, D3D11_TEXTU
             instances++;
 
         memset(dstDesc, 0, sizeof(*dstDesc));
-        dstDesc->Format = DxgiFourccFormat( filter->fmt_in.video.i_chroma );
-        if (dstDesc->Format == DXGI_FORMAT_UNKNOWN)
-            switch (filter->fmt_in.video.i_chroma)
-            {
-            case VLC_CODEC_D3D11_OPAQUE:      dstDesc->Format = DXGI_FORMAT_NV12; break;
-            case VLC_CODEC_D3D11_OPAQUE_10B:  dstDesc->Format = DXGI_FORMAT_P010; break;
-            case VLC_CODEC_D3D11_OPAQUE_BGRA: dstDesc->Format = DXGI_FORMAT_B8G8R8A8_UNORM; break;
-            case VLC_CODEC_D3D11_OPAQUE_RGBA: dstDesc->Format = DXGI_FORMAT_R8G8B8A8_UNORM; break;
-            default: break;
-            }
+        if (filter->fmt_in.video.i_chroma == VLC_CODEC_D3D11_OPAQUE_10B)
+            dstDesc->Format = DXGI_FORMAT_P010;
+        else
+            dstDesc->Format = DXGI_FORMAT_NV12;
         dstDesc->Width  = filter->fmt_out.video.i_width;
         dstDesc->Height = filter->fmt_out.video.i_height;
     }

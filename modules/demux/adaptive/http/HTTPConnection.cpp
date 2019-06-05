@@ -70,12 +70,7 @@ HTTPConnection::HTTPConnection(vlc_object_t *p_object_, AuthStorage *auth,
     : AbstractConnection( p_object_ )
 {
     transport = socket_;
-    char *psz_useragent = var_InheritString(p_object_, "http-user-agent");
-    useragent = psz_useragent ? std::string(psz_useragent) : std::string("");
-    free(psz_useragent);
-    for(std::string::iterator it = useragent.begin(); it != useragent.end(); ++it)
-        if(!std::isprint(*it))
-            *it = ' ';
+    psz_useragent = var_InheritString(p_object_, "http-user-agent");
     queryOk = false;
     retries = 0;
     authStorage = auth;
@@ -88,6 +83,7 @@ HTTPConnection::HTTPConnection(vlc_object_t *p_object_, AuthStorage *auth,
 
 HTTPConnection::~HTTPConnection()
 {
+    free(psz_useragent);
     delete transport;
 }
 
@@ -137,8 +133,7 @@ void HTTPConnection::disconnect()
     transport->disconnect();
 }
 
-enum RequestStatus
-    HTTPConnection::request(const std::string &path, const BytesRange &range)
+int HTTPConnection::request(const std::string &path, const BytesRange &range)
 {
     queryOk = false;
     chunked = false;
@@ -161,7 +156,7 @@ enum RequestStatus
     else querypath = path;
 
     if(!connected() && ( params.getHostname().empty() || !connect() ))
-        return RequestStatus::GenericError;
+        return VLC_EGENERIC;
 
     bytesRange = range;
     if(range.isValid() && range.getEndByte() > 0)
@@ -181,19 +176,19 @@ enum RequestStatus
             connectionClose = true;
             return request(path, range);
         }
-        return RequestStatus::GenericError;
+        return VLC_EGENERIC;
     }
 
-    enum RequestStatus status = parseReply();
-    if(status == RequestStatus::Success)
+    int i_ret = parseReply();
+    if(i_ret == VLC_SUCCESS)
     {
         queryOk = true;
     }
-    else if(status == RequestStatus::Redirection)
+    else if(i_ret == VLC_ETIMEOUT) /* redir */
     {
         transport->disconnect();
     }
-    else if(status == RequestStatus::GenericError)
+    else if(i_ret == VLC_EGENERIC)
     {
         transport->disconnect();
         if(!connectionClose)
@@ -203,7 +198,7 @@ enum RequestStatus
         }
     }
 
-    return status;
+    return i_ret;
 }
 
 ssize_t HTTPConnection::read(void *p_buffer, size_t len)
@@ -249,18 +244,17 @@ bool HTTPConnection::send(const void *buf, size_t size)
     return transport->send(buf, size);
 }
 
-enum RequestStatus
-    HTTPConnection::parseReply()
+int HTTPConnection::parseReply()
 {
     std::string statusline = readLine();
 
     if(statusline.empty())
-        return RequestStatus::GenericError;
+        return VLC_EGENERIC;
 
     if (statusline.compare(0, 9, "HTTP/1.1 ")!=0)
     {
         if(statusline.compare(0, 9, "HTTP/1.0 ")!=0)
-            return RequestStatus::NotFound;
+            return VLC_ENOOBJ;
         else
             connectionClose = true;
     }
@@ -293,15 +287,15 @@ enum RequestStatus
        !locationparams.getUrl().empty())
     {
         msg_Info(p_object, "%d redirection to %s", replycode, locationparams.getUrl().c_str());
-        return RequestStatus::Redirection;
+        return VLC_ETIMEOUT;
     }
     else if (replycode != 200 && replycode != 206)
     {
         msg_Err(p_object, "Failed reading %s: %s", params.getUrl().c_str(), statusline.c_str());
-        return RequestStatus::NotFound;
+        return VLC_ENOOBJ;
     }
 
-    return RequestStatus::Success;
+    return VLC_SUCCESS;
 }
 
 ssize_t HTTPConnection::readChunk(void *p_buffer, size_t len)
@@ -439,7 +433,7 @@ std::string HTTPConnection::buildRequestHeader(const std::string &path) const
             req << "Cookie: " << cookie << "\r\n";
     }
     req << "Cache-Control: no-cache" << "\r\n" <<
-           "User-Agent: " << useragent << "\r\n";
+           "User-Agent: " << std::string(psz_useragent) << "\r\n";
     req << extraRequestHeaders();
     return req.str();
 }
@@ -492,8 +486,7 @@ bool StreamUrlConnection::canReuse(const ConnectionParams &params) const
     return available && params.usesAccess();
 }
 
-enum RequestStatus
-    StreamUrlConnection::request(const std::string &path, const BytesRange &range)
+int StreamUrlConnection::request(const std::string &path, const BytesRange &range)
 {
     reset();
 
@@ -505,7 +498,7 @@ enum RequestStatus
 
     p_streamurl = vlc_stream_NewURL(p_object, params.getUrl().c_str());
     if(!p_streamurl)
-        return RequestStatus::GenericError;
+        return VLC_EGENERIC;
 
     char *psz_type = stream_ContentType(p_streamurl);
     if(psz_type)
@@ -523,7 +516,7 @@ enum RequestStatus
         if(vlc_stream_Seek(p_streamurl, range.getStartByte()) != VLC_SUCCESS)
         {
             vlc_stream_Delete(p_streamurl);
-            return RequestStatus::GenericError;
+            return VLC_EGENERIC;
         }
         bytesRange = range;
         contentLength = range.getEndByte() - range.getStartByte() + 1;
@@ -535,7 +528,7 @@ enum RequestStatus
         if(!range.isValid() || contentLength > (size_t) i_size)
             contentLength = (size_t) i_size;
     }
-    return RequestStatus::Success;
+    return VLC_SUCCESS;
 }
 
 ssize_t StreamUrlConnection::read(void *p_buffer, size_t len)

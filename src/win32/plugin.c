@@ -33,7 +33,48 @@
 #include <windows.h>
 #include <wchar.h>
 
-char *vlc_dlerror(void)
+extern DWORD LoadLibraryFlags;
+
+#if (_WIN32_WINNT < _WIN32_WINNT_WIN7)
+static BOOL WINAPI SetThreadErrorModeFallback(DWORD mode, DWORD *oldmode)
+{
+    /* TODO: cache the pointer */
+    HANDLE h = GetModuleHandle(_T("kernel32.dll"));
+    if (unlikely(h == NULL))
+        return FALSE;
+
+    BOOL (WINAPI *SetThreadErrorModeReal)(DWORD, DWORD *);
+
+    SetThreadErrorModeReal = GetProcAddress(h, "SetThreadErrorMode");
+    if (SetThreadErrorModeReal != NULL)
+        return SetThreadErrorModeReal(mode, oldmode);
+
+# if (_WIN32_WINNT < _WIN32_WINNT_VISTA)
+    /* As per libvlc_new() documentation, the calling process is responsible
+     * for setting a proper error mode on Windows 2008 and earlier versions.
+     * This is only a sanity check. */
+    UINT (WINAPI *GetErrorModeReal)(void);
+    DWORD curmode = 0;
+
+    GetErrorModeReal = (void *)GetProcAddress(h, "GetErrorMode");
+    if (GetErrorModeReal != NULL)
+        curmode = GetErrorModeReal();
+    else
+        curmode = SEM_FAILCRITICALERRORS;
+# else
+    DWORD curmode = GetErrorMode();
+# endif
+    /* Extra flags should be OK. Missing flags are NOT OK. */
+    if ((mode & curmode) != mode)
+        return FALSE;
+    if (oldmode != NULL)
+        *oldmode = curmode;
+    return TRUE;
+}
+# define SetThreadErrorMode SetThreadErrorModeFallback
+#endif
+
+static char *GetWindowsError( void )
 {
     wchar_t wmsg[256];
     int i = 0, i_error = GetLastError();
@@ -50,18 +91,19 @@ char *vlc_dlerror(void)
     return FromWide( wmsg );
 }
 
-void *vlc_dlopen(const char *psz_file, bool lazy)
+int module_Load( vlc_object_t *p_this, const char *psz_file,
+                 module_handle_t *p_handle, bool lazy )
 {
     wchar_t *wfile = ToWide (psz_file);
     if (wfile == NULL)
-        return NULL;
+        return -1;
 
-    HMODULE handle = NULL;
+    module_handle_t handle = NULL;
 #if !VLC_WINSTORE_APP
     DWORD mode;
     if (SetThreadErrorMode (SEM_FAILCRITICALERRORS, &mode) != 0)
     {
-        handle = LoadLibraryExW(wfile, NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
+        handle = LoadLibraryExW (wfile, NULL, LoadLibraryFlags );
         SetThreadErrorMode (mode, NULL);
     }
 #else
@@ -69,17 +111,25 @@ void *vlc_dlopen(const char *psz_file, bool lazy)
 #endif
     free (wfile);
 
-    (void) lazy;
-    return handle;
-}
+    if( handle == NULL )
+    {
+        char *psz_err = GetWindowsError();
+        msg_Warn( p_this, "cannot load module `%s' (%s)", psz_file, psz_err );
+        free( psz_err );
+        return -1;
+    }
 
-int vlc_dlclose(void *handle)
-{
-    FreeLibrary( handle );
+    *p_handle = handle;
+    (void) lazy;
     return 0;
 }
 
-void *vlc_dlsym(void *handle, const char *psz_function)
+void module_Unload( module_handle_t handle )
 {
-    return (void *)GetProcAddress(handle, psz_function);
+    FreeLibrary( handle );
+}
+
+void *module_Lookup( module_handle_t handle, const char *psz_function )
+{
+    return (void *)GetProcAddress( handle, (char *)psz_function );
 }

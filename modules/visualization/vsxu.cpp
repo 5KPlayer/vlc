@@ -2,6 +2,7 @@
  * vsxu.cpp: visualization module wrapper for Vovoid VSXu
  *****************************************************************************
  * Copyright © 2009-2012 the VideoLAN team, Vovoid Media Technologies
+ * $Id: 8be523e6faad114aef2291a0f696c61cfef55747 $
  *
  * Authors: Rémi Duraffort <ivoire@videolan.org>
  *          Laurent Aimar
@@ -72,7 +73,6 @@ vlc_module_end ()
 /*****************************************************************************
  * Local prototypes
  *****************************************************************************/
-namespace {
 
 struct filter_sys_t
 {
@@ -91,8 +91,6 @@ struct filter_sys_t
 
     bool b_quit;
 };
-
-} // namespace
 
 static block_t *DoWork( filter_t *, block_t * );
 static void *Thread( void * );

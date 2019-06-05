@@ -48,7 +48,7 @@ struct cvpxpic_ctx
     CVPixelBufferRef cvpx;
     unsigned nb_fields;
 
-    vlc_atomic_rc_t rc;
+    atomic_uint ref_count;
     void (*on_released_cb)(CVPixelBufferRef, void *, unsigned);
     void *on_released_data;
 };
@@ -58,7 +58,7 @@ cvpxpic_destroy_cb(picture_context_t *opaque)
 {
     struct cvpxpic_ctx *ctx = (struct cvpxpic_ctx *)opaque;
 
-    if (vlc_atomic_rc_dec(&ctx->rc))
+    if (atomic_fetch_sub(&ctx->ref_count, 1) == 1)
     {
         CFRelease(ctx->cvpx);
         if (ctx->on_released_cb)
@@ -71,7 +71,7 @@ static picture_context_t *
 cvpxpic_copy_cb(struct picture_context_t *opaque)
 {
     struct cvpxpic_ctx *ctx = (struct cvpxpic_ctx *)opaque;
-    vlc_atomic_rc_inc(&ctx->rc);
+    atomic_fetch_add(&ctx->ref_count, 1);
     return opaque;
 }
 
@@ -91,7 +91,7 @@ cvpxpic_attach_common(picture_t *p_pic, CVPixelBufferRef cvpx,
     ctx->s.copy = cvpxpic_copy_cb;
     ctx->cvpx = CVPixelBufferRetain(cvpx);
     ctx->nb_fields = p_pic->i_nb_fields;
-    vlc_atomic_rc_init(&ctx->rc);
+    atomic_init(&ctx->ref_count, 1);
 
     ctx->on_released_cb = on_released_cb;
     ctx->on_released_data = on_released_data;

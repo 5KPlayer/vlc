@@ -41,12 +41,11 @@ AbstractPlaylist::AbstractPlaylist (vlc_object_t *p_object_) :
     availabilityStartTime.Set( 0 );
     availabilityEndTime.Set( 0 );
     duration.Set( 0 );
-    minUpdatePeriod.Set( VLC_TICK_FROM_SEC(2) );
+    minUpdatePeriod.Set( 2 * CLOCK_FREQ );
     maxSegmentDuration.Set( 0 );
     minBufferTime = 0;
     timeShiftBufferDepth.Set( 0 );
     suggestedPresentationDelay.Set( 0 );
-    b_needsUpdates = true;
 }
 
 AbstractPlaylist::~AbstractPlaylist()
@@ -80,20 +79,20 @@ void AbstractPlaylist::setType(const std::string &type_)
     type = type_;
 }
 
-void AbstractPlaylist::setMinBuffering( vlc_tick_t min )
+void AbstractPlaylist::setMinBuffering( mtime_t min )
 {
     minBufferTime = min;
 }
 
-vlc_tick_t AbstractPlaylist::getMinBuffering() const
+mtime_t AbstractPlaylist::getMinBuffering() const
 {
-    return std::max(minBufferTime, VLC_TICK_FROM_SEC(6));
+    return std::max(minBufferTime, 6*CLOCK_FREQ);
 }
 
-vlc_tick_t AbstractPlaylist::getMaxBuffering() const
+mtime_t AbstractPlaylist::getMaxBuffering() const
 {
-    const vlc_tick_t minbuf = getMinBuffering();
-    return std::max(minbuf, VLC_TICK_FROM_SEC(60));
+    const mtime_t minbuf = getMinBuffering();
+    return std::max(minbuf, 60 * CLOCK_FREQ);
 }
 
 Url AbstractPlaylist::getUrlSegment() const
@@ -137,17 +136,17 @@ BasePeriod* AbstractPlaylist::getNextPeriod(BasePeriod *period)
     return NULL;
 }
 
-bool AbstractPlaylist::needsUpdates() const
-{
-    return b_needsUpdates;
-}
-
-void AbstractPlaylist::updateWith(AbstractPlaylist *updatedAbstractPlaylist)
+void AbstractPlaylist::mergeWith(AbstractPlaylist *updatedAbstractPlaylist, mtime_t prunebarrier)
 {
     availabilityEndTime.Set(updatedAbstractPlaylist->availabilityEndTime.Get());
 
     for(size_t i = 0; i < periods.size() && i < updatedAbstractPlaylist->periods.size(); i++)
-        periods.at(i)->updateWith(updatedAbstractPlaylist->periods.at(i));
+        periods.at(i)->mergeWith(updatedAbstractPlaylist->periods.at(i), prunebarrier);
 }
 
+void AbstractPlaylist::pruneByPlaybackTime(mtime_t time)
+{
+    for(size_t i = 0; i < periods.size(); i++)
+        periods.at(i)->pruneByPlaybackTime(time);
+}
 

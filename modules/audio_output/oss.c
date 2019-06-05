@@ -51,7 +51,7 @@
 
 #define A52_FRAME_NB 1536
 
-typedef struct
+struct aout_sys_t
 {
     int fd;
     audio_sample_format_t format;
@@ -59,7 +59,7 @@ typedef struct
     bool soft_mute;
     float soft_gain;
     char *device;
-} aout_sys_t;
+};
 
 #include "volume.h"
 
@@ -69,11 +69,6 @@ static void Close (vlc_object_t *);
 #define AUDIO_DEV_TEXT N_("Audio output device")
 #define AUDIO_DEV_LONGTEXT N_("OSS device node path.")
 
-#define SPDIF_TEXT N_("Use S/PDIF when available")
-#define SPDIF_LONGTEXT N_( \
-    "S/PDIF can be used by default when " \
-    "your hardware supports it as well as the audio stream being played.")
-
 vlc_module_begin ()
     set_shortname( "OSS" )
     set_description (N_("Open Sound System audio output"))
@@ -81,16 +76,15 @@ vlc_module_begin ()
     set_subcategory( SUBCAT_AUDIO_AOUT )
     add_string ("oss-audio-device", "",
                 AUDIO_DEV_TEXT, AUDIO_DEV_LONGTEXT, false)
-    add_bool("oss-spdif", false, SPDIF_TEXT, SPDIF_LONGTEXT, true)
     add_sw_gain ()
     set_capability( "audio output", 100 )
     set_callbacks (Open, Close)
 vlc_module_end ()
 
-static int TimeGet (audio_output_t *, vlc_tick_t *);
-static void Play(audio_output_t *, block_t *, vlc_tick_t);
-static void Pause (audio_output_t *, bool, vlc_tick_t);
-static void Flush (audio_output_t *);
+static int TimeGet (audio_output_t *, mtime_t *);
+static void Play (audio_output_t *, block_t *);
+static void Pause (audio_output_t *, bool, mtime_t);
+static void Flush (audio_output_t *, bool);
 
 static int Start (audio_output_t *aout, audio_sample_format_t *restrict fmt)
 {
@@ -138,7 +132,7 @@ static int Start (audio_output_t *aout, audio_sample_format_t *restrict fmt)
             break;
         default:
             if (AOUT_FMT_SPDIF(fmt))
-                spdif = var_InheritBool(aout, "oss-spdif");
+                spdif = var_InheritBool (aout, "spdif");
             if (spdif)
                 format = AFMT_AC3;
 #ifdef AFMT_FLOAT
@@ -225,7 +219,7 @@ static int Start (audio_output_t *aout, audio_sample_format_t *restrict fmt)
     aout_FormatPrepare (fmt);
 
     /* Select timing */
-    uint32_t bytes;
+    unsigned bytes;
     if (spdif)
         bytes = AOUT_SPDIF_SIZE;
     else
@@ -235,7 +229,7 @@ static int Start (audio_output_t *aout, audio_sample_format_t *restrict fmt)
         bytes = 16;
 
     int frag = (AOUT_MAX_ADVANCE_TIME / AOUT_MIN_PREPARE_TIME) << 16
-             | (32 - clz(bytes - 1));
+             | (32 - clz32(bytes - 1));
     if (ioctl (fd, SNDCTL_DSP_SETFRAGMENT, &frag) < 0)
         msg_Err (aout, "cannot set 0x%08x fragment: %s", frag,
                  vlc_strerror_c(errno));
@@ -250,7 +244,7 @@ error:
     return VLC_EGENERIC;
 }
 
-static int TimeGet (audio_output_t *aout, vlc_tick_t *restrict pts)
+static int TimeGet (audio_output_t *aout, mtime_t *restrict pts)
 {
     aout_sys_t *sys = aout->sys;
     int delay;
@@ -261,15 +255,15 @@ static int TimeGet (audio_output_t *aout, vlc_tick_t *restrict pts)
         return -1;
     }
 
-    *pts = vlc_tick_from_samples(delay * sys->format.i_frame_length,
-                        sys->format.i_rate * sys->format.i_bytes_per_frame);
+    *pts = (delay * CLOCK_FREQ * sys->format.i_frame_length)
+                        / (sys->format.i_rate * sys->format.i_bytes_per_frame);
     return 0;
 }
 
 /**
  * Queues one audio buffer to the hardware.
  */
-static void Play(audio_output_t *aout, block_t *block, vlc_tick_t date)
+static void Play (audio_output_t *aout, block_t *block)
 {
     aout_sys_t *sys = aout->sys;
     int fd = sys->fd;
@@ -286,13 +280,12 @@ static void Play(audio_output_t *aout, block_t *block, vlc_tick_t date)
             msg_Err (aout, "cannot write samples: %s", vlc_strerror_c(errno));
     }
     block_Release (block);
-    (void) date;
 }
 
 /**
  * Pauses/resumes the audio playback.
  */
-static void Pause (audio_output_t *aout, bool pause, vlc_tick_t date)
+static void Pause (audio_output_t *aout, bool pause, mtime_t date)
 {
     aout_sys_t *sys = aout->sys;
     int fd = sys->fd;
@@ -302,13 +295,15 @@ static void Pause (audio_output_t *aout, bool pause, vlc_tick_t date)
 }
 
 /**
- * Flushes the audio playback buffer.
+ * Flushes/drains the audio playback buffer.
  */
-static void Flush (audio_output_t *aout)
+static void Flush (audio_output_t *aout, bool wait)
 {
     aout_sys_t *sys = aout->sys;
     int fd = sys->fd;
 
+    if (wait)
+        return; /* drain is implicit with OSS */
     ioctl (fd, SNDCTL_DSP_HALT, NULL);
 }
 

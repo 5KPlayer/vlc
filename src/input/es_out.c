@@ -1,7 +1,8 @@
 /*****************************************************************************
  * es_out.c: Es Out handler for input.
  *****************************************************************************
- * Copyright (C) 2003-2019 VLC authors, VideoLAN and Videolabs SAS
+ * Copyright (C) 2003-2004 VLC authors and VideoLAN
+ * $Id: 77eca7d9662f50dc9e6294e3a557d3b72a7a8498 $
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *          Jean-Paul Saman <jpsaman #_at_# m2x dot nl>
@@ -32,21 +33,18 @@
 #include <assert.h>
 #include <vlc_common.h>
 
+#include <vlc_input.h>
 #include <vlc_es_out.h>
 #include <vlc_block.h>
 #include <vlc_aout.h>
 #include <vlc_fourcc.h>
 #include <vlc_meta.h>
-#include <vlc_list.h>
-#include <vlc_decoder.h>
 
 #include "input_internal.h"
-#include "../clock/input_clock.h"
-#include "../clock/clock.h"
+#include "clock.h"
 #include "decoder.h"
 #include "es_out.h"
 #include "event.h"
-#include "resource.h"
 #include "info.h"
 #include "item.h"
 
@@ -71,53 +69,28 @@ typedef struct
     bool b_scrambled;
 
     /* Clock for this program */
-    input_clock_t    *p_input_clock;
-    vlc_clock_main_t *p_main_clock;
-    vlc_clock_t      *p_master_clock;
+    input_clock_t *p_clock;
 
     vlc_meta_t *p_meta;
-    struct vlc_list node;
 } es_out_pgrm_t;
-
-
-/**
- * Opaque structure representing an ES (Elementary Stream) track.
- *
- * This structure is propagated via the vlc_input_event_es event
- */
-struct vlc_es_id_t
-{
-    int i_id;
-    enum es_format_category_e i_cat;
-};
 
 struct es_out_id_t
 {
-    vlc_es_id_t id;
-
     /* ES ID */
+    int       i_id;
     es_out_pgrm_t *p_pgrm;
 
     /* */
     bool b_scrambled;
-    bool b_forced; /* if true, bypass variables when selecting this track */
 
     /* Channel in the track type */
     int         i_channel;
-
-    vlc_atomic_rc_t rc;
-
-    size_t      i_pos; /* position, used to get the title of the track */
-    es_format_t fmt; /* input fmt from the demuxer */
-    es_format_t fmt_out; /* updated fmt (by the decoder) */
+    es_format_t fmt;
     char        *psz_language;
     char        *psz_language_code;
-    char        *psz_title;
-    bool        b_terminated;
 
     decoder_t   *p_dec;
     decoder_t   *p_dec_record;
-    vlc_clock_t *p_clock;
 
     /* Fields for Video with CC */
     struct
@@ -132,11 +105,6 @@ struct es_out_id_t
 
     /* ID for the meta data */
     int         i_meta_id;
-
-    struct vlc_list node;
-
-    vlc_mouse_event mouse_event_cb;
-    void* mouse_event_userdata;
 };
 
 typedef struct
@@ -153,7 +121,7 @@ typedef struct
     char        **ppsz_language;
 } es_out_es_props_t;
 
-typedef struct
+struct es_out_sys_t
 {
     input_thread_t *p_input;
 
@@ -161,15 +129,14 @@ typedef struct
     vlc_mutex_t   lock;
 
     /* all programs */
-    struct vlc_list programs;
+    int           i_pgrm;
+    es_out_pgrm_t **pgrm;
     es_out_pgrm_t *p_pgrm;  /* Master program */
-
-    enum es_format_category_e i_master_source_cat;
 
     /* all es */
     int         i_id;
-    struct vlc_list es;
-    struct vlc_list es_slaves; /* Dynamically created es on regular es selection */
+    int         i_es;
+    es_out_id_t **es;
 
     /* mode gestion */
     bool  b_active;
@@ -181,57 +148,57 @@ typedef struct
     int         i_group_id;
 
     /* delay */
-    vlc_tick_t i_audio_delay;
-    vlc_tick_t i_spu_delay;
+    int64_t i_audio_delay;
+    int64_t i_spu_delay;
 
     /* Clock configuration */
-    vlc_tick_t  i_pts_delay;
-    vlc_tick_t  i_pts_jitter;
+    mtime_t     i_pts_delay;
+    mtime_t     i_pts_jitter;
     int         i_cr_average;
-    float       rate;
+    int         i_rate;
 
     /* */
     bool        b_paused;
-    vlc_tick_t  i_pause_date;
+    mtime_t     i_pause_date;
 
     /* Current preroll */
-    vlc_tick_t  i_preroll_end;
+    mtime_t     i_preroll_end;
 
     /* Used for buffering */
     bool        b_buffering;
-    vlc_tick_t  i_buffering_extra_initial;
-    vlc_tick_t  i_buffering_extra_stream;
-    vlc_tick_t  i_buffering_extra_system;
+    mtime_t     i_buffering_extra_initial;
+    mtime_t     i_buffering_extra_stream;
+    mtime_t     i_buffering_extra_system;
 
     /* Record */
     sout_instance_t *p_sout_record;
 
     /* Used only to limit debugging output */
     int         i_prev_stream_level;
+};
 
-    es_out_t out;
-} es_out_sys_t;
-
-static void         EsOutDelLocked( es_out_t *, es_out_id_t * );
+static es_out_id_t *EsOutAdd    ( es_out_t *, const es_format_t * );
+static int          EsOutSend   ( es_out_t *, es_out_id_t *, block_t * );
 static void         EsOutDel    ( es_out_t *, es_out_id_t * );
+static int          EsOutControl( es_out_t *, int i_query, va_list );
+static void         EsOutDelete ( es_out_t * );
 
 static void         EsOutTerminate( es_out_t * );
 static void         EsOutSelect( es_out_t *, es_out_id_t *es, bool b_force );
-static void         EsOutUpdateInfo( es_out_t *, es_out_id_t *es, const vlc_meta_t * );
+static void         EsOutUpdateInfo( es_out_t *, es_out_id_t *es, const es_format_t *, const vlc_meta_t * );
 static int          EsOutSetRecord(  es_out_t *, bool b_record );
 
 static bool EsIsSelected( es_out_id_t *es );
-static void EsOutSelectEs( es_out_t *out, es_out_id_t *es );
-static void EsOutDeleteInfoEs( es_out_t *, es_out_id_t *es );
-static void EsOutUnselectEs( es_out_t *out, es_out_id_t *es, bool b_update );
+static void EsSelect( es_out_t *out, es_out_id_t *es );
+static void EsDeleteInfo( es_out_t *, es_out_id_t *es );
+static void EsUnselect( es_out_t *out, es_out_id_t *es, bool b_update );
 static void EsOutDecoderChangeDelay( es_out_t *out, es_out_id_t *p_es );
-static void EsOutDecodersChangePause( es_out_t *out, bool b_paused, vlc_tick_t i_date );
-static void EsOutProgramChangePause( es_out_t *out, bool b_paused, vlc_tick_t i_date );
+static void EsOutDecodersChangePause( es_out_t *out, bool b_paused, mtime_t i_date );
+static void EsOutProgramChangePause( es_out_t *out, bool b_paused, mtime_t i_date );
 static void EsOutProgramsChangeRate( es_out_t *out );
 static void EsOutDecodersStopBuffering( es_out_t *out, bool b_forced );
 static void EsOutGlobalMeta( es_out_t *p_out, const vlc_meta_t *p_meta );
 static void EsOutMeta( es_out_t *p_out, const vlc_meta_t *p_meta, const vlc_meta_t *p_progmeta );
-static int EsOutEsUpdateFmt(es_out_t *out, es_out_id_t *es, const es_format_t *fmt);
 
 static char *LanguageGetName( const char *psz_code );
 static char *LanguageGetCode( const char *psz_lang );
@@ -252,11 +219,10 @@ static inline int EsOutGetClosedCaptionsChannel( const es_format_t *p_fmt )
         i_channel = -1;
     return i_channel;
 }
-
-#define foreach_es_then_es_slaves( pos ) \
-    for( int fetes_i=0; fetes_i<2; fetes_i++ ) \
-        vlc_list_foreach( pos, (!fetes_i ? &p_sys->es : &p_sys->es_slaves), node )
-
+static inline bool EsFmtIsTeletext( const es_format_t *p_fmt )
+{
+    return p_fmt->i_cat == SPU_ES && p_fmt->i_codec == VLC_CODEC_TELETEXT;
+}
 
 /*****************************************************************************
  * Es category specific structs
@@ -316,32 +282,42 @@ static void EsOutPropsInit( es_out_es_props_t *p_props,
     }
 }
 
-static const struct es_out_callbacks es_out_cbs;
-
 /*****************************************************************************
  * input_EsOutNew:
  *****************************************************************************/
-es_out_t *input_EsOutNew( input_thread_t *p_input, float rate )
+es_out_t *input_EsOutNew( input_thread_t *p_input, int i_rate )
 {
-    es_out_sys_t *p_sys = calloc( 1, sizeof( *p_sys ) );
-    if( !p_sys )
+    es_out_t     *out = malloc( sizeof( *out ) );
+    if( !out )
         return NULL;
 
-    p_sys->out.cbs = &es_out_cbs;
+    es_out_sys_t *p_sys = calloc( 1, sizeof( *p_sys ) );
+    if( !p_sys )
+    {
+        free( out );
+        return NULL;
+    }
 
-    vlc_mutex_init( &p_sys->lock );
+    out->pf_add     = EsOutAdd;
+    out->pf_send    = EsOutSend;
+    out->pf_del     = EsOutDel;
+    out->pf_control = EsOutControl;
+    out->pf_destroy = EsOutDelete;
+    out->p_sys      = p_sys;
+
+    vlc_mutex_init_recursive( &p_sys->lock );
     p_sys->p_input = p_input;
 
     p_sys->b_active = false;
     p_sys->i_mode   = ES_OUT_MODE_NONE;
 
-    vlc_list_init(&p_sys->programs);
-    vlc_list_init(&p_sys->es);
-    vlc_list_init(&p_sys->es_slaves);
+    TAB_INIT( p_sys->i_pgrm, p_sys->pgrm );
+
+    TAB_INIT( p_sys->i_es, p_sys->es );
 
     /* */
     EsOutPropsInit( &p_sys->video, true, p_input, ES_OUT_ES_POLICY_SIMULTANEOUS,
-                    "video-track-id", "video-track", NULL, NULL );
+                    NULL, NULL, NULL, NULL );
     EsOutPropsInit( &p_sys->audio, true, p_input, ES_OUT_ES_POLICY_EXCLUSIVE,
                     "audio-track-id", "audio-track", "audio-language", "audio" );
     EsOutPropsInit( &p_sys->sub,  false, p_input, ES_OUT_ES_POLICY_EXCLUSIVE,
@@ -349,138 +325,65 @@ es_out_t *input_EsOutNew( input_thread_t *p_input, float rate )
 
     p_sys->i_group_id = var_GetInteger( p_input, "program" );
 
-    enum vlc_clock_master_source master_source =
-        var_InheritInteger( p_input, "clock-master" );
-    switch( master_source )
-    {
-        case VLC_CLOCK_MASTER_AUDIO:
-            p_sys->i_master_source_cat = AUDIO_ES;
-            break;
-        case VLC_CLOCK_MASTER_MONOTONIC:
-        default:
-            p_sys->i_master_source_cat = UNKNOWN_ES;
-            break;
-    }
-
     p_sys->i_pause_date = -1;
 
-    p_sys->rate = rate;
+    p_sys->i_rate = i_rate;
 
     p_sys->b_buffering = true;
     p_sys->i_preroll_end = -1;
     p_sys->i_prev_stream_level = -1;
 
-    return &p_sys->out;
+    return out;
 }
 
 /*****************************************************************************
  *
  *****************************************************************************/
-static void EsTerminate(es_out_id_t *es)
-{
-    vlc_list_remove(&es->node);
-
-    es->b_terminated = true;
-}
-
-static char *EsGetTitle( es_out_id_t *es )
-{
-    const es_format_t *fmt = &es->fmt;
-    char *title;
-
-    /* Take care of the ES description */
-    if( fmt->psz_description && *fmt->psz_description )
-    {
-        if( es->psz_language && *es->psz_language )
-        {
-            if( asprintf( &title, "%s - [%s]", fmt->psz_description,
-                          es->psz_language ) == -1 )
-                title = NULL;
-        }
-        else
-            title = strdup( fmt->psz_description );
-    }
-    else
-    {
-        if( es->psz_language && *es->psz_language )
-        {
-            if( asprintf( &title, "%s %zu - [%s]", _("Track"),
-                          es->i_pos, es->psz_language ) == -1 )
-                title = NULL;
-        }
-        else
-        {
-            if( asprintf( &title, "%s %zu", _("Track"), es->i_pos ) == -1 )
-                title = NULL;
-        }
-    }
-
-    return title;
-}
-
-static void EsRelease(es_out_id_t *es)
-{
-    if (vlc_atomic_rc_dec(&es->rc))
-    {
-        free(es->psz_title);
-        free(es->psz_language);
-        free(es->psz_language_code);
-        es_format_Clean(&es->fmt);
-        free(es);
-    }
-}
-
-static void EsHold(es_out_id_t *es)
-{
-    vlc_atomic_rc_inc(&es->rc);
-}
-
 static void EsOutDelete( es_out_t *out )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
+    es_out_sys_t *p_sys = out->p_sys;
 
-    assert(vlc_list_is_empty(&p_sys->es));
-    assert(vlc_list_is_empty(&p_sys->es_slaves));
-    assert(vlc_list_is_empty(&p_sys->programs));
-    assert(p_sys->p_pgrm == NULL);
+    assert( !p_sys->i_es && !p_sys->i_pgrm && !p_sys->p_pgrm );
     EsOutPropsCleanup( &p_sys->audio );
     EsOutPropsCleanup( &p_sys->sub );
 
     vlc_mutex_destroy( &p_sys->lock );
 
     free( p_sys );
+    free( out );
 }
 
 static void EsOutTerminate( es_out_t *out )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
-    es_out_id_t *es;
+    es_out_sys_t *p_sys = out->p_sys;
 
     if( p_sys->p_sout_record )
         EsOutSetRecord( out, false );
 
-    foreach_es_then_es_slaves(es)
+    for( int i = 0; i < p_sys->i_es; i++ )
     {
-        if (es->p_dec != NULL)
-            input_DecoderDelete(es->p_dec);
+        if( p_sys->es[i]->p_dec )
+            input_DecoderDelete( p_sys->es[i]->p_dec );
 
-        EsTerminate(es);
-        EsRelease(es);
+        free( p_sys->es[i]->psz_language );
+        free( p_sys->es[i]->psz_language_code );
+        es_format_Clean( &p_sys->es[i]->fmt );
+
+        free( p_sys->es[i] );
     }
+    TAB_CLEAN( p_sys->i_es, p_sys->es );
 
     /* FIXME duplicate work EsOutProgramDel (but we cannot use it) add a EsOutProgramClean ? */
-    es_out_pgrm_t *p_pgrm;
-    vlc_list_foreach(p_pgrm, &p_sys->programs, node)
+    for( int i = 0; i < p_sys->i_pgrm; i++ )
     {
-        input_clock_Delete( p_pgrm->p_input_clock );
-        vlc_clock_main_Delete( p_pgrm->p_main_clock );
+        es_out_pgrm_t *p_pgrm = p_sys->pgrm[i];
+        input_clock_Delete( p_pgrm->p_clock );
         if( p_pgrm->p_meta )
             vlc_meta_Delete( p_pgrm->p_meta );
 
-        vlc_list_remove(&p_pgrm->node);
-        input_SendEventProgramDel( p_sys->p_input, p_pgrm->i_id );
         free( p_pgrm );
     }
+    TAB_CLEAN( p_sys->i_pgrm, p_sys->pgrm );
 
     p_sys->p_pgrm = NULL;
 
@@ -488,9 +391,9 @@ static void EsOutTerminate( es_out_t *out )
     input_SendEventMetaEpg( p_sys->p_input );
 }
 
-static vlc_tick_t EsOutGetWakeup( es_out_t *out )
+static mtime_t EsOutGetWakeup( es_out_t *out )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
+    es_out_sys_t   *p_sys = out->p_sys;
     input_thread_t *p_input = p_sys->p_input;
 
     if( !p_sys->p_pgrm )
@@ -506,44 +409,30 @@ static vlc_tick_t EsOutGetWakeup( es_out_t *out )
         p_sys->b_buffering )
         return 0;
 
-    return input_clock_GetWakeup( p_sys->p_pgrm->p_input_clock );
+    return input_clock_GetWakeup( p_sys->p_pgrm->p_clock );
 }
 
 static es_out_id_t es_cat[DATA_ES];
 
 static es_out_id_t *EsOutGetFromID( es_out_t *out, int i_id )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
-    es_out_id_t *es;
-
     if( i_id < 0 )
     {
         /* Special HACK, -i_id is the cat of the stream */
         return es_cat - i_id;
     }
 
-    foreach_es_then_es_slaves(es)
-        if (es->fmt.i_id == i_id)
-            return es;
-    return NULL;
-}
-
-static es_out_id_t *EsOutGetSelectedCat( es_out_t *out,
-                                         enum es_format_category_e cat )
-{
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
-    es_out_id_t *es;
-
-    foreach_es_then_es_slaves( es )
-        if( es->fmt.i_cat == cat && EsIsSelected( es ) )
-            return es;
+    for( int i = 0; i < out->p_sys->i_es; i++ )
+    {
+        if( out->p_sys->es[i]->i_id == i_id )
+            return out->p_sys->es[i];
+    }
     return NULL;
 }
 
 static bool EsOutDecodersIsEmpty( es_out_t *out )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
-    es_out_id_t *es;
+    es_out_sys_t      *p_sys = out->p_sys;
 
     if( p_sys->b_buffering && p_sys->p_pgrm )
     {
@@ -552,8 +441,10 @@ static bool EsOutDecodersIsEmpty( es_out_t *out )
             return true;
     }
 
-    foreach_es_then_es_slaves(es)
+    for( int i = 0; i < p_sys->i_es; i++ )
     {
+        es_out_id_t *es = p_sys->es[i];
+
         if( es->p_dec && !input_DecoderIsEmpty( es->p_dec ) )
             return false;
         if( es->p_dec_record && !input_DecoderIsEmpty( es->p_dec_record ) )
@@ -562,25 +453,23 @@ static bool EsOutDecodersIsEmpty( es_out_t *out )
     return true;
 }
 
-static void EsOutSetDelay( es_out_t *out, int i_cat, vlc_tick_t i_delay )
+static void EsOutSetDelay( es_out_t *out, int i_cat, int64_t i_delay )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
-    es_out_id_t *es;
+    es_out_sys_t *p_sys = out->p_sys;
 
     if( i_cat == AUDIO_ES )
         p_sys->i_audio_delay = i_delay;
     else if( i_cat == SPU_ES )
         p_sys->i_spu_delay = i_delay;
 
-    foreach_es_then_es_slaves(es)
-        EsOutDecoderChangeDelay(out, es);
+    for( int i = 0; i < p_sys->i_es; i++ )
+        EsOutDecoderChangeDelay( out, p_sys->es[i] );
 }
 
 static int EsOutSetRecord(  es_out_t *out, bool b_record )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
+    es_out_sys_t   *p_sys = out->p_sys;
     input_thread_t *p_input = p_sys->p_input;
-    es_out_id_t *p_es;
 
     assert( ( b_record && !p_sys->p_sout_record ) || ( !b_record && p_sys->p_sout_record ) );
 
@@ -601,8 +490,7 @@ static int EsOutSetRecord(  es_out_t *out, bool b_record )
 
         if( !psz_sout && psz_path )
         {
-            char *psz_file = input_CreateFilename( p_input, NULL, psz_path,
-                                                   INPUT_RECORD_PREFIX, NULL );
+            char *psz_file = input_CreateFilename( p_input, psz_path, INPUT_RECORD_PREFIX, NULL );
             if( psz_file )
             {
                 char* psz_file_esc = config_StringEscape( psz_file );
@@ -628,21 +516,24 @@ static int EsOutSetRecord(  es_out_t *out, bool b_record )
         if( !p_sys->p_sout_record )
             return VLC_EGENERIC;
 
-        vlc_list_foreach( p_es, &p_sys->es, node ) /* Only master es */
+        for( int i = 0; i < p_sys->i_es; i++ )
         {
-            if( !p_es->p_dec )
+            es_out_id_t *p_es = p_sys->es[i];
+
+            if( !p_es->p_dec || p_es->p_master )
                 continue;
 
-            p_es->p_dec_record = input_DecoderNew( p_input, &p_es->id, &p_es->fmt,
-                                                   NULL, p_sys->p_sout_record );
+            p_es->p_dec_record = input_DecoderNew( p_input, &p_es->fmt, p_es->p_pgrm->p_clock, p_sys->p_sout_record );
             if( p_es->p_dec_record && p_sys->b_buffering )
                 input_DecoderStartWait( p_es->p_dec_record );
         }
     }
     else
     {
-        vlc_list_foreach( p_es, &p_sys->es, node ) /* Only master es */
+        for( int i = 0; i < p_sys->i_es; i++ )
         {
+            es_out_id_t *p_es = p_sys->es[i];
+
             if( !p_es->p_dec_record )
                 continue;
 
@@ -657,9 +548,9 @@ static int EsOutSetRecord(  es_out_t *out, bool b_record )
 
     return VLC_SUCCESS;
 }
-static void EsOutChangePause( es_out_t *out, bool b_paused, vlc_tick_t i_date )
+static void EsOutChangePause( es_out_t *out, bool b_paused, mtime_t i_date )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
+    es_out_sys_t *p_sys = out->p_sys;
 
     /* XXX the order is important */
     if( b_paused )
@@ -671,18 +562,18 @@ static void EsOutChangePause( es_out_t *out, bool b_paused, vlc_tick_t i_date )
     {
         if( p_sys->i_buffering_extra_initial > 0 )
         {
-            vlc_tick_t i_stream_start;
-            vlc_tick_t i_system_start;
-            vlc_tick_t i_stream_duration;
-            vlc_tick_t i_system_duration;
+            mtime_t i_stream_start;
+            mtime_t i_system_start;
+            mtime_t i_stream_duration;
+            mtime_t i_system_duration;
             int i_ret;
-            i_ret = input_clock_GetState( p_sys->p_pgrm->p_input_clock,
+            i_ret = input_clock_GetState( p_sys->p_pgrm->p_clock,
                                           &i_stream_start, &i_system_start,
                                           &i_stream_duration, &i_system_duration );
             if( !i_ret )
             {
                 /* FIXME pcr != exactly what wanted */
-                const vlc_tick_t i_used = /*(i_stream_duration - input_priv(p_sys->p_input)->i_pts_delay)*/ p_sys->i_buffering_extra_system - p_sys->i_buffering_extra_initial;
+                const mtime_t i_used = /*(i_stream_duration - input_priv(p_sys->p_input)->i_pts_delay)*/ p_sys->i_buffering_extra_system - p_sys->i_buffering_extra_initial;
                 i_date -= i_used;
             }
             p_sys->i_buffering_extra_initial = 0;
@@ -698,31 +589,27 @@ static void EsOutChangePause( es_out_t *out, bool b_paused, vlc_tick_t i_date )
     p_sys->i_pause_date = i_date;
 }
 
-static void EsOutChangeRate( es_out_t *out, float rate )
+static void EsOutChangeRate( es_out_t *out, int i_rate )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
-    es_out_id_t *es;
+    es_out_sys_t      *p_sys = out->p_sys;
 
-    p_sys->rate = rate;
+    p_sys->i_rate = i_rate;
     EsOutProgramsChangeRate( out );
-
-    foreach_es_then_es_slaves(es)
-        if( es->p_dec != NULL )
-            input_DecoderChangeRate( es->p_dec, rate );
 }
 
-static void EsOutChangePosition( es_out_t *out, bool b_flush )
+static void EsOutChangePosition( es_out_t *out )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
-    es_out_id_t *p_es;
+    es_out_sys_t      *p_sys = out->p_sys;
 
     input_SendEventCache( p_sys->p_input, 0.0 );
 
-    foreach_es_then_es_slaves(p_es)
+    for( int i = 0; i < p_sys->i_es; i++ )
+    {
+        es_out_id_t *p_es = p_sys->es[i];
+
         if( p_es->p_dec != NULL )
         {
-            if( b_flush )
-                input_DecoderFlush( p_es->p_dec );
+            input_DecoderFlush( p_es->p_dec );
             if( !p_sys->b_buffering )
             {
                 input_DecoderStartWait( p_es->p_dec );
@@ -730,13 +617,10 @@ static void EsOutChangePosition( es_out_t *out, bool b_flush )
                     input_DecoderStartWait( p_es->p_dec_record );
             }
         }
-
-    es_out_pgrm_t *pgrm;
-    vlc_list_foreach(pgrm, &p_sys->programs, node)
-    {
-        input_clock_Reset(pgrm->p_input_clock);
-        vlc_clock_main_Reset(pgrm->p_main_clock);
     }
+
+    for( int i = 0; i < p_sys->i_pgrm; i++ )
+        input_clock_Reset( p_sys->pgrm[i]->p_clock );
 
     p_sys->b_buffering = true;
     p_sys->i_buffering_extra_initial = 0;
@@ -746,34 +630,26 @@ static void EsOutChangePosition( es_out_t *out, bool b_flush )
     p_sys->i_prev_stream_level = -1;
 }
 
-static void EsOutStopFreeVout( es_out_t *out )
-{
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
 
-    /* Clean up vout after user action (in active mode only). */
-    if( p_sys->b_active )
-        input_resource_StopFreeVout( input_priv(p_sys->p_input)->p_resource );
-}
 
 static void EsOutDecodersStopBuffering( es_out_t *out, bool b_forced )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
-    es_out_id_t *p_es;
+    es_out_sys_t *p_sys = out->p_sys;
 
-    vlc_tick_t i_stream_start;
-    vlc_tick_t i_system_start;
-    vlc_tick_t i_stream_duration;
-    vlc_tick_t i_system_duration;
-    if (input_clock_GetState( p_sys->p_pgrm->p_input_clock,
+    mtime_t i_stream_start;
+    mtime_t i_system_start;
+    mtime_t i_stream_duration;
+    mtime_t i_system_duration;
+    if (input_clock_GetState( p_sys->p_pgrm->p_clock,
                                   &i_stream_start, &i_system_start,
                                   &i_stream_duration, &i_system_duration ))
         return;
 
-    vlc_tick_t i_preroll_duration = 0;
+    mtime_t i_preroll_duration = 0;
     if( p_sys->i_preroll_end >= 0 )
         i_preroll_duration = __MAX( p_sys->i_preroll_end - i_stream_start, 0 );
 
-    const vlc_tick_t i_buffering_duration = p_sys->i_pts_delay +
+    const mtime_t i_buffering_duration = p_sys->i_pts_delay +
                                          i_preroll_duration +
                                          p_sys->i_buffering_extra_stream - p_sys->i_buffering_extra_initial;
 
@@ -798,7 +674,7 @@ static void EsOutDecodersStopBuffering( es_out_t *out, bool b_forced )
     input_SendEventCache( p_sys->p_input, 1.0 );
 
     msg_Dbg( p_sys->p_input, "Stream buffering done (%d ms in %d ms)",
-              (int)MS_FROM_VLC_TICK(i_stream_duration), (int)MS_FROM_VLC_TICK(i_system_duration) );
+              (int)(i_stream_duration/1000), (int)(i_system_duration/1000) );
     p_sys->b_buffering = false;
     p_sys->i_preroll_end = -1;
     p_sys->i_prev_stream_level = -1;
@@ -809,9 +685,11 @@ static void EsOutDecodersStopBuffering( es_out_t *out, bool b_forced )
         return;
     }
 
-    const vlc_tick_t i_decoder_buffering_start = vlc_tick_now();
-    foreach_es_then_es_slaves(p_es)
+    const mtime_t i_decoder_buffering_start = mdate();
+    for( int i = 0; i < p_sys->i_es; i++ )
     {
+        es_out_id_t *p_es = p_sys->es[i];
+
         if( !p_es->p_dec || p_es->fmt.i_cat == SPU_ES )
             continue;
         input_DecoderWait( p_es->p_dec );
@@ -820,26 +698,22 @@ static void EsOutDecodersStopBuffering( es_out_t *out, bool b_forced )
     }
 
     msg_Dbg( p_sys->p_input, "Decoder wait done in %d ms",
-              (int)MS_FROM_VLC_TICK(vlc_tick_now() - i_decoder_buffering_start) );
+              (int)(mdate() - i_decoder_buffering_start)/1000 );
 
     /* Here is a good place to destroy unused vout with every demuxer */
-    EsOutStopFreeVout( out );
+    input_resource_TerminateVout( input_priv(p_sys->p_input)->p_resource );
 
     /* */
-    const vlc_tick_t i_wakeup_delay = VLC_TICK_FROM_MS(10); /* FIXME CLEANUP thread wake up time*/
-    const vlc_tick_t i_current_date = p_sys->b_paused ? p_sys->i_pause_date : vlc_tick_now();
+    const mtime_t i_wakeup_delay = 10*1000; /* FIXME CLEANUP thread wake up time*/
+    const mtime_t i_current_date = p_sys->b_paused ? p_sys->i_pause_date : mdate();
 
-    const vlc_tick_t update = i_current_date + i_wakeup_delay - i_buffering_duration;
+    input_clock_ChangeSystemOrigin( p_sys->p_pgrm->p_clock, true,
+                                    i_current_date + i_wakeup_delay - i_buffering_duration );
 
-    /* Send the first PCR to the output clock. This will be used as a reference
-     * point for the sync point. */
-    vlc_clock_main_SetFirstPcr(p_sys->p_pgrm->p_main_clock, update,
-                               i_stream_start);
-
-    input_clock_ChangeSystemOrigin( p_sys->p_pgrm->p_input_clock, true, update );
-
-    foreach_es_then_es_slaves(p_es)
+    for( int i = 0; i < p_sys->i_es; i++ )
     {
+        es_out_id_t *p_es = p_sys->es[i];
+
         if( !p_es->p_dec )
             continue;
 
@@ -848,29 +722,33 @@ static void EsOutDecodersStopBuffering( es_out_t *out, bool b_forced )
             input_DecoderStopWait( p_es->p_dec_record );
     }
 }
-static void EsOutDecodersChangePause( es_out_t *out, bool b_paused, vlc_tick_t i_date )
+static void EsOutDecodersChangePause( es_out_t *out, bool b_paused, mtime_t i_date )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
-    es_out_id_t *es;
+    es_out_sys_t *p_sys = out->p_sys;
 
     /* Pause decoders first */
-    foreach_es_then_es_slaves(es)
+    for( int i = 0; i < p_sys->i_es; i++ )
+    {
+        es_out_id_t *es = p_sys->es[i];
+
         if( es->p_dec )
         {
             input_DecoderChangePause( es->p_dec, b_paused, i_date );
             if( es->p_dec_record )
                 input_DecoderChangePause( es->p_dec_record, b_paused, i_date );
         }
+    }
 }
 
 static bool EsOutIsExtraBufferingAllowed( es_out_t *out )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
-    es_out_id_t *p_es;
+    es_out_sys_t *p_sys = out->p_sys;
 
     size_t i_size = 0;
-    foreach_es_then_es_slaves(p_es)
+    for( int i = 0; i < p_sys->i_es; i++ )
     {
+        es_out_id_t *p_es = p_sys->es[i];
+
         if( p_es->p_dec )
             i_size += input_DecoderGetFifoSize( p_es->p_dec );
         if( p_es->p_dec_record )
@@ -887,23 +765,19 @@ static bool EsOutIsExtraBufferingAllowed( es_out_t *out )
     return i_size < i_level_high;
 }
 
-static void EsOutProgramChangePause( es_out_t *out, bool b_paused, vlc_tick_t i_date )
+static void EsOutProgramChangePause( es_out_t *out, bool b_paused, mtime_t i_date )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
-    es_out_pgrm_t *pgrm;
+    es_out_sys_t *p_sys = out->p_sys;
 
-    vlc_list_foreach(pgrm, &p_sys->programs, node)
-    {
-        input_clock_ChangePause(pgrm->p_input_clock, b_paused, i_date);
-        vlc_clock_main_ChangePause(pgrm->p_main_clock, i_date, b_paused);
-    }
+    for( int i = 0; i < p_sys->i_pgrm; i++ )
+        input_clock_ChangePause( p_sys->pgrm[i]->p_clock, b_paused, i_date );
 }
 
 static void EsOutDecoderChangeDelay( es_out_t *out, es_out_id_t *p_es )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
+    es_out_sys_t *p_sys = out->p_sys;
 
-    vlc_tick_t i_delay;
+    mtime_t i_delay = 0;
     if( p_es->fmt.i_cat == AUDIO_ES )
         i_delay = p_sys->i_audio_delay;
     else if( p_es->fmt.i_cat == SPU_ES )
@@ -918,17 +792,16 @@ static void EsOutDecoderChangeDelay( es_out_t *out, es_out_id_t *p_es )
 }
 static void EsOutProgramsChangeRate( es_out_t *out )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
-    es_out_pgrm_t *pgrm;
+    es_out_sys_t      *p_sys = out->p_sys;
 
-    vlc_list_foreach(pgrm, &p_sys->programs, node)
-        input_clock_ChangeRate(pgrm->p_input_clock, p_sys->rate);
+    for( int i = 0; i < p_sys->i_pgrm; i++ )
+        input_clock_ChangeRate( p_sys->pgrm[i]->p_clock, p_sys->i_rate );
 }
 
 static void EsOutFrameNext( es_out_t *out )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
-    es_out_id_t *p_es_video = NULL, *p_es;
+    es_out_sys_t *p_sys = out->p_sys;
+    es_out_id_t *p_es_video = NULL;
 
     if( p_sys->b_buffering )
     {
@@ -938,12 +811,16 @@ static void EsOutFrameNext( es_out_t *out )
 
     assert( p_sys->b_paused );
 
-    foreach_es_then_es_slaves(p_es)
-        if( p_es->fmt.i_cat == VIDEO_ES && p_es->p_dec && !p_es_video /* nested loop */ )
+    for( int i = 0; i < p_sys->i_es; i++ )
+    {
+        es_out_id_t *p_es = p_sys->es[i];
+
+        if( p_es->fmt.i_cat == VIDEO_ES && p_es->p_dec )
         {
             p_es_video = p_es;
             break;
         }
+    }
 
     if( !p_es_video )
     {
@@ -951,24 +828,24 @@ static void EsOutFrameNext( es_out_t *out )
         return;
     }
 
-    vlc_tick_t i_duration;
+    mtime_t i_duration;
     input_DecoderFrameNext( p_es_video->p_dec, &i_duration );
 
-    msg_Dbg( p_sys->p_input, "EsOutFrameNext consummed %d ms", (int)MS_FROM_VLC_TICK(i_duration) );
+    msg_Dbg( out->p_sys->p_input, "EsOutFrameNext consummed %d ms", (int)(i_duration/1000) );
 
     if( i_duration <= 0 )
-        i_duration = VLC_TICK_FROM_MS(40);
+        i_duration = 40*1000;
 
     /* FIXME it is not a clean way ? */
     if( p_sys->i_buffering_extra_initial <= 0 )
     {
-        vlc_tick_t i_stream_start;
-        vlc_tick_t i_system_start;
-        vlc_tick_t i_stream_duration;
-        vlc_tick_t i_system_duration;
+        mtime_t i_stream_start;
+        mtime_t i_system_start;
+        mtime_t i_stream_duration;
+        mtime_t i_system_duration;
         int i_ret;
 
-        i_ret = input_clock_GetState( p_sys->p_pgrm->p_input_clock,
+        i_ret = input_clock_GetState( p_sys->p_pgrm->p_clock,
                                       &i_stream_start, &i_system_start,
                                       &i_stream_duration, &i_system_duration );
         if( i_ret )
@@ -979,34 +856,35 @@ static void EsOutFrameNext( es_out_t *out )
         p_sys->i_buffering_extra_stream = p_sys->i_buffering_extra_initial;
     }
 
-    const float rate = input_clock_GetRate( p_sys->p_pgrm->p_input_clock );
+    const int i_rate = input_clock_GetRate( p_sys->p_pgrm->p_clock );
 
     p_sys->b_buffering = true;
     p_sys->i_buffering_extra_system += i_duration;
     p_sys->i_buffering_extra_stream = p_sys->i_buffering_extra_initial +
-        ( p_sys->i_buffering_extra_system - p_sys->i_buffering_extra_initial ) * rate;
+                                      ( p_sys->i_buffering_extra_system - p_sys->i_buffering_extra_initial ) *
+                                                INPUT_RATE_DEFAULT / i_rate;
 
     p_sys->i_preroll_end = -1;
     p_sys->i_prev_stream_level = -1;
 }
-static vlc_tick_t EsOutGetBuffering( es_out_t *out )
+static mtime_t EsOutGetBuffering( es_out_t *out )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
-    vlc_tick_t i_stream_duration, i_system_start;
+    es_out_sys_t *p_sys = out->p_sys;
+    mtime_t i_stream_duration, i_system_start;
 
     if( !p_sys->p_pgrm )
         return 0;
     else
     {
-        vlc_tick_t i_stream_start, i_system_duration;
+        mtime_t i_stream_start, i_system_duration;
 
-        if( input_clock_GetState( p_sys->p_pgrm->p_input_clock,
+        if( input_clock_GetState( p_sys->p_pgrm->p_clock,
                                   &i_stream_start, &i_system_start,
                                   &i_stream_duration, &i_system_duration ) )
             return 0;
     }
 
-    vlc_tick_t i_delay;
+    mtime_t i_delay;
 
     if( p_sys->b_buffering && p_sys->i_buffering_extra_initial <= 0 )
     {
@@ -1014,7 +892,7 @@ static vlc_tick_t EsOutGetBuffering( es_out_t *out )
     }
     else
     {
-        vlc_tick_t i_system_duration;
+        mtime_t i_system_duration;
 
         if( p_sys->b_paused )
         {
@@ -1024,10 +902,10 @@ static vlc_tick_t EsOutGetBuffering( es_out_t *out )
         }
         else
         {
-            i_system_duration = vlc_tick_now() - i_system_start;
+            i_system_duration = mdate() - i_system_start;
         }
 
-        const vlc_tick_t i_consumed = i_system_duration * p_sys->rate - i_stream_duration;
+        const mtime_t i_consumed = i_system_duration * INPUT_RATE_DEFAULT / p_sys->i_rate - i_stream_duration;
         i_delay = p_sys->i_pts_delay - i_consumed;
     }
     if( i_delay < 0 )
@@ -1035,30 +913,91 @@ static vlc_tick_t EsOutGetBuffering( es_out_t *out )
     return i_delay;
 }
 
-static void EsOutSendEsEvent(es_out_t *out, es_out_id_t *es, int action)
+static void EsOutESVarUpdateGeneric( es_out_t *out, int i_id,
+                                     const es_format_t *fmt, const char *psz_language,
+                                     bool b_delete )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
-    input_thread_t *p_input = p_sys->p_input;
+    es_out_sys_t      *p_sys = out->p_sys;
+    input_thread_t    *p_input = p_sys->p_input;
+    vlc_value_t       val, text;
 
-    if (action == VLC_INPUT_ES_ADDED)
+    if( b_delete )
     {
-        input_thread_private_t *priv = input_priv(p_input);
-        /*FIXME: see input_SlaveSourceAdd */
-        priv->i_last_es_id = es->fmt.i_id;
-        priv->i_last_es_cat = es->fmt.i_cat;
+        if( EsFmtIsTeletext( fmt ) )
+            input_SendEventTeletextDel( p_sys->p_input, i_id );
+
+        input_SendEventEsDel( p_input, fmt->i_cat, i_id );
+        return;
     }
-    input_SendEventEs(p_input, &(struct vlc_input_event_es) {
-        .action = action,
-        .id = &es->id,
-        .title = es->psz_title ? es->psz_title : "",
-        .fmt = es->fmt_out.i_cat != UNKNOWN_ES ? &es->fmt_out : &es->fmt,
-    });
+
+    /* Get the number of ES already added */
+    const char *psz_var;
+    if( fmt->i_cat == AUDIO_ES )
+        psz_var = "audio-es";
+    else if( fmt->i_cat == VIDEO_ES )
+        psz_var = "video-es";
+    else
+        psz_var = "spu-es";
+
+    var_Change( p_input, psz_var, VLC_VAR_CHOICESCOUNT, &val, NULL );
+    if( val.i_int == 0 )
+    {
+        vlc_value_t val2;
+
+        /* First one, we need to add the "Disable" choice */
+        val2.i_int = -1; text.psz_string = _("Disable");
+        var_Change( p_input, psz_var, VLC_VAR_ADDCHOICE, &val2, &text );
+        val.i_int++;
+    }
+
+    /* Take care of the ES description */
+    if( fmt->psz_description && *fmt->psz_description )
+    {
+        if( psz_language && *psz_language )
+        {
+            if( asprintf( &text.psz_string, "%s - [%s]", fmt->psz_description,
+                          psz_language ) == -1 )
+                text.psz_string = NULL;
+        }
+        else text.psz_string = strdup( fmt->psz_description );
+    }
+    else
+    {
+        if( psz_language && *psz_language )
+        {
+            if( asprintf( &text.psz_string, "%s %"PRId64" - [%s]", _( "Track" ), val.i_int, psz_language ) == -1 )
+                text.psz_string = NULL;
+        }
+        else
+        {
+            if( asprintf( &text.psz_string, "%s %"PRId64, _( "Track" ), val.i_int ) == -1 )
+                text.psz_string = NULL;
+        }
+    }
+
+    input_SendEventEsAdd( p_input, fmt->i_cat, i_id, text.psz_string );
+    if( EsFmtIsTeletext( fmt ) )
+    {
+        char psz_page[3+1];
+        snprintf( psz_page, sizeof(psz_page), "%d%2.2x",
+                  fmt->subs.teletext.i_magazine,
+                  fmt->subs.teletext.i_page );
+        input_SendEventTeletextAdd( p_sys->p_input,
+                                    i_id, fmt->subs.teletext.i_magazine >= 0 ? psz_page : NULL );
+    }
+
+    free( text.psz_string );
+}
+
+static void EsOutESVarUpdate( es_out_t *out, es_out_id_t *es,
+                              bool b_delete )
+{
+    EsOutESVarUpdateGeneric( out, es->i_id, &es->fmt, es->psz_language, b_delete );
 }
 
 static bool EsOutIsProgramVisible( es_out_t *out, int i_group )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
-    return p_sys->i_group_id == 0 || p_sys->i_group_id == i_group;
+    return out->p_sys->i_group_id == 0 || out->p_sys->i_group_id == i_group;
 }
 
 /* EsOutProgramSelect:
@@ -1066,9 +1005,9 @@ static bool EsOutIsProgramVisible( es_out_t *out, int i_group )
  */
 static void EsOutProgramSelect( es_out_t *out, es_out_pgrm_t *p_pgrm )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
+    es_out_sys_t      *p_sys = out->p_sys;
     input_thread_t    *p_input = p_sys->p_input;
-    es_out_id_t *es;
+    int               i;
 
     if( p_sys->p_pgrm == p_pgrm )
         return; /* Nothing to do */
@@ -1076,16 +1015,13 @@ static void EsOutProgramSelect( es_out_t *out, es_out_pgrm_t *p_pgrm )
     if( p_sys->p_pgrm )
     {
         es_out_pgrm_t *old = p_sys->p_pgrm;
-
         msg_Dbg( p_input, "unselecting program id=%d", old->i_id );
 
-        foreach_es_then_es_slaves(es)
+        for( i = 0; i < p_sys->i_es; i++ )
         {
-            if (es->p_pgrm == old && EsIsSelected(es)
-             && p_sys->i_mode != ES_OUT_MODE_ALL)
-                EsOutUnselectEs(out, es, true);
-            if (es->p_pgrm == old)
-                EsOutSendEsEvent( out, es, VLC_INPUT_ES_DELETED );
+            if( p_sys->es[i]->p_pgrm == old && EsIsSelected( p_sys->es[i] ) &&
+                p_sys->i_mode != ES_OUT_MODE_ALL )
+                EsUnselect( out, p_sys->es[i], true );
         }
 
         p_sys->audio.p_main_es = NULL;
@@ -1105,17 +1041,24 @@ static void EsOutProgramSelect( es_out_t *out, es_out_pgrm_t *p_pgrm )
     input_SendEventProgramSelect( p_input, p_pgrm->i_id );
 
     /* Update "es-*" */
+    input_SendEventEsDel( p_input, AUDIO_ES, -1 );
+    input_SendEventEsDel( p_input, VIDEO_ES, -1 );
+    input_SendEventEsDel( p_input, SPU_ES, -1 );
+    input_SendEventTeletextDel( p_input, -1 );
     input_SendEventProgramScrambled( p_input, p_pgrm->i_id, p_pgrm->b_scrambled );
 
-    foreach_es_then_es_slaves(es)
+    /* TODO event */
+    var_SetInteger( p_input, "teletext-es", -1 );
+
+    for( i = 0; i < p_sys->i_es; i++ )
     {
-        if (es->p_pgrm == p_sys->p_pgrm)
+        if( p_sys->es[i]->p_pgrm == p_sys->p_pgrm )
         {
-            EsOutSendEsEvent(out, es, VLC_INPUT_ES_ADDED);
-            EsOutUpdateInfo(out, es, NULL);
+            EsOutESVarUpdate( out, p_sys->es[i], false );
+            EsOutUpdateInfo( out, p_sys->es[i], &p_sys->es[i]->fmt, NULL );
         }
 
-        EsOutSelect(out, es, false);
+        EsOutSelect( out, p_sys->es[i], false );
     }
 
     /* Ensure the correct running EPG table is selected */
@@ -1140,7 +1083,7 @@ static void EsOutProgramSelect( es_out_t *out, es_out_pgrm_t *p_pgrm )
  */
 static es_out_pgrm_t *EsOutProgramAdd( es_out_t *out, int i_group )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
+    es_out_sys_t      *p_sys = out->p_sys;
     input_thread_t    *p_input = p_sys->p_input;
 
     es_out_pgrm_t *p_pgrm = malloc( sizeof( es_out_pgrm_t ) );
@@ -1153,24 +1096,18 @@ static es_out_pgrm_t *EsOutProgramAdd( es_out_t *out, int i_group )
     p_pgrm->b_selected = false;
     p_pgrm->b_scrambled = false;
     p_pgrm->p_meta = NULL;
-
-    p_pgrm->p_master_clock = NULL;
-    p_pgrm->p_input_clock = input_clock_New( p_sys->rate );
-    p_pgrm->p_main_clock = vlc_clock_main_New();
-    if( !p_pgrm->p_input_clock || !p_pgrm->p_main_clock )
+    p_pgrm->p_clock = input_clock_New( p_sys->i_rate );
+    if( !p_pgrm->p_clock )
     {
-        if( p_pgrm->p_input_clock )
-            input_clock_Delete( p_pgrm->p_input_clock );
         free( p_pgrm );
         return NULL;
     }
     if( p_sys->b_paused )
-        input_clock_ChangePause( p_pgrm->p_input_clock, p_sys->b_paused, p_sys->i_pause_date );
-    input_clock_SetJitter( p_pgrm->p_input_clock, p_sys->i_pts_delay, p_sys->i_cr_average );
-    vlc_clock_main_SetInputDejitter( p_pgrm->p_main_clock, p_sys->i_pts_delay );
+        input_clock_ChangePause( p_pgrm->p_clock, p_sys->b_paused, p_sys->i_pause_date );
+    input_clock_SetJitter( p_pgrm->p_clock, p_sys->i_pts_delay, p_sys->i_cr_average );
 
     /* Append it */
-    vlc_list_append(&p_pgrm->node, &p_sys->programs);
+    TAB_APPEND( p_sys->i_pgrm, p_sys->pgrm, p_pgrm );
 
     /* Update "program" variable */
     if( EsOutIsProgramVisible( out, i_group ) )
@@ -1187,16 +1124,19 @@ static es_out_pgrm_t *EsOutProgramAdd( es_out_t *out, int i_group )
  */
 static int EsOutProgramDel( es_out_t *out, int i_group )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
+    es_out_sys_t      *p_sys = out->p_sys;
     input_thread_t    *p_input = p_sys->p_input;
-    es_out_pgrm_t *p_pgrm = NULL, *pgrm;
+    es_out_pgrm_t     *p_pgrm = NULL;
+    int               i;
 
-    vlc_list_foreach(pgrm, &p_sys->programs, node)
-        if (pgrm->i_id == i_group)
+    for( i = 0; i < p_sys->i_pgrm; i++ )
+    {
+        if( p_sys->pgrm[i]->i_id == i_group )
         {
-            p_pgrm = pgrm;
+            p_pgrm = p_sys->pgrm[i];
             break;
         }
+    }
 
     if( p_pgrm == NULL )
         return VLC_EGENERIC;
@@ -1208,14 +1148,13 @@ static int EsOutProgramDel( es_out_t *out, int i_group )
         return VLC_EGENERIC;
     }
 
-    vlc_list_remove(&p_pgrm->node);
+    TAB_REMOVE( p_sys->i_pgrm, p_sys->pgrm, p_pgrm );
 
     /* If program is selected we need to unselect it */
     if( p_sys->p_pgrm == p_pgrm )
         p_sys->p_pgrm = NULL;
 
-    input_clock_Delete( p_pgrm->p_input_clock );
-    vlc_clock_main_Delete( p_pgrm->p_main_clock );
+    input_clock_Delete( p_pgrm->p_clock );
 
     if( p_pgrm->p_meta )
         vlc_meta_Delete( p_pgrm->p_meta );
@@ -1231,13 +1170,13 @@ static int EsOutProgramDel( es_out_t *out, int i_group )
  */
 static es_out_pgrm_t *EsOutProgramFind( es_out_t *p_out, int i_group )
 {
-    es_out_sys_t *p_sys = container_of(p_out, es_out_sys_t, out);
-    es_out_pgrm_t *pgrm;
+    es_out_sys_t *p_sys = p_out->p_sys;
 
-    vlc_list_foreach(pgrm, &p_sys->programs, node)
-        if (pgrm->i_id == i_group)
-            return pgrm;
-
+    for( int i = 0; i < p_sys->i_pgrm; i++ )
+    {
+        if( p_sys->pgrm[i]->i_id == i_group )
+            return p_sys->pgrm[i];
+    }
     return EsOutProgramAdd( p_out, i_group );
 }
 
@@ -1287,14 +1226,12 @@ static char *EsInfoCategoryName( es_out_id_t* es )
 
 static void EsOutProgramMeta( es_out_t *out, int i_group, const vlc_meta_t *p_meta )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
+    es_out_sys_t      *p_sys = out->p_sys;
     es_out_pgrm_t     *p_pgrm;
     input_thread_t    *p_input = p_sys->p_input;
-    input_item_t      *p_item = input_priv(p_input)->p_item;
     const char        *psz_title = NULL;
     const char        *psz_provider = NULL;
     int i;
-    bool               b_has_new_infos = false;
 
     msg_Dbg( p_input, "EsOutProgramMeta: number=%d", i_group );
 
@@ -1329,9 +1266,7 @@ static void EsOutProgramMeta( es_out_t *out, int i_group, const vlc_meta_t *p_me
         {
             /* Remove old entries */
             char *psz_oldinfokey = EsOutProgramGetMetaName( p_pgrm );
-
-            if( !input_item_DelInfo( p_item, psz_oldinfokey, NULL ) )
-                b_has_new_infos = true;
+            input_Control( p_input, INPUT_DEL_INFO, psz_oldinfokey, NULL );
             /* TODO update epg name ?
              * TODO update scrambled info name ? */
             free( psz_oldinfokey );
@@ -1364,9 +1299,11 @@ static void EsOutProgramMeta( es_out_t *out, int i_group, const vlc_meta_t *p_me
             psz_text = strdup( psz_title );
         }
 
+        /* ugly but it works */
         if( psz_text )
         {
-            input_SendEventProgramUpdated( p_input, i_group, psz_text );
+            input_SendEventProgramDel( p_input, i_group );
+            input_SendEventProgramAdd( p_input, i_group, psz_text );
             if( p_sys->p_pgrm == p_pgrm )
                 input_SendEventProgramSelect( p_input, i_group );
             free( psz_text );
@@ -1406,17 +1343,12 @@ static void EsOutProgramMeta( es_out_t *out, int i_group, const vlc_meta_t *p_me
                                    "%s",psz_provider );
     }
     if( p_cat )
-    {
-        input_item_MergeInfos( p_item, p_cat );
-        b_has_new_infos = true;
-    }
-    if( !input_priv(p_input)->b_preparsing && b_has_new_infos )
-        input_SendEventMetaInfo( p_input );
+        input_Control( p_input, INPUT_MERGE_INFOS, p_cat );
 }
 
 static void EsOutProgramEpgEvent( es_out_t *out, int i_group, const vlc_epg_event_t *p_event )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
+    es_out_sys_t      *p_sys = out->p_sys;
     input_thread_t    *p_input = p_sys->p_input;
     input_item_t      *p_item = input_priv(p_input)->p_item;
     es_out_pgrm_t     *p_pgrm;
@@ -1433,7 +1365,7 @@ static void EsOutProgramEpgEvent( es_out_t *out, int i_group, const vlc_epg_even
 
 static void EsOutProgramEpg( es_out_t *out, int i_group, const vlc_epg_t *p_epg )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
+    es_out_sys_t      *p_sys = out->p_sys;
     input_thread_t    *p_input = p_sys->p_input;
     input_item_t      *p_item = input_priv(p_input)->p_item;
     es_out_pgrm_t     *p_pgrm;
@@ -1494,17 +1426,16 @@ static void EsOutProgramEpg( es_out_t *out, int i_group, const vlc_epg_t *p_epg 
         input_item_SetESNowPlaying( input_priv(p_input)->p_item, psz_nowplaying );
         input_SendEventMeta( p_input );
 
-        const char *now_playing_tr =
-            vlc_meta_TypeToLocalizedString(vlc_meta_ESNowPlaying);
-        int ret;
         if( psz_nowplaying )
-            ret = input_item_AddInfo( p_item, psz_cat, now_playing_tr,
-                                      "%s", psz_nowplaying );
+        {
+            input_Control( p_input, INPUT_ADD_INFO, psz_cat,
+                vlc_meta_TypeToLocalizedString(vlc_meta_ESNowPlaying), "%s", psz_nowplaying );
+        }
         else
-            ret = input_item_DelInfo( p_item, psz_cat, now_playing_tr );
-
-        if( ret == VLC_SUCCESS && !input_priv(p_input)->b_preparsing  )
-            input_SendEventMetaInfo( p_input );
+        {
+            input_Control( p_input, INPUT_DEL_INFO, psz_cat,
+                vlc_meta_TypeToLocalizedString(vlc_meta_ESNowPlaying) );
+        }
     }
 
     free( psz_cat );
@@ -1512,7 +1443,7 @@ static void EsOutProgramEpg( es_out_t *out, int i_group, const vlc_epg_t *p_epg 
 
 static void EsOutEpgTime( es_out_t *out, int64_t time )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
+    es_out_sys_t      *p_sys = out->p_sys;
     input_thread_t    *p_input = p_sys->p_input;
     input_item_t      *p_item = input_priv(p_input)->p_item;
 
@@ -1521,40 +1452,36 @@ static void EsOutEpgTime( es_out_t *out, int64_t time )
 
 static void EsOutProgramUpdateScrambled( es_out_t *p_out, es_out_pgrm_t *p_pgrm )
 {
-    es_out_sys_t *p_sys = container_of(p_out, es_out_sys_t, out);
+    es_out_sys_t    *p_sys = p_out->p_sys;
     input_thread_t  *p_input = p_sys->p_input;
-    input_item_t    *p_item = input_priv(p_input)->p_item;
-    es_out_id_t *es;
     bool b_scrambled = false;
 
-    vlc_list_foreach( es, &p_sys->es, node ) /* Only master es */
-        if (es->p_pgrm == p_pgrm && es->b_scrambled)
+    for( int i = 0; i < p_sys->i_es; i++ )
+    {
+        if( p_sys->es[i]->p_pgrm == p_pgrm && p_sys->es[i]->b_scrambled )
         {
             b_scrambled = true;
             break;
         }
-
+    }
     if( !p_pgrm->b_scrambled == !b_scrambled )
         return;
 
     p_pgrm->b_scrambled = b_scrambled;
     char *psz_cat = EsOutProgramGetMetaName( p_pgrm );
 
-    int ret;
     if( b_scrambled )
-        ret = input_item_AddInfo( p_item, psz_cat, _("Scrambled"), _("Yes") );
+        input_Control( p_input, INPUT_ADD_INFO, psz_cat, _("Scrambled"), _("Yes") );
     else
-        ret = input_item_DelInfo( p_item, psz_cat, _("Scrambled") );
+        input_Control( p_input, INPUT_DEL_INFO, psz_cat, _("Scrambled") );
     free( psz_cat );
 
-    if( ret == VLC_SUCCESS && !input_priv(p_input)->b_preparsing  )
-        input_SendEventMetaInfo( p_input );
     input_SendEventProgramScrambled( p_input, p_pgrm->i_id, b_scrambled );
 }
 
 static void EsOutMeta( es_out_t *p_out, const vlc_meta_t *p_meta, const vlc_meta_t *p_program_meta )
 {
-    es_out_sys_t *p_sys = container_of(p_out, es_out_sys_t, out);
+    es_out_sys_t    *p_sys = p_out->p_sys;
     input_thread_t  *p_input = p_sys->p_input;
     input_item_t *p_item = input_GetItem( p_input );
 
@@ -1600,86 +1527,14 @@ static void EsOutMeta( es_out_t *p_out, const vlc_meta_t *p_meta, const vlc_meta
 
 static void EsOutGlobalMeta( es_out_t *p_out, const vlc_meta_t *p_meta )
 {
-    es_out_sys_t *p_sys = container_of(p_out, es_out_sys_t, out);
+    es_out_sys_t    *p_sys = p_out->p_sys;
     EsOutMeta( p_out, p_meta,
                (p_sys->p_pgrm && p_sys->p_pgrm->p_meta) ? p_sys->p_pgrm->p_meta : NULL );
 }
 
-static void EsOutUpdateEsLanguageTitle(es_out_id_t *es,
-                                     const es_format_t *fmt)
+static es_out_id_t *EsOutAddSlave( es_out_t *out, const es_format_t *fmt, es_out_id_t *p_master )
 {
-    free( es->psz_title );
-    free( es->psz_language );
-    free( es->psz_language_code );
-
-    es->psz_language = LanguageGetName( fmt->psz_language );
-    es->psz_language_code = LanguageGetCode( fmt->psz_language );
-
-    es->psz_title = EsGetTitle(es);
-}
-
-static void EsOutFillEsFmt(es_out_t *out, es_format_t *fmt)
-{
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
-    input_thread_t    *p_input = p_sys->p_input;
-
-    switch( fmt->i_cat )
-    {
-    case AUDIO_ES:
-    {
-        fmt->i_codec = vlc_fourcc_GetCodecAudio( fmt->i_codec,
-                                                 fmt->audio.i_bitspersample );
-        audio_replay_gain_t rg;
-        memset( &rg, 0, sizeof(rg) );
-        vlc_mutex_lock( &input_priv(p_input)->p_item->lock );
-        vlc_audio_replay_gain_MergeFromMeta( &rg, input_priv(p_input)->p_item->p_meta );
-        vlc_mutex_unlock( &input_priv(p_input)->p_item->lock );
-
-        for( int i = 0; i < AUDIO_REPLAY_GAIN_MAX; i++ )
-        {
-            if( !fmt->audio_replay_gain.pb_peak[i] )
-            {
-                fmt->audio_replay_gain.pb_peak[i] = rg.pb_peak[i];
-                fmt->audio_replay_gain.pf_peak[i] = rg.pf_peak[i];
-            }
-            if( !fmt->audio_replay_gain.pb_gain[i] )
-            {
-                fmt->audio_replay_gain.pb_gain[i] = rg.pb_gain[i];
-                fmt->audio_replay_gain.pf_gain[i] = rg.pf_gain[i];
-            }
-        }
-        break;
-    }
-
-    case VIDEO_ES:
-        fmt->i_codec = vlc_fourcc_GetCodec( fmt->i_cat, fmt->i_codec );
-
-        if( !fmt->video.i_visible_width || !fmt->video.i_visible_height )
-        {
-            fmt->video.i_visible_width = fmt->video.i_width;
-            fmt->video.i_visible_height = fmt->video.i_height;
-        }
-
-        if( fmt->video.i_frame_rate && fmt->video.i_frame_rate_base )
-            vlc_ureduce( &fmt->video.i_frame_rate,
-                         &fmt->video.i_frame_rate_base,
-                         fmt->video.i_frame_rate,
-                         fmt->video.i_frame_rate_base, 0 );
-        break;
-
-    case SPU_ES:
-        fmt->i_codec = vlc_fourcc_GetCodec( fmt->i_cat, fmt->i_codec );
-        break;
-
-    default:
-        break;
-    }
-}
-
-static es_out_id_t *EsOutAddSlaveLocked( es_out_t *out, const es_format_t *fmt,
-                                         es_out_id_t *p_master )
-{
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
+    es_out_sys_t      *p_sys = out->p_sys;
     input_thread_t    *p_input = p_sys->p_input;
 
     if( fmt->i_group < 0 )
@@ -1690,63 +1545,86 @@ static es_out_id_t *EsOutAddSlaveLocked( es_out_t *out, const es_format_t *fmt,
 
     es_out_id_t   *es = malloc( sizeof( *es ) );
     es_out_pgrm_t *p_pgrm;
+    int i;
 
     if( !es )
         return NULL;
 
-    if( es_format_Copy( &es->fmt, fmt ) != VLC_SUCCESS )
-    {
-        free( es );
-        return NULL;
-    }
-    if( es->fmt.i_id < 0 )
-        es->fmt.i_id = p_sys->i_id;
-    if( !es->fmt.i_original_fourcc )
-        es->fmt.i_original_fourcc = es->fmt.i_codec;
+    vlc_mutex_lock( &p_sys->lock );
 
     /* Search the program */
     p_pgrm = EsOutProgramFind( out, fmt->i_group );
     if( !p_pgrm )
     {
-        es_format_Clean( &es->fmt );
+        vlc_mutex_unlock( &p_sys->lock );
         free( es );
         return NULL;
     }
-
-    /* Get the number of ES already added in order to get the position of the es */
-    es->i_pos = 0;
-    es_out_id_t *it;
-    foreach_es_then_es_slaves(it)
-        if( it->fmt.i_cat == fmt->i_cat && it->fmt.i_group == fmt->i_group )
-            es->i_pos++;
 
     /* Increase ref count for program */
     p_pgrm->i_es++;
 
     /* Set up ES */
     es->p_pgrm = p_pgrm;
+    es_format_Copy( &es->fmt, fmt );
+    if( es->fmt.i_id < 0 )
+        es->fmt.i_id = p_sys->i_id;
+    if( !es->fmt.i_original_fourcc )
+        es->fmt.i_original_fourcc = es->fmt.i_codec;
 
-    es->id.i_id = es->fmt.i_id;
-    es->id.i_cat = es->fmt.i_cat;
-
-    es_format_Init( &es->fmt_out, UNKNOWN_ES, 0 );
-
+    es->i_id = es->fmt.i_id;
     es->i_meta_id = p_sys->i_id++; /* always incremented */
     es->b_scrambled = false;
-    es->b_forced = false;
-    es->b_terminated = false;
 
     switch( es->fmt.i_cat )
     {
     case AUDIO_ES:
+    {
+        es->fmt.i_codec = vlc_fourcc_GetCodecAudio( es->fmt.i_codec,
+                                                    es->fmt.audio.i_bitspersample );
         es->i_channel = p_sys->audio.i_count++;
+
+        audio_replay_gain_t rg;
+        memset( &rg, 0, sizeof(rg) );
+        vlc_mutex_lock( &input_priv(p_input)->p_item->lock );
+        vlc_audio_replay_gain_MergeFromMeta( &rg, input_priv(p_input)->p_item->p_meta );
+        vlc_mutex_unlock( &input_priv(p_input)->p_item->lock );
+
+        for( i = 0; i < AUDIO_REPLAY_GAIN_MAX; i++ )
+        {
+            if( !es->fmt.audio_replay_gain.pb_peak[i] )
+            {
+                es->fmt.audio_replay_gain.pb_peak[i] = rg.pb_peak[i];
+                es->fmt.audio_replay_gain.pf_peak[i] = rg.pf_peak[i];
+            }
+            if( !es->fmt.audio_replay_gain.pb_gain[i] )
+            {
+                es->fmt.audio_replay_gain.pb_gain[i] = rg.pb_gain[i];
+                es->fmt.audio_replay_gain.pf_gain[i] = rg.pf_gain[i];
+            }
+        }
         break;
+    }
 
     case VIDEO_ES:
+        es->fmt.i_codec = vlc_fourcc_GetCodec( es->fmt.i_cat, es->fmt.i_codec );
         es->i_channel = p_sys->video.i_count++;
+
+        if( !es->fmt.video.i_visible_width || !es->fmt.video.i_visible_height )
+        {
+            es->fmt.video.i_visible_width = es->fmt.video.i_width;
+            es->fmt.video.i_visible_height = es->fmt.video.i_height;
+        }
+
+        if( es->fmt.video.i_frame_rate && es->fmt.video.i_frame_rate_base )
+            vlc_ureduce( &es->fmt.video.i_frame_rate,
+                         &es->fmt.video.i_frame_rate_base,
+                         es->fmt.video.i_frame_rate,
+                         es->fmt.video.i_frame_rate_base, 0 );
         break;
 
     case SPU_ES:
+        es->fmt.i_codec = vlc_fourcc_GetCodec( es->fmt.i_cat, es->fmt.i_codec );
         es->i_channel = p_sys->sub.i_count++;
         break;
 
@@ -1754,31 +1632,26 @@ static es_out_id_t *EsOutAddSlaveLocked( es_out_t *out, const es_format_t *fmt,
         es->i_channel = 0;
         break;
     }
-    EsOutFillEsFmt( out, &es->fmt );
     es->psz_language = LanguageGetName( es->fmt.psz_language ); /* remember so we only need to do it once */
     es->psz_language_code = LanguageGetCode( es->fmt.psz_language );
-    es->psz_title = EsGetTitle(es);
     es->p_dec = NULL;
     es->p_dec_record = NULL;
-    es->p_clock = NULL;
     es->cc.type = 0;
     es->cc.i_bitmap = 0;
     es->p_master = p_master;
-    es->mouse_event_cb = NULL;
-    es->mouse_event_userdata = NULL;
 
-    vlc_list_append(&es->node, es->p_master ? &p_sys->es_slaves : &p_sys->es);
-
-    vlc_atomic_rc_init(&es->rc);
+    TAB_APPEND( p_sys->i_es, p_sys->es, es );
 
     if( es->p_pgrm == p_sys->p_pgrm )
-        EsOutSendEsEvent( out, es, VLC_INPUT_ES_ADDED );
+        EsOutESVarUpdate( out, es, false );
 
-    EsOutUpdateInfo( out, es, NULL );
+    EsOutUpdateInfo( out, es, &es->fmt, NULL );
     EsOutSelect( out, es, false );
 
     if( es->b_scrambled )
         EsOutProgramUpdateScrambled( out, es->p_pgrm );
+
+    vlc_mutex_unlock( &p_sys->lock );
 
     return es;
 }
@@ -1788,11 +1661,7 @@ static es_out_id_t *EsOutAddSlaveLocked( es_out_t *out, const es_format_t *fmt,
  */
 static es_out_id_t *EsOutAdd( es_out_t *out, const es_format_t *fmt )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
-    vlc_mutex_lock( &p_sys->lock );
-    es_out_id_t *es = EsOutAddSlaveLocked( out, fmt, NULL );
-    vlc_mutex_unlock( &p_sys->lock );
-    return es;
+    return EsOutAddSlave( out, fmt, NULL );
 }
 
 static bool EsIsSelected( es_out_id_t *es )
@@ -1813,53 +1682,28 @@ static bool EsIsSelected( es_out_id_t *es )
         return es->p_dec != NULL;
     }
 }
-static void EsOutCreateDecoder( es_out_t *out, es_out_id_t *p_es )
+static void EsCreateDecoder( es_out_t *out, es_out_id_t *p_es )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
+    es_out_sys_t   *p_sys = out->p_sys;
     input_thread_t *p_input = p_sys->p_input;
-    decoder_t *dec;
 
-    if( p_es->fmt.i_cat != UNKNOWN_ES
-     && p_es->fmt.i_cat == p_sys->i_master_source_cat
-     && p_es->p_pgrm->p_master_clock == NULL )
-        p_es->p_pgrm->p_master_clock = p_es->p_clock =
-            vlc_clock_main_CreateMaster( p_es->p_pgrm->p_main_clock );
-    else
-        p_es->p_clock = vlc_clock_main_CreateSlave( p_es->p_pgrm->p_main_clock );
-    if( !p_es->p_clock )
-        return;
-
-    dec = input_DecoderNew( p_input, &p_es->id, &p_es->fmt, p_es->p_clock,
-                            input_priv(p_input)->p_sout );
-    if( dec != NULL )
+    p_es->p_dec = input_DecoderNew( p_input, &p_es->fmt, p_es->p_pgrm->p_clock, input_priv(p_input)->p_sout );
+    if( p_es->p_dec )
     {
-        input_DecoderChangeRate( dec, p_sys->rate );
-
         if( p_sys->b_buffering )
-            input_DecoderStartWait( dec );
+            input_DecoderStartWait( p_es->p_dec );
 
         if( !p_es->p_master && p_sys->p_sout_record )
         {
-            p_es->p_dec_record = input_DecoderNew( p_input, &p_es->id, &p_es->fmt,
-                                                   NULL, p_sys->p_sout_record );
+            p_es->p_dec_record = input_DecoderNew( p_input, &p_es->fmt, p_es->p_pgrm->p_clock, p_sys->p_sout_record );
             if( p_es->p_dec_record && p_sys->b_buffering )
                 input_DecoderStartWait( p_es->p_dec_record );
         }
-
-        if( p_es->mouse_event_cb && p_es->fmt.i_cat == VIDEO_ES )
-            input_DecoderSetVoutMouseEvent( dec, p_es->mouse_event_cb,
-                                            p_es->mouse_event_userdata );
     }
-    else
-    {
-        vlc_clock_Delete( p_es->p_clock );
-        p_es->p_clock = NULL;
-    }
-    p_es->p_dec = dec;
 
     EsOutDecoderChangeDelay( out, p_es );
 }
-static void EsOutDestroyDecoder( es_out_t *out, es_out_id_t *p_es )
+static void EsDestroyDecoder( es_out_t *out, es_out_id_t *p_es )
 {
     VLC_UNUSED(out);
 
@@ -1868,29 +1712,22 @@ static void EsOutDestroyDecoder( es_out_t *out, es_out_id_t *p_es )
 
     input_DecoderDelete( p_es->p_dec );
     p_es->p_dec = NULL;
-    if( p_es->p_pgrm->p_master_clock == p_es->p_clock )
-        p_es->p_pgrm->p_master_clock = NULL;
-    vlc_clock_Delete( p_es->p_clock );
-    p_es->p_clock = NULL;
 
     if( p_es->p_dec_record )
     {
         input_DecoderDelete( p_es->p_dec_record );
         p_es->p_dec_record = NULL;
     }
-
-    es_format_Clean( &p_es->fmt_out );
 }
 
-static void EsOutSelectEs( es_out_t *out, es_out_id_t *es )
+static void EsSelect( es_out_t *out, es_out_id_t *es )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
+    es_out_sys_t   *p_sys = out->p_sys;
     input_thread_t *p_input = p_sys->p_input;
-    bool b_thumbnailing = input_priv(p_input)->b_thumbnailing;
 
     if( EsIsSelected( es ) )
     {
-        msg_Warn( p_input, "ES 0x%x is already selected", es->fmt.i_id );
+        msg_Warn( p_input, "ES 0x%x is already selected", es->i_id );
         return;
     }
 
@@ -1910,81 +1747,54 @@ static void EsOutSelectEs( es_out_t *out, es_out_id_t *es )
     else
     {
         const bool b_sout = input_priv(p_input)->p_sout != NULL;
-        /* If b_forced, the ES is specifically requested by the user, so bypass
-         * the following vars check. */
-        if( !es->b_forced )
+        if( es->fmt.i_cat == VIDEO_ES || es->fmt.i_cat == SPU_ES )
         {
-            if( es->fmt.i_cat == VIDEO_ES || es->fmt.i_cat == SPU_ES )
+            if( !var_GetBool( p_input, b_sout ? "sout-video" : "video" ) )
             {
-                if( !var_GetBool( p_input, b_sout ? "sout-video" : "video" ) )
-                {
-                    msg_Dbg( p_input, "video is disabled, not selecting ES 0x%x",
-                             es->fmt.i_id );
-                    return;
-                }
+                msg_Dbg( p_input, "video is disabled, not selecting ES 0x%x",
+                         es->i_id );
+                return;
             }
-            else if( es->fmt.i_cat == AUDIO_ES )
+        }
+        else if( es->fmt.i_cat == AUDIO_ES )
+        {
+            if( !var_GetBool( p_input, b_sout ? "sout-audio" : "audio" ) )
             {
-                if( !var_GetBool( p_input, b_sout ? "sout-audio" : "audio" ) || b_thumbnailing )
-                {
-                    msg_Dbg( p_input, "audio is disabled, not selecting ES 0x%x",
-                             es->fmt.i_id );
-                    return;
-                }
+                msg_Dbg( p_input, "audio is disabled, not selecting ES 0x%x",
+                         es->i_id );
+                return;
             }
-            if( es->fmt.i_cat == SPU_ES )
+        }
+        if( es->fmt.i_cat == SPU_ES )
+        {
+            if( !var_GetBool( p_input, b_sout ? "sout-spu" : "spu" ) )
             {
-                if( !var_GetBool( p_input, b_sout ? "sout-spu" : "spu" ) || b_thumbnailing )
-                {
-                    msg_Dbg( p_input, "spu is disabled, not selecting ES 0x%x",
-                             es->fmt.i_id );
-                    return;
-                }
+                msg_Dbg( p_input, "spu is disabled, not selecting ES 0x%x",
+                         es->i_id );
+                return;
             }
         }
 
-        EsOutCreateDecoder( out, es );
+        EsCreateDecoder( out, es );
 
         if( es->p_dec == NULL || es->p_pgrm != p_sys->p_pgrm )
             return;
     }
 
     /* Mark it as selected */
-    EsOutSendEsEvent(out, es, VLC_INPUT_ES_SELECTED);
-
-    /* Special case of the zvbi decoder for teletext: send the initial selected
-     * page and transparency */
-    if( !es->p_master && es->fmt.i_cat == SPU_ES
-     && es->fmt.i_codec == VLC_CODEC_TELETEXT
-     && var_Type( es->p_dec, "vbi-page" ) == VLC_VAR_INTEGER )
-    {
-        input_SendEventVbiPage( p_input,
-                                var_GetInteger( es->p_dec, "vbi-page" ) );
-        input_SendEventVbiTransparency( p_input,
-                                        var_GetBool( es->p_dec, "vbi-opaque" ) );
-    }
-}
-
-static void EsOutDrainCCChannels( es_out_id_t *parent )
-{
-    /* Drain captions sub ES as well */
-    uint64_t i_bitmap = parent->cc.i_bitmap;
-    for( int i = 0; i_bitmap > 0; i++, i_bitmap >>= 1 )
-    {
-        if( (i_bitmap & 1) == 0 || !parent->cc.pp_es[i] ||
-            !parent->cc.pp_es[i]->p_dec )
-            continue;
-        input_DecoderDrain( parent->cc.pp_es[i]->p_dec );
-    }
+    input_SendEventEsSelect( p_input, es->fmt.i_cat, es->i_id );
+    input_SendEventTeletextSelect( p_input, EsFmtIsTeletext( &es->fmt ) ? es->i_id : -1 );
 }
 
 static void EsDeleteCCChannels( es_out_t *out, es_out_id_t *parent )
 {
+    es_out_sys_t   *p_sys = out->p_sys;
+    input_thread_t *p_input = p_sys->p_input;
+
     if( parent->cc.type == 0 )
         return;
 
-    es_out_id_t *spu_es = EsOutGetSelectedCat( out, SPU_ES );
-    const int i_spu_id = spu_es ? spu_es->fmt.i_id : -1;
+    const int i_spu_id = var_GetInteger( p_input, "spu-es");
 
     uint64_t i_bitmap = parent->cc.i_bitmap;
     for( int i = 0; i_bitmap > 0; i++, i_bitmap >>= 1 )
@@ -1992,26 +1802,26 @@ static void EsDeleteCCChannels( es_out_t *out, es_out_id_t *parent )
         if( (i_bitmap & 1) == 0 || !parent->cc.pp_es[i] )
             continue;
 
-        if( i_spu_id == parent->cc.pp_es[i]->fmt.i_id )
+        if( i_spu_id == parent->cc.pp_es[i]->i_id )
         {
             /* Force unselection of the CC */
-            EsOutSendEsEvent(out, parent->cc.pp_es[i], VLC_INPUT_ES_UNSELECTED);
+            input_SendEventEsSelect( p_input, SPU_ES, -1 );
         }
-        EsOutDelLocked( out, parent->cc.pp_es[i] );
+        EsOutDel( out, parent->cc.pp_es[i] );
     }
 
     parent->cc.i_bitmap = 0;
     parent->cc.type = 0;
 }
 
-static void EsOutUnselectEs( es_out_t *out, es_out_id_t *es, bool b_update )
+static void EsUnselect( es_out_t *out, es_out_id_t *es, bool b_update )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
+    es_out_sys_t   *p_sys = out->p_sys;
     input_thread_t *p_input = p_sys->p_input;
 
     if( !EsIsSelected( es ) )
     {
-        msg_Warn( p_input, "ES 0x%x is already unselected", es->fmt.i_id );
+        msg_Warn( p_input, "ES 0x%x is already unselected", es->i_id );
         return;
     }
 
@@ -2028,14 +1838,16 @@ static void EsOutUnselectEs( es_out_t *out, es_out_id_t *es, bool b_update )
     else
     {
         EsDeleteCCChannels( out, es );
-        EsOutDestroyDecoder( out, es );
+        EsDestroyDecoder( out, es );
     }
 
     if( !b_update )
         return;
 
     /* Mark it as unselected */
-    EsOutSendEsEvent(out, es, VLC_INPUT_ES_UNSELECTED);
+    input_SendEventEsSelect( p_input, es->fmt.i_cat, -1 );
+    if( EsFmtIsTeletext( &es->fmt ) )
+        input_SendEventTeletextSelect( p_input, -1 );
 }
 
 /**
@@ -2049,7 +1861,7 @@ static void EsOutUnselectEs( es_out_t *out, es_out_id_t *es, bool b_update )
  */
 static void EsOutSelect( es_out_t *out, es_out_id_t *es, bool b_force )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
+    es_out_sys_t      *p_sys = out->p_sys;
     es_out_es_props_t *p_esprops = GetPropsByCat( p_sys, es->fmt.i_cat );
 
     if( !p_sys->b_active ||
@@ -2067,9 +1879,9 @@ static void EsOutSelect( es_out_t *out, es_out_id_t *es, bool b_force )
         if( !EsIsSelected( es ) )
         {
             if( b_auto_unselect )
-                EsOutUnselectEs( out, p_esprops->p_main_es, true );
+                EsUnselect( out, p_esprops->p_main_es, false );
 
-            EsOutSelectEs( out, es );
+            EsSelect( out, es );
         }
     }
     else if( p_sys->i_mode == ES_OUT_MODE_PARTIAL )
@@ -2086,7 +1898,7 @@ static void EsOutSelect( es_out_t *out, es_out_id_t *es, bool b_force )
                 if( atoi( prgm ) == es->p_pgrm->i_id || b_force )
                 {
                     if( !EsIsSelected( es ) )
-                        EsOutSelectEs( out, es );
+                        EsSelect( out, es );
                     break;
                 }
             }
@@ -2103,7 +1915,7 @@ static void EsOutSelect( es_out_t *out, es_out_id_t *es, bool b_force )
         /* user designated by ID ES have higher prio than everything */
         if ( p_esprops->i_id >= 0 )
         {
-            if( es->fmt.i_id == p_esprops->i_id )
+            if( es->i_id == p_esprops->i_id )
                 wanted_es = es;
         }
         /* then per pos */
@@ -2141,7 +1953,7 @@ static void EsOutSelect( es_out_t *out, es_out_id_t *es, bool b_force )
                     if( current_es_idx < 0 ) /* No es is currently selected by lang pref */
                     {
                         /* If demux has specified a track */
-                        if( p_esprops->i_demux_id >= 0 && es->fmt.i_id == p_esprops->i_demux_id )
+                        if( p_esprops->i_demux_id >= 0 && es->i_id == p_esprops->i_demux_id )
                         {
                             wanted_es = es;
                         }
@@ -2159,7 +1971,7 @@ static void EsOutSelect( es_out_t *out, es_out_id_t *es, bool b_force )
         }
         /* If there is no user preference, select the default subtitle
          * or adapt by ES priority */
-        else if( p_esprops->i_demux_id >= 0 && es->fmt.i_id == p_esprops->i_demux_id )
+        else if( p_esprops->i_demux_id >= 0 && es->i_id == p_esprops->i_demux_id )
         {
             wanted_es = es;
         }
@@ -2173,9 +1985,9 @@ static void EsOutSelect( es_out_t *out, es_out_id_t *es, bool b_force )
         if( wanted_es == es && !EsIsSelected( es ) )
         {
             if( b_auto_unselect )
-                EsOutUnselectEs( out, p_esprops->p_main_es, true );
+                EsUnselect( out, p_esprops->p_main_es, false );
 
-            EsOutSelectEs( out, es );
+            EsSelect( out, es );
         }
     }
 
@@ -2187,7 +1999,7 @@ static void EsOutSelect( es_out_t *out, es_out_id_t *es, bool b_force )
 static void EsOutCreateCCChannels( es_out_t *out, vlc_fourcc_t codec, uint64_t i_bitmap,
                                    const char *psz_descfmt, es_out_id_t *parent )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
+    es_out_sys_t   *p_sys = out->p_sys;
     input_thread_t *p_input = p_sys->p_input;
 
     /* Only one type of captions is allowed ! */
@@ -2202,7 +2014,7 @@ static void EsOutCreateCCChannels( es_out_t *out, vlc_fourcc_t codec, uint64_t i
         if( (i_bitmap & 1) == 0 || (i_existingbitmap & 1) )
             continue;
 
-        msg_Dbg( p_input, "Adding CC track %d for es[%d]", 1+i, parent->fmt.i_id );
+        msg_Dbg( p_input, "Adding CC track %d for es[%d]", 1+i, parent->i_id );
 
         es_format_Init( &fmt, SPU_ES, codec );
         fmt.subs.cc.i_channel = i;
@@ -2211,7 +2023,7 @@ static void EsOutCreateCCChannels( es_out_t *out, vlc_fourcc_t codec, uint64_t i
             fmt.psz_description = NULL;
 
         es_out_id_t **pp_es = &parent->cc.pp_es[i];
-        *pp_es = EsOutAddSlaveLocked( out, &fmt, parent );
+        *pp_es = EsOutAddSlave( out, &fmt, parent );
         es_format_Clean( &fmt );
 
         /* */
@@ -2233,25 +2045,31 @@ static void EsOutCreateCCChannels( es_out_t *out, vlc_fourcc_t codec, uint64_t i
  */
 static int EsOutSend( es_out_t *out, es_out_id_t *es, block_t *p_block )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
+    es_out_sys_t   *p_sys = out->p_sys;
     input_thread_t *p_input = p_sys->p_input;
 
     assert( p_block->p_next == NULL );
 
-    struct input_stats *stats = input_priv(p_input)->stats;
-    if( stats != NULL )
+    if( libvlc_stats( p_input ) )
     {
-        input_rate_Add( &stats->demux_bitrate, p_block->i_buffer );
+        uint64_t i_total;
+
+        vlc_mutex_lock( &input_priv(p_input)->counters.counters_lock );
+        stats_Update( input_priv(p_input)->counters.p_demux_read,
+                      p_block->i_buffer, &i_total );
+        stats_Update( input_priv(p_input)->counters.p_demux_bitrate, i_total, NULL );
 
         /* Update number of corrupted data packats */
         if( p_block->i_flags & BLOCK_FLAG_CORRUPTED )
-            atomic_fetch_add_explicit(&stats->demux_corrupted, 1,
-                                      memory_order_relaxed);
-
+        {
+            stats_Update( input_priv(p_input)->counters.p_demux_corrupted, 1, NULL );
+        }
         /* Update number of discontinuities */
         if( p_block->i_flags & BLOCK_FLAG_DISCONTINUITY )
-            atomic_fetch_add_explicit(&stats->demux_discontinuity, 1,
-                                      memory_order_relaxed);
+        {
+            stats_Update( input_priv(p_input)->counters.p_demux_discontinuity, 1, NULL );
+        }
+        vlc_mutex_unlock( &input_priv(p_input)->counters.counters_lock );
     }
 
     vlc_mutex_lock( &p_sys->lock );
@@ -2259,8 +2077,8 @@ static int EsOutSend( es_out_t *out, es_out_id_t *es, block_t *p_block )
     /* Mark preroll blocks */
     if( p_sys->i_preroll_end >= 0 )
     {
-        vlc_tick_t i_date = p_block->i_pts;
-        if( p_block->i_pts == VLC_TICK_INVALID )
+        int64_t i_date = p_block->i_pts;
+        if( p_block->i_pts <= VLC_TS_INVALID )
             i_date = p_block->i_dts;
 
         if( i_date + p_block->i_length < p_sys->i_preroll_end )
@@ -2307,10 +2125,7 @@ static int EsOutSend( es_out_t *out, es_out_id_t *es, block_t *p_block )
     vlc_meta_t  *p_meta_dsc;
     if( input_DecoderHasFormatChanged( es->p_dec, &fmt_dsc, &p_meta_dsc ) )
     {
-        if (EsOutEsUpdateFmt( out, es, &fmt_dsc) == VLC_SUCCESS)
-            EsOutSendEsEvent(out, es, VLC_INPUT_ES_UPDATED);
-
-        EsOutUpdateInfo(out, es, p_meta_dsc);
+        EsOutUpdateInfo( out, es, &fmt_dsc, p_meta_dsc );
 
         es_format_Clean( &fmt_dsc );
         if( p_meta_dsc )
@@ -2332,51 +2147,43 @@ static int EsOutSend( es_out_t *out, es_out_id_t *es, block_t *p_block )
     return VLC_SUCCESS;
 }
 
-static void
-EsOutDrainDecoder( es_out_t *out, es_out_id_t *es )
-{
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
-    assert( es->p_dec );
-
-    /* FIXME: This might hold the ES output caller (i.e. the demux), and
-     * the corresponding thread (typically the input thread), for a little
-     * bit too long if the ES is deleted in the middle of a stream. */
-    input_DecoderDrain( es->p_dec );
-    EsOutDrainCCChannels( es );
-    while( !input_Stopped(p_sys->p_input) && !p_sys->b_buffering )
-    {
-        if( input_DecoderIsEmpty( es->p_dec ) &&
-            ( !es->p_dec_record || input_DecoderIsEmpty( es->p_dec_record ) ))
-            break;
-        /* FIXME there should be a way to have auto deleted es, but there will be
-         * a problem when another codec of the same type is created (mainly video) */
-        vlc_tick_sleep(VLC_TICK_FROM_MS(20));
-    }
-}
-
 /*****************************************************************************
- * EsOutDelLocked:
+ * EsOutDel:
  *****************************************************************************/
-static void EsOutDelLocked( es_out_t *out, es_out_id_t *es )
+static void EsOutDel( es_out_t *out, es_out_id_t *es )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
+    es_out_sys_t *p_sys = out->p_sys;
     bool b_reselect = false;
+    int i;
+
+    vlc_mutex_lock( &p_sys->lock );
 
     es_out_es_props_t *p_esprops = GetPropsByCat( p_sys, es->fmt.i_cat );
 
     /* We don't try to reselect */
     if( es->p_dec )
-    {
-        EsOutDrainDecoder( out, es );
-        EsOutUnselectEs( out, es, es->p_pgrm == p_sys->p_pgrm );
+    {   /* FIXME: This might hold the ES output caller (i.e. the demux), and
+         * the corresponding thread (typically the input thread), for a little
+         * bit too long if the ES is deleted in the middle of a stream. */
+        input_DecoderDrain( es->p_dec );
+        while( !input_Stopped(p_sys->p_input) && !p_sys->b_buffering )
+        {
+            if( input_DecoderIsEmpty( es->p_dec ) &&
+                ( !es->p_dec_record || input_DecoderIsEmpty( es->p_dec_record ) ))
+                break;
+            /* FIXME there should be a way to have auto deleted es, but there will be
+             * a problem when another codec of the same type is created (mainly video) */
+            msleep( 20*1000 );
+        }
+        EsUnselect( out, es, es->p_pgrm == p_sys->p_pgrm );
     }
 
-    EsTerminate(es);
-
     if( es->p_pgrm == p_sys->p_pgrm )
-        EsOutSendEsEvent( out, es, VLC_INPUT_ES_DELETED );
+        EsOutESVarUpdate( out, es, true );
 
-    EsOutDeleteInfoEs( out, es );
+    EsDeleteInfo( out, es );
+
+    TAB_REMOVE( p_sys->i_es, p_sys->es, es );
 
     /* Update program */
     es->p_pgrm->i_es--;
@@ -2400,42 +2207,30 @@ static void EsOutDelLocked( es_out_t *out, es_out_id_t *es )
     /* Re-select another track when needed */
     if( b_reselect )
     {
-        es_out_id_t *other;
-
-        foreach_es_then_es_slaves(other)
-            if( es->fmt.i_cat == other->fmt.i_cat )
+        for( i = 0; i < p_sys->i_es; i++ )
+        {
+            if( es->fmt.i_cat == p_sys->es[i]->fmt.i_cat )
             {
-                if (EsIsSelected(other))
+                if( EsIsSelected(p_sys->es[i]) )
                 {
-                    EsOutSendEsEvent(out, es, VLC_INPUT_ES_SELECTED);
+                    input_SendEventEsSelect( p_sys->p_input, es->fmt.i_cat, p_sys->es[i]->i_id );
                     if( p_esprops->p_main_es == NULL )
-                        p_esprops->p_main_es = other;
+                        p_esprops->p_main_es = p_sys->es[i];
                 }
                 else
-                    EsOutSelect(out, other, false);
+                    EsOutSelect( out, p_sys->es[i], false );
             }
+        }
     }
 
-    EsRelease(es);
-}
+    free( es->psz_language );
+    free( es->psz_language_code );
 
-static void EsOutDel( es_out_t *out, es_out_id_t *es )
-{
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
-    vlc_mutex_lock( &p_sys->lock );
-    EsOutDelLocked( out, es );
+    es_format_Clean( &es->fmt );
+
     vlc_mutex_unlock( &p_sys->lock );
-}
 
-static int EsOutVaControlLocked( es_out_t *, int, va_list );
-static int EsOutControlLocked( es_out_t *out, int i_query, ... )
-{
-    va_list args;
-
-    va_start( args, i_query );
-    int ret = EsOutVaControlLocked( out, i_query, args );
-    va_end( args );
-    return ret;
+    free( es );
 }
 
 /**
@@ -2446,9 +2241,9 @@ static int EsOutControlLocked( es_out_t *out, int i_query, ... )
  * \param args a variable list of arguments for the query
  * \return VLC_SUCCESS or an error code
  */
-static int EsOutVaControlLocked( es_out_t *out, int i_query, va_list args )
+static int EsOutControlLocked( es_out_t *out, int i_query, va_list args )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
+    es_out_sys_t *p_sys = out->p_sys;
 
     switch( i_query )
     {
@@ -2458,12 +2253,12 @@ static int EsOutVaControlLocked( es_out_t *out, int i_query, va_list args )
         bool b = va_arg( args, int );
         if( b && !EsIsSelected( es ) )
         {
-            EsOutSelectEs( out, es );
+            EsSelect( out, es );
             return EsIsSelected( es ) ? VLC_SUCCESS : VLC_EGENERIC;
         }
         else if( !b && EsIsSelected( es ) )
         {
-            EsOutUnselectEs( out, es, es->p_pgrm == p_sys->p_pgrm );
+            EsUnselect( out, es, es->p_pgrm == p_sys->p_pgrm );
             return VLC_SUCCESS;
         }
         return VLC_SUCCESS;
@@ -2503,40 +2298,33 @@ static int EsOutVaControlLocked( es_out_t *out, int i_query, va_list args )
                 i_mode == ES_OUT_MODE_AUTO || i_mode == ES_OUT_MODE_PARTIAL ||
                 i_mode == ES_OUT_MODE_END );
 
-        if (i_mode != ES_OUT_MODE_NONE && !p_sys->b_active && !vlc_list_is_empty(&p_sys->es))
+        if( i_mode != ES_OUT_MODE_NONE && !p_sys->b_active && p_sys->i_es > 0 )
         {
             /* XXX Terminate vout if there are tracks but no video one.
              * This one is not mandatory but is he earliest place where it
              * can be done */
-            es_out_id_t *p_es;
-            bool found = false;
-
-            foreach_es_then_es_slaves(p_es)
-                if( p_es->fmt.i_cat == VIDEO_ES && !found /* nested loop */ )
-                {
-                    found = true;
+            int i;
+            for( i = 0; i < p_sys->i_es; i++ )
+            {
+                es_out_id_t *p_es = p_sys->es[i];
+                if( p_es->fmt.i_cat == VIDEO_ES )
                     break;
-                }
-
-            if (!found)
-                EsOutStopFreeVout( out );
+            }
+            if( i >= p_sys->i_es )
+                input_resource_TerminateVout( input_priv(p_sys->p_input)->p_resource );
         }
         p_sys->b_active = i_mode != ES_OUT_MODE_NONE;
         p_sys->i_mode = i_mode;
 
         /* Reapply policy mode */
-        es_out_id_t *es;
-
-        foreach_es_then_es_slaves(es)
+        for( int i = 0; i < p_sys->i_es; i++ )
         {
-            if (EsIsSelected(es))
-                EsOutUnselectEs(out, es, es->p_pgrm == p_sys->p_pgrm);
+            if( EsIsSelected( p_sys->es[i] ) )
+                EsUnselect( out, p_sys->es[i],
+                            p_sys->es[i]->p_pgrm == p_sys->p_pgrm );
         }
-        foreach_es_then_es_slaves(es)
-        {
-            EsOutSelect(out, es, false);
-        }
-
+        for( int i = 0; i < p_sys->i_es; i++ )
+            EsOutSelect( out, p_sys->es[i], false );
         if( i_mode == ES_OUT_MODE_END )
             EsOutTerminate( out );
         return VLC_SUCCESS;
@@ -2546,7 +2334,7 @@ static int EsOutVaControlLocked( es_out_t *out, int i_query, va_list args )
     case ES_OUT_RESTART_ES:
     {
 #define IGNORE_ES DATA_ES
-        es_out_id_t *es = va_arg( args, es_out_id_t * ), *other;
+        es_out_id_t *es = va_arg( args, es_out_id_t * );
 
         enum es_format_category_e i_cat;
         if( es == NULL )
@@ -2558,96 +2346,68 @@ static int EsOutVaControlLocked( es_out_t *out, int i_query, va_list args )
         else if( es == es_cat + SPU_ES )
             i_cat = SPU_ES;
         else
-        {
-            if (es->b_terminated)
-                return VLC_EGENERIC;
             i_cat = IGNORE_ES;
-        }
 
-        foreach_es_then_es_slaves(other)
+        for( int i = 0; i < p_sys->i_es; i++ )
         {
             if( i_cat == IGNORE_ES )
             {
-                if (es == other)
+                if( es == p_sys->es[i] )
                 {
-                    if (i_query == ES_OUT_RESTART_ES && es->p_dec != NULL)
+                    if( i_query == ES_OUT_RESTART_ES && p_sys->es[i]->p_dec )
                     {
-                        EsOutDestroyDecoder(out, es);
-                        EsOutCreateDecoder(out, es);
+                        EsDestroyDecoder( out, p_sys->es[i] );
+                        EsCreateDecoder( out, p_sys->es[i] );
                     }
                     else if( i_query == ES_OUT_SET_ES )
                     {
-                        EsOutSelect(out, es, true);
+                        EsOutSelect( out, es, true );
                     }
                     break;
                 }
             }
-            else if (i_cat == UNKNOWN_ES || other->fmt.i_cat == i_cat)
+            else
             {
-                if (EsIsSelected(other))
+                if( i_cat == UNKNOWN_ES || p_sys->es[i]->fmt.i_cat == i_cat )
                 {
-                    if (i_query == ES_OUT_RESTART_ES)
+                    if( EsIsSelected( p_sys->es[i] ) )
                     {
-                        if (other->p_dec != NULL)
+                        if( i_query == ES_OUT_RESTART_ES )
                         {
-                            EsOutDestroyDecoder(out, other);
-                            EsOutCreateDecoder(out, other);
+                            if( p_sys->es[i]->p_dec )
+                            {
+                                EsDestroyDecoder( out, p_sys->es[i] );
+                                EsCreateDecoder( out, p_sys->es[i] );
+                            }
+                        }
+                        else
+                        {
+                            EsUnselect( out, p_sys->es[i],
+                                        p_sys->es[i]->p_pgrm == p_sys->p_pgrm );
                         }
                     }
-                    else
-                        EsOutUnselectEs(out, other, other->p_pgrm == p_sys->p_pgrm);
                 }
             }
         }
-
-        EsOutStopFreeVout( out );
         return VLC_SUCCESS;
-    }
-    case ES_OUT_UNSET_ES:
-    {
-        es_out_id_t *es = va_arg( args, es_out_id_t * ), *other;
-        if (es->b_terminated)
-            return VLC_EGENERIC;
-        foreach_es_then_es_slaves(other)
-        {
-            if (es == other)
-            {
-                if (EsIsSelected(other))
-                {
-                    EsOutUnselectEs(out, other, other->p_pgrm == p_sys->p_pgrm);
-                    EsOutStopFreeVout( out );
-                    return VLC_SUCCESS;
-                }
-                break;
-            }
-        }
-        return VLC_EGENERIC;
     }
     case ES_OUT_STOP_ALL_ES:
     {
-        es_out_id_t *es;
-        int count = 0;
-
-        foreach_es_then_es_slaves(es)
-            count++;
-
-        int *selected_es = vlc_alloc(count + 1, sizeof(int));
+        int *selected_es = vlc_alloc(p_sys->i_es + 1, sizeof(int));
         if (!selected_es)
             return VLC_ENOMEM;
-
-        *va_arg(args, void **) = selected_es;
-        *selected_es = count;
-
-        foreach_es_then_es_slaves(es)
+        selected_es[0] = p_sys->i_es;
+        for( int i = 0; i < p_sys->i_es; i++ )
         {
-            if (EsIsSelected(es))
+            if( EsIsSelected( p_sys->es[i] ) )
             {
-                EsOutDestroyDecoder(out, es);
-                *++selected_es = es->fmt.i_id;
+                EsDestroyDecoder( out, p_sys->es[i] );
+                selected_es[i + 1] = p_sys->es[i]->i_id;
             }
             else
-                *++selected_es = -1;
+                selected_es[i + 1] = -1;
         }
+        *va_arg( args, void **) = selected_es;
         return VLC_SUCCESS;
     }
     case ES_OUT_START_ALL_ES:
@@ -2660,11 +2420,10 @@ static int EsOutVaControlLocked( es_out_t *out, int i_query, va_list args )
             if( i_id != -1 )
             {
                 es_out_id_t *p_es = EsOutGetFromID( out, i_id );
-                EsOutCreateDecoder( out, p_es );
+                EsCreateDecoder( out, p_es );
             }
         }
         free(selected_es);
-        EsOutStopFreeVout( out );
         return VLC_SUCCESS;
     }
 
@@ -2693,13 +2452,13 @@ static int EsOutVaControlLocked( es_out_t *out, int i_query, va_list args )
         else
         {
             /*if( es->fmt.i_cat == VIDEO_ES )
-                p_sys->i_default_video_id = es->fmt.i_id;
+                p_sys->i_default_video_id = es->i_id;
             else
             if( es->fmt.i_cat == AUDIO_ES )
-                p_sys->i_default_audio_id = es->fmt.i_id;
+                p_sys->i_default_audio_id = es->i_id;
             else*/
             if( es->fmt.i_cat == SPU_ES )
-                p_sys->sub.i_demux_id = es->fmt.i_id;
+                p_sys->sub.i_demux_id = es->i_id;
         }
         return VLC_SUCCESS;
     }
@@ -2709,7 +2468,7 @@ static int EsOutVaControlLocked( es_out_t *out, int i_query, va_list args )
     {
         es_out_pgrm_t *p_pgrm = NULL;
         int            i_group = 0;
-        vlc_tick_t     i_pcr;
+        int64_t        i_pcr;
 
         /* Search program */
         if( i_query == ES_OUT_SET_PCR )
@@ -2726,20 +2485,20 @@ static int EsOutVaControlLocked( es_out_t *out, int i_query, va_list args )
         if( !p_pgrm )
             return VLC_EGENERIC;
 
-        i_pcr = va_arg( args, vlc_tick_t );
-        if( i_pcr == VLC_TICK_INVALID )
+        i_pcr = va_arg( args, int64_t );
+        if( i_pcr <= VLC_TS_INVALID )
         {
             msg_Err( p_sys->p_input, "Invalid PCR value in ES_OUT_SET_(GROUP_)PCR !" );
             return VLC_EGENERIC;
         }
 
-        /* TODO do not use vlc_tick_now() but proper stream acquisition date */
+        /* TODO do not use mdate() but proper stream acquisition date */
         bool b_late;
-        input_clock_Update( p_pgrm->p_input_clock, VLC_OBJECT(p_sys->p_input),
+        input_clock_Update( p_pgrm->p_clock, VLC_OBJECT(p_sys->p_input),
                             &b_late,
                             input_priv(p_sys->p_input)->b_can_pace_control || p_sys->b_buffering,
                             EsOutIsExtraBufferingAllowed( out ),
-                            i_pcr, vlc_tick_now() );
+                            i_pcr, mdate() );
 
         if( !p_sys->p_pgrm )
             return VLC_SUCCESS;
@@ -2754,41 +2513,36 @@ static int EsOutVaControlLocked( es_out_t *out, int i_query, va_list args )
             if( b_late && ( !input_priv(p_sys->p_input)->p_sout ||
                             !input_priv(p_sys->p_input)->b_out_pace_control ) )
             {
-                const vlc_tick_t i_pts_delay_base = p_sys->i_pts_delay - p_sys->i_pts_jitter;
-                vlc_tick_t i_pts_delay = input_clock_GetJitter( p_pgrm->p_input_clock );
+                const mtime_t i_pts_delay_base = p_sys->i_pts_delay - p_sys->i_pts_jitter;
+                mtime_t i_pts_delay = input_clock_GetJitter( p_pgrm->p_clock );
 
                 /* Avoid dangerously high value */
-                const vlc_tick_t i_jitter_max =
-                        VLC_TICK_FROM_MS(var_InheritInteger( p_sys->p_input, "clock-jitter" ));
+                const mtime_t i_jitter_max = INT64_C(1000) * var_InheritInteger( p_sys->p_input, "clock-jitter" );
                 if( i_pts_delay > __MIN( i_pts_delay_base + i_jitter_max, INPUT_PTS_DELAY_MAX ) )
                 {
-                    es_out_pgrm_t *pgrm;
-
                     msg_Err( p_sys->p_input,
                              "ES_OUT_SET_(GROUP_)PCR  is called too late (jitter of %d ms ignored)",
-                             (int)MS_FROM_VLC_TICK(i_pts_delay - i_pts_delay_base) );
+                             (int)(i_pts_delay - i_pts_delay_base) / 1000 );
                     i_pts_delay = p_sys->i_pts_delay;
 
                     /* reset clock */
-                    vlc_list_foreach(pgrm, &p_sys->programs, node)
-                    {
-                        input_clock_Reset(pgrm->p_input_clock);
-                        vlc_clock_main_Reset(p_pgrm->p_main_clock);
-                    }
+                    for( int i = 0; i < p_sys->i_pgrm; i++ )
+                      input_clock_Reset( p_sys->pgrm[i]->p_clock );
                 }
                 else
                 {
                     msg_Err( p_sys->p_input,
                              "ES_OUT_SET_(GROUP_)PCR  is called too late (pts_delay increased to %d ms)",
-                             (int)MS_FROM_VLC_TICK(i_pts_delay) );
+                             (int)(i_pts_delay/1000) );
 
                     /* Force a rebufferization when we are too late */
-                    EsOutControlLocked( out, ES_OUT_RESET_PCR );
+
+                    /* It is not really good, as we throw away already buffered data
+                     * TODO have a mean to correctly reenter bufferization */
+                    es_out_Control( out, ES_OUT_RESET_PCR );
                 }
 
-                EsOutControlLocked( out, ES_OUT_SET_JITTER, i_pts_delay_base,
-                                    i_pts_delay - i_pts_delay_base,
-                                    p_sys->i_cr_average );
+                es_out_SetJitter( out, i_pts_delay_base, i_pts_delay - i_pts_delay_base, p_sys->i_cr_average );
             }
         }
         return VLC_SUCCESS;
@@ -2796,51 +2550,41 @@ static int EsOutVaControlLocked( es_out_t *out, int i_query, va_list args )
 
     case ES_OUT_RESET_PCR:
         msg_Dbg( p_sys->p_input, "ES_OUT_RESET_PCR called" );
-        EsOutChangePosition( out, true );
+        EsOutChangePosition( out );
         return VLC_SUCCESS;
 
     case ES_OUT_SET_GROUP:
     {
         int i = va_arg( args, int );
-        es_out_pgrm_t *p_pgrm;
-
-        vlc_list_foreach(p_pgrm, &p_sys->programs, node)
+        for( int j = 0; j < p_sys->i_pgrm; j++ )
+        {
+            es_out_pgrm_t *p_pgrm = p_sys->pgrm[j];
             if( p_pgrm->i_id == i )
             {
                 EsOutProgramSelect( out, p_pgrm );
                 return VLC_SUCCESS;
             }
+        }
         return VLC_EGENERIC;
     }
 
     case ES_OUT_SET_ES_FMT:
     {
+        /* This ain't pretty but is need by some demuxers (eg. Ogg )
+         * to update the p_extra data */
         es_out_id_t *es = va_arg( args, es_out_id_t * );
         es_format_t *p_fmt = va_arg( args, es_format_t * );
-        if( es == NULL || es->fmt.i_cat != p_fmt->i_cat
-         || es->fmt.i_id != p_fmt->i_id
-         || es->fmt.i_group != p_fmt->i_group )
+        if( es == NULL )
             return VLC_EGENERIC;
 
         es_format_Clean( &es->fmt );
-        int ret = es_format_Copy( &es->fmt, p_fmt );
-        if( ret != VLC_SUCCESS )
-            return ret;
-        EsOutFillEsFmt( out, &es->fmt );
-        EsOutUpdateEsLanguageTitle(es, &es->fmt);
+        es_format_Copy( &es->fmt, p_fmt );
 
-        const bool b_was_selected = EsIsSelected( es );
         if( es->p_dec )
         {
-            EsOutDrainDecoder( out, es );
-            EsDeleteCCChannels( out, es );
-            EsOutDestroyDecoder( out, es );
+            EsDestroyDecoder( out, es );
+            EsCreateDecoder( out, es );
         }
-
-        if(b_was_selected)
-            EsOutCreateDecoder( out, es );
-
-        EsOutSendEsEvent( out, es, VLC_INPUT_ES_UPDATED );
 
         return VLC_SUCCESS;
     }
@@ -2918,7 +2662,7 @@ static int EsOutVaControlLocked( es_out_t *out, int i_query, va_list args )
 
     case ES_OUT_GET_WAKE_UP:
     {
-        vlc_tick_t *pi_wakeup = va_arg( args, vlc_tick_t* );
+        mtime_t *pi_wakeup = va_arg( args, mtime_t* );
         *pi_wakeup = EsOutGetWakeup( out );
         return VLC_SUCCESS;
     }
@@ -2933,17 +2677,48 @@ static int EsOutVaControlLocked( es_out_t *out, int i_query, va_list args )
 
         switch( i_query )
         {
-        case ES_OUT_SET_ES_BY_ID:         i_new_query = ES_OUT_SET_ES;
-            p_es->b_forced = va_arg( args, int );
-            break;
+        case ES_OUT_SET_ES_BY_ID:         i_new_query = ES_OUT_SET_ES; break;
         case ES_OUT_RESTART_ES_BY_ID:     i_new_query = ES_OUT_RESTART_ES; break;
         case ES_OUT_SET_ES_DEFAULT_BY_ID: i_new_query = ES_OUT_SET_ES_DEFAULT; break;
         default:
           vlc_assert_unreachable();
         }
-        int i_ret = EsOutControlLocked( out, i_new_query, p_es );
+        /* TODO if the lock is made non recursive it should be changed */
+        int i_ret = es_out_Control( out, i_new_query, p_es );
 
+        /* Clean up vout after user action (in active mode only).
+         * FIXME it does not work well with multiple video windows */
+        if( p_sys->b_active )
+            input_resource_TerminateVout( input_priv(p_sys->p_input)->p_resource );
         return i_ret;
+    }
+
+    case ES_OUT_GET_ES_OBJECTS_BY_ID:
+    {
+        const int i_id = va_arg( args, int );
+        es_out_id_t *p_es = EsOutGetFromID( out, i_id );
+        if( !p_es )
+            return VLC_EGENERIC;
+
+        vlc_object_t    **pp_decoder = va_arg( args, vlc_object_t ** );
+        vout_thread_t   **pp_vout    = va_arg( args, vout_thread_t ** );
+        audio_output_t **pp_aout    = va_arg( args, audio_output_t ** );
+        if( p_es->p_dec )
+        {
+            if( pp_decoder )
+                *pp_decoder = vlc_object_hold( p_es->p_dec );
+            input_DecoderGetObjects( p_es->p_dec, pp_vout, pp_aout );
+        }
+        else
+        {
+            if( pp_decoder )
+                *pp_decoder = NULL;
+            if( pp_vout )
+                *pp_vout = NULL;
+            if( pp_aout )
+                *pp_aout = NULL;
+        }
+        return VLC_SUCCESS;
     }
 
     case ES_OUT_GET_BUFFERING:
@@ -2963,7 +2738,7 @@ static int EsOutVaControlLocked( es_out_t *out, int i_query, va_list args )
     case ES_OUT_SET_DELAY:
     {
         const int i_cat = va_arg( args, int );
-        const vlc_tick_t i_delay = va_arg( args, vlc_tick_t );
+        const mtime_t i_delay = va_arg( args, mtime_t );
         EsOutSetDelay( out, i_cat, i_delay );
         return VLC_SUCCESS;
     }
@@ -2978,7 +2753,7 @@ static int EsOutVaControlLocked( es_out_t *out, int i_query, va_list args )
     {
         const bool b_source_paused = (bool)va_arg( args, int );
         const bool b_paused = (bool)va_arg( args, int );
-        const vlc_tick_t i_date = va_arg( args, vlc_tick_t );
+        const mtime_t i_date = va_arg( args, mtime_t );
 
         assert( !b_source_paused == !b_paused );
         EsOutChangePause( out, b_paused, i_date );
@@ -2988,11 +2763,21 @@ static int EsOutVaControlLocked( es_out_t *out, int i_query, va_list args )
 
     case ES_OUT_SET_RATE:
     {
-        const float src_rate = va_arg( args, double );
-        const float rate = va_arg( args, double );
+        const int i_src_rate = va_arg( args, int );
+        const int i_rate = va_arg( args, int );
 
-        assert( src_rate == rate );
-        EsOutChangeRate( out, rate );
+        assert( i_src_rate == i_rate );
+        EsOutChangeRate( out, i_rate );
+
+        return VLC_SUCCESS;
+    }
+
+    case ES_OUT_SET_TIME:
+    {
+        const mtime_t i_date = va_arg( args, mtime_t );
+
+        assert( i_date == -1 );
+        EsOutChangePosition( out );
 
         return VLC_SUCCESS;
     }
@@ -3004,14 +2789,14 @@ static int EsOutVaControlLocked( es_out_t *out, int i_query, va_list args )
     case ES_OUT_SET_TIMES:
     {
         double f_position = va_arg( args, double );
-        vlc_tick_t i_time = va_arg( args, vlc_tick_t );
-        vlc_tick_t i_length = va_arg( args, vlc_tick_t );
+        mtime_t i_time = va_arg( args, mtime_t );
+        mtime_t i_length = va_arg( args, mtime_t );
 
         input_SendEventLength( p_sys->p_input, i_length );
 
         if( !p_sys->b_buffering )
         {
-            vlc_tick_t i_delay;
+            mtime_t i_delay;
 
             /* Fix for buffering delay */
             if( !input_priv(p_sys->p_input)->p_sout ||
@@ -3035,10 +2820,9 @@ static int EsOutVaControlLocked( es_out_t *out, int i_query, va_list args )
     }
     case ES_OUT_SET_JITTER:
     {
-        vlc_tick_t i_pts_delay  = va_arg( args, vlc_tick_t );
-        vlc_tick_t i_pts_jitter = va_arg( args, vlc_tick_t );
+        mtime_t i_pts_delay  = va_arg( args, mtime_t );
+        mtime_t i_pts_jitter = va_arg( args, mtime_t );
         int     i_cr_average = va_arg( args, int );
-        es_out_pgrm_t *pgrm;
 
         bool b_change_clock =
             i_pts_delay + i_pts_jitter != p_sys->i_pts_delay ||
@@ -3049,16 +2833,9 @@ static int EsOutVaControlLocked( es_out_t *out, int i_query, va_list args )
         p_sys->i_pts_jitter = i_pts_jitter;
         p_sys->i_cr_average = i_cr_average;
 
-        if (b_change_clock)
-        {
-            vlc_list_foreach(pgrm, &p_sys->programs, node)
-            {
-                input_clock_SetJitter(pgrm->p_input_clock, i_pts_delay
-                                      + i_pts_jitter, i_cr_average);
-                vlc_clock_main_SetInputDejitter(pgrm->p_main_clock,
-                                                i_pts_delay + i_pts_jitter);
-            }
-        }
+        for( int i = 0; i < p_sys->i_pgrm && b_change_clock; i++ )
+            input_clock_SetJitter( p_sys->pgrm[i]->p_clock,
+                                   i_pts_delay + i_pts_jitter, i_cr_average );
         return VLC_SUCCESS;
     }
 
@@ -3071,9 +2848,9 @@ static int EsOutVaControlLocked( es_out_t *out, int i_query, va_list args )
         if( !p_pgrm )
             return VLC_EGENERIC;
 
-        vlc_tick_t *pi_system = va_arg( args, vlc_tick_t *);
-        vlc_tick_t *pi_delay  = va_arg( args, vlc_tick_t *);
-        input_clock_GetSystemOrigin( p_pgrm->p_input_clock, pi_system, pi_delay );
+        mtime_t *pi_system = va_arg( args, mtime_t *);
+        mtime_t *pi_delay  = va_arg( args, mtime_t *);
+        input_clock_GetSystemOrigin( p_pgrm->p_clock, pi_system, pi_delay );
         return VLC_SUCCESS;
     }
 
@@ -3087,97 +2864,27 @@ static int EsOutVaControlLocked( es_out_t *out, int i_query, va_list args )
             return VLC_EGENERIC;
 
         const bool    b_absolute = va_arg( args, int );
-        const vlc_tick_t i_system   = va_arg( args, vlc_tick_t );
-        input_clock_ChangeSystemOrigin( p_pgrm->p_input_clock, b_absolute, i_system );
+        const mtime_t i_system   = va_arg( args, mtime_t );
+        input_clock_ChangeSystemOrigin( p_pgrm->p_clock, b_absolute, i_system );
         return VLC_SUCCESS;
     }
     case ES_OUT_SET_EOS:
     {
-        es_out_id_t *id;
-        foreach_es_then_es_slaves(id)
+        for (int i = 0; i < p_sys->i_es; i++) {
+            es_out_id_t *id = p_sys->es[i];
             if (id->p_dec != NULL)
                 input_DecoderDrain(id->p_dec);
+        }
         return VLC_SUCCESS;
     }
 
     case ES_OUT_POST_SUBNODE:
     {
-        input_thread_t *input = p_sys->p_input;
         input_item_node_t *node = va_arg(args, input_item_node_t *);
-        input_SendEventParsing(input, node);
-        input_item_node_Delete(node);
-
+        input_item_node_PostAndDelete(node);
         return VLC_SUCCESS;
     }
 
-    case ES_OUT_VOUT_SET_MOUSE_EVENT:
-    {
-        es_out_id_t *p_es = va_arg( args, es_out_id_t * );
-
-        if( !p_es || p_es->fmt.i_cat != VIDEO_ES )
-            return VLC_EGENERIC;
-
-        p_es->mouse_event_cb = va_arg( args, vlc_mouse_event );
-        p_es->mouse_event_userdata = va_arg( args, void * );
-
-        if( p_es->p_dec )
-            input_DecoderSetVoutMouseEvent( p_es->p_dec,
-                p_es->mouse_event_cb, p_es->mouse_event_userdata );
-
-        return VLC_SUCCESS;
-    }
-    case ES_OUT_VOUT_ADD_OVERLAY:
-    {
-        es_out_id_t *p_es = va_arg( args, es_out_id_t * );
-        subpicture_t *sub = va_arg( args, subpicture_t * );
-        int *channel = va_arg( args, int * );
-        if( p_es && p_es->fmt.i_cat == VIDEO_ES && p_es->p_dec )
-            return input_DecoderAddVoutOverlay( p_es->p_dec, sub, channel );
-        return VLC_EGENERIC;
-    }
-    case ES_OUT_VOUT_FLUSH_OVERLAY:
-    {
-        es_out_id_t *p_es = va_arg( args, es_out_id_t * );
-        int channel = va_arg( args, int );
-        if( p_es && p_es->fmt.i_cat == VIDEO_ES && p_es->p_dec )
-            return input_DecoderFlushVoutOverlay( p_es->p_dec, channel );
-        return VLC_EGENERIC;
-    }
-    case ES_OUT_SPU_SET_HIGHLIGHT:
-    {
-        es_out_id_t *p_es = va_arg( args, es_out_id_t * );
-        const vlc_spu_highlight_t *spu_hl =
-            va_arg( args, const vlc_spu_highlight_t * );
-        if( p_es && p_es->fmt.i_cat == SPU_ES && p_es->p_dec )
-            return input_DecoderSetSpuHighlight( p_es->p_dec, spu_hl );
-        return VLC_EGENERIC;
-    }
-    case ES_OUT_SET_VBI_PAGE:
-    case ES_OUT_SET_VBI_TRANSPARENCY:
-    {
-        es_out_id_t *es = va_arg( args, es_out_id_t * );
-        assert(es);
-        if( !es->p_dec || es->fmt.i_cat != SPU_ES
-          || es->fmt.i_codec != VLC_CODEC_TELETEXT )
-            return VLC_EGENERIC;
-
-        int ret;
-        if( i_query == ES_OUT_SET_VBI_PAGE )
-        {
-            unsigned page = va_arg( args, unsigned );
-            ret = var_SetInteger( es->p_dec, "vbi-page", page );
-            if( ret == VLC_SUCCESS )
-                input_SendEventVbiPage( p_sys->p_input, page );
-        }
-        else
-        {
-            bool opaque = va_arg( args, int );
-            ret = var_SetBool( es->p_dec, "vbi-opaque", opaque );
-            if( ret == VLC_SUCCESS )
-                input_SendEventVbiTransparency( p_sys->p_input, opaque );
-        }
-        return ret;
-    }
     default:
         msg_Err( p_sys->p_input, "unknown query 0x%x in %s", i_query,
                  __func__  );
@@ -3186,24 +2893,15 @@ static int EsOutVaControlLocked( es_out_t *out, int i_query, va_list args )
 }
 static int EsOutControl( es_out_t *out, int i_query, va_list args )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
+    es_out_sys_t *p_sys = out->p_sys;
     int i_ret;
 
     vlc_mutex_lock( &p_sys->lock );
-    i_ret = EsOutVaControlLocked( out, i_query, args );
+    i_ret = EsOutControlLocked( out, i_query, args );
     vlc_mutex_unlock( &p_sys->lock );
 
     return i_ret;
 }
-
-static const struct es_out_callbacks es_out_cbs =
-{
-    .add = EsOutAdd,
-    .send = EsOutSend,
-    .del = EsOutDel,
-    .control = EsOutControl,
-    .destroy = EsOutDelete,
-};
 
 /****************************************************************************
  * LanguageGetName: try to expend iso639 into plain name
@@ -3335,60 +3033,50 @@ static int LanguageArrayIndex( char **ppsz_langs, const char *psz_lang )
     return -1;
 }
 
-static int EsOutEsUpdateFmt(es_out_t *out, es_out_id_t *es,
-                            const es_format_t *fmt)
-{
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
-    input_thread_t *p_input = p_sys->p_input;
-
-    assert(es->fmt.i_cat == fmt->i_cat);
-
-    es_format_t update = *fmt;
-
-    /* decoder may overwrite these values */
-    update.i_id = es->fmt.i_id;
-    update.i_group = es->fmt.i_group;
-    update.i_priority = es->fmt.i_priority;
-    update.i_codec = es->fmt.i_codec;
-    update.i_original_fourcc = es->fmt.i_original_fourcc;
-
-    if (update.psz_language == NULL)
-        update.psz_language = es->fmt.psz_language;
-    if (update.psz_description == NULL)
-        update.psz_description = es->fmt.psz_description;
-    if (update.i_cat == SPU_ES && update.subs.psz_encoding == NULL)
-        update.subs.psz_encoding = es->fmt.subs.psz_encoding;
-    if (update.i_extra_languages == 0)
-    {
-        assert(update.p_extra_languages == NULL);
-        update.i_extra_languages = es->fmt.i_extra_languages;
-        update.p_extra_languages = es->fmt.p_extra_languages;
-    }
-
-    es_format_Clean(&es->fmt_out);
-    int ret = es_format_Copy(&es->fmt_out, &update);
-    if (ret == VLC_SUCCESS)
-    {
-        EsOutUpdateEsLanguageTitle(es, &es->fmt_out);
-        input_item_UpdateTracksInfo(input_GetItem(p_input), &es->fmt_out);
-    }
-
-    return ret;
-}
-
 /****************************************************************************
  * EsOutUpdateInfo:
  * - add meta info to the playlist item
  ****************************************************************************/
-static void EsOutUpdateInfo( es_out_t *out, es_out_id_t *es, const vlc_meta_t *p_meta )
+static void EsOutUpdateInfo( es_out_t *out, es_out_id_t *es, const es_format_t *fmt, const vlc_meta_t *p_meta )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
+    es_out_sys_t   *p_sys = out->p_sys;
     input_thread_t *p_input = p_sys->p_input;
-    input_item_t   *p_item = input_priv(p_input)->p_item;
     const es_format_t *p_fmt_es = &es->fmt;
-    const es_format_t *fmt = es->fmt_out.i_cat != UNKNOWN_ES ? &es->fmt_out : &es->fmt;
+    lldiv_t         div;
 
-    input_item_UpdateTracksInfo( p_item , fmt );
+    if( es->fmt.i_cat == fmt->i_cat )
+    {
+        es_format_t update = *fmt;
+        update.i_id = es->i_meta_id;
+        update.i_codec = es->fmt.i_codec;
+        update.i_original_fourcc = es->fmt.i_original_fourcc;
+
+        /* Update infos that could have been lost by the decoder (no need to
+         * dup them since input_item_UpdateTracksInfo() will do it). */
+        if (update.psz_language == NULL)
+            update.psz_language = es->fmt.psz_language;
+        if (update.psz_description == NULL)
+            update.psz_description = es->fmt.psz_description;
+        if (update.i_cat == SPU_ES)
+        {
+            if (update.subs.psz_encoding == NULL)
+                update.subs.psz_encoding = es->fmt.subs.psz_encoding;
+            if (update.subs.p_style == NULL)
+                update.subs.p_style = es->fmt.subs.p_style;
+        }
+        if (update.i_extra_languages == 0)
+        {
+            assert(update.p_extra_languages == NULL);
+            update.i_extra_languages = es->fmt.i_extra_languages;
+            update.p_extra_languages = es->fmt.p_extra_languages;
+        }
+
+        /* No need to update codec specific data */
+        update.i_extra = 0;
+        update.p_extra = NULL;
+
+        input_item_UpdateTracksInfo(input_GetItem(p_input), &update);
+    }
 
     /* Create category */
     char* psz_cat = EsInfoCategoryName( es );
@@ -3404,11 +3092,12 @@ static void EsOutUpdateInfo( es_out_t *out, es_out_id_t *es, const vlc_meta_t *p
         return;
 
     /* Add information */
-    if( es->i_meta_id != es->fmt.i_id )
+    if( es->i_meta_id != es->i_id )
         info_category_AddInfo( p_cat, _("Original ID"),
-                       "%d", es->fmt.i_id );
+                       "%d", es->i_id );
 
-    const vlc_fourcc_t i_codec_fourcc = p_fmt_es->i_original_fourcc;
+    const vlc_fourcc_t i_codec_fourcc = ( p_fmt_es->i_original_fourcc )?
+                               p_fmt_es->i_original_fourcc : p_fmt_es->i_codec;
     const char *psz_codec_description =
         vlc_fourcc_GetDescription( p_fmt_es->i_cat, i_codec_fourcc );
     if( psz_codec_description && *psz_codec_description )
@@ -3432,17 +3121,19 @@ static void EsOutUpdateInfo( es_out_t *out, es_out_id_t *es, const vlc_meta_t *p
 
         if( fmt->audio.i_physical_channels )
             info_category_AddInfo( p_cat, _("Channels"), "%s",
-                vlc_gettext( aout_FormatPrintChannels( &fmt->audio ) ) );
+                                   _( aout_FormatPrintChannels( &fmt->audio ) ) );
 
         if( fmt->audio.i_rate != 0 )
         {
             info_category_AddInfo( p_cat, _("Sample rate"), _("%u Hz"),
                                    fmt->audio.i_rate );
+            /* FIXME that should be removed or improved ! (used by text/strings.c) */
+            var_SetInteger( p_input, "sample-rate", fmt->audio.i_rate );
         }
 
         unsigned int i_bitspersample = fmt->audio.i_bitspersample;
         if( i_bitspersample == 0 )
-            i_bitspersample = aout_BitsPerSample( fmt->i_codec );
+            i_bitspersample = aout_BitsPerSample( p_fmt_es->i_codec );
         if( i_bitspersample != 0 )
             info_category_AddInfo( p_cat, _("Bits per sample"), "%u",
                                    i_bitspersample );
@@ -3451,6 +3142,8 @@ static void EsOutUpdateInfo( es_out_t *out, es_out_id_t *es, const vlc_meta_t *p
         {
             info_category_AddInfo( p_cat, _("Bitrate"), _("%u kb/s"),
                                    fmt->i_bitrate / 1000 );
+            /* FIXME that should be removed or improved ! (used by text/strings.c) */
+            var_SetInteger( p_input, "bit-rate", fmt->i_bitrate );
         }
         for( int i = 0; i < AUDIO_REPLAY_GAIN_MAX; i++ )
         {
@@ -3483,13 +3176,15 @@ static void EsOutUpdateInfo( es_out_t *out, es_out_id_t *es, const vlc_meta_t *p
        if( fmt->video.i_frame_rate > 0 &&
            fmt->video.i_frame_rate_base > 0 )
        {
-           if( fmt->video.i_frame_rate_base == 1 )
-               info_category_AddInfo( p_cat, _("Frame rate"), "%u",
-                                      fmt->video.i_frame_rate );
+           div = lldiv( (float)fmt->video.i_frame_rate /
+                               fmt->video.i_frame_rate_base * 1000000,
+                               1000000 );
+           if( div.rem > 0 )
+               info_category_AddInfo( p_cat, _("Frame rate"), "%"PRId64".%06u",
+                                      div.quot, (unsigned int )div.rem );
            else
-               info_category_AddInfo( p_cat, _("Frame rate"), "%.6f",
-                                      (double)fmt->video.i_frame_rate
-                                      / (double)fmt->video.i_frame_rate_base );
+               info_category_AddInfo( p_cat, _("Frame rate"), "%"PRId64,
+                                      div.quot );
        }
        if( fmt->i_codec != p_fmt_es->i_codec )
        {
@@ -3507,7 +3202,7 @@ static void EsOutUpdateInfo( es_out_t *out, es_out_id_t *es, const vlc_meta_t *p
                N_("Left bottom"), N_("Right top"),
            };
            info_category_AddInfo( p_cat, _("Orientation"), "%s",
-               vlc_gettext(orient_names[fmt->video.orientation]) );
+                                  _(orient_names[fmt->video.orientation]) );
        }
        if( fmt->video.primaries != COLOR_PRIMARIES_UNDEF )
        {
@@ -3525,7 +3220,7 @@ static void EsOutUpdateInfo( es_out_t *out, es_out_id_t *es, const vlc_meta_t *p
            static_assert(ARRAY_SIZE(primaries_names) == COLOR_PRIMARIES_MAX+1,
                          "Color primiaries table mismatch");
            info_category_AddInfo( p_cat, _("Color primaries"), "%s",
-               vlc_gettext(primaries_names[fmt->video.primaries]) );
+                                  _(primaries_names[fmt->video.primaries]) );
        }
        if( fmt->video.transfer != TRANSFER_FUNC_UNDEF )
        {
@@ -3536,14 +3231,14 @@ static void EsOutUpdateInfo( es_out_t *out, es_out_id_t *es, const vlc_meta_t *p
                [TRANSFER_FUNC_BT470_BG] = "ITU-R BT.470 BG",
                [TRANSFER_FUNC_BT470_M] = "ITU-R BT.470 M",
                [TRANSFER_FUNC_BT709] = "ITU-R BT.709",
-               [TRANSFER_FUNC_SMPTE_ST2084] = "SMPTE ST2084 (PQ)",
+               [TRANSFER_FUNC_SMPTE_ST2084] = "SMPTE ST2084",
                [TRANSFER_FUNC_SMPTE_240] = "SMPTE 240M",
                [TRANSFER_FUNC_HLG] = N_("Hybrid Log-Gamma"),
            };
            static_assert(ARRAY_SIZE(func_names) == TRANSFER_FUNC_MAX+1,
                          "Transfer functions table mismatch");
            info_category_AddInfo( p_cat, _("Color transfer function"), "%s",
-               vlc_gettext(func_names[fmt->video.transfer]) );
+                                  _(func_names[fmt->video.transfer]) );
        }
        if( fmt->video.space != COLOR_SPACE_UNDEF )
        {
@@ -3555,20 +3250,9 @@ static void EsOutUpdateInfo( es_out_t *out, es_out_id_t *es, const vlc_meta_t *p
            };
            static_assert(ARRAY_SIZE(space_names) == COLOR_SPACE_MAX+1,
                          "Color space table mismatch");
-           info_category_AddInfo( p_cat, _("Color space"), "%s",
-               vlc_gettext(space_names[fmt->video.space]) );
-       }
-       if( fmt->video.color_range != COLOR_RANGE_UNDEF )
-       {
-           static const char range_names[][16] = {
-               [COLOR_RANGE_UNDEF]   = N_("Undefined"),
-               [COLOR_RANGE_FULL]    = N_("Full"),
-               [COLOR_RANGE_LIMITED] = N_("Limited"),
-           };
-           static_assert(ARRAY_SIZE(range_names) == COLOR_RANGE_MAX+1,
-                         "Color range table mismatch");
-           info_category_AddInfo( p_cat, _("Color Range"), "%s",
-               vlc_gettext(range_names[fmt->video.color_range]) );
+           info_category_AddInfo( p_cat, _("Color space"), _("%s Range"),
+                                  _(space_names[fmt->video.space]),
+                       _(fmt->video.b_color_range_full ? "Full" : "Limited") );
        }
        if( fmt->video.chroma_location != CHROMA_LOCATION_UNDEF )
        {
@@ -3584,26 +3268,7 @@ static void EsOutUpdateInfo( es_out_t *out, es_out_id_t *es, const vlc_meta_t *p
            static_assert(ARRAY_SIZE(c_loc_names) == CHROMA_LOCATION_MAX+1,
                          "Chroma location table mismatch");
            info_category_AddInfo( p_cat, _("Chroma location"), "%s",
-               vlc_gettext(c_loc_names[fmt->video.chroma_location]) );
-       }
-       if( fmt->video.multiview_mode != MULTIVIEW_2D )
-       {
-           static const char c_multiview_names[][18] = {
-               [MULTIVIEW_2D] = N_("2D"),
-               [MULTIVIEW_STEREO_SBS] = N_("Side-By-Side"),
-               [MULTIVIEW_STEREO_TB] = N_("Top-Bottom"),
-               [MULTIVIEW_STEREO_ROW] = N_("Row Sequential"),
-               [MULTIVIEW_STEREO_COL] = N_("Column Sequential"),
-               [MULTIVIEW_STEREO_FRAME] =N_("Frame Sequential"),
-               [MULTIVIEW_STEREO_CHECKERBOARD] = N_("Checkboard"),
-           };
-           static_assert(ARRAY_SIZE(c_multiview_names) == MULTIVIEW_STEREO_MAX+1,
-                         "Multiview format table mismatch");
-           info_category_AddInfo( p_cat, _("Stereo Mode"), "%s",
-               vlc_gettext(c_multiview_names[fmt->video.multiview_mode]) );
-           info_category_AddInfo( p_cat, _("First Stereo Eye"),
-                                  vlc_gettext(fmt->video.b_multiview_right_eye_first ?
-                                      N_("Right") : N_("Left")) );
+                   _(c_loc_names[fmt->video.chroma_location]) );
        }
        if( fmt->video.projection_mode != PROJECTION_MODE_RECTANGULAR )
        {
@@ -3623,8 +3288,7 @@ static void EsOutUpdateInfo( es_out_t *out, es_out_id_t *es, const vlc_meta_t *p
                vlc_assert_unreachable();
                break;
            }
-           info_category_AddInfo( p_cat, _("Projection"), "%s",
-                                  vlc_gettext(psz_loc_name) );
+           info_category_AddInfo( p_cat, _("Projection"), "%s", _(psz_loc_name) );
 
            info_category_AddInfo( p_cat, vlc_pgettext("ViewPoint", "Yaw"),
                                   "%.2f", fmt->video.pose.yaw );
@@ -3638,12 +3302,12 @@ static void EsOutUpdateInfo( es_out_t *out, es_out_id_t *es, const vlc_meta_t *p
        }
        if ( fmt->video.mastering.max_luminance )
        {
-           info_category_AddInfo( p_cat, _("Max. mastering luminance"), "%.4f cd/m²",
+           info_category_AddInfo( p_cat, _("Max. luminance"), "%.4f cd/m²",
                fmt->video.mastering.max_luminance / 10000.f );
        }
        if ( fmt->video.mastering.min_luminance )
        {
-           info_category_AddInfo( p_cat, _("Min. mastering luminance"), "%.4f cd/m²",
+           info_category_AddInfo( p_cat, _("Min. luminance"), "%.4f cd/m²",
                fmt->video.mastering.min_luminance / 10000.f );
        }
        if ( fmt->video.mastering.primaries[4] &&
@@ -3651,37 +3315,37 @@ static void EsOutUpdateInfo( es_out_t *out, es_out_id_t *es, const vlc_meta_t *p
        {
            float x = (float)fmt->video.mastering.primaries[4] / 50000.f;
            float y = (float)fmt->video.mastering.primaries[5] / 50000.f;
-           info_category_AddInfo( p_cat, _("Mastering Primary R"), "x=%.4f y=%.4f", x, y );
+           info_category_AddInfo( p_cat, _("Primary R"), "x=%.4f y=%.4f", x, y );
        }
        if ( fmt->video.mastering.primaries[0] &&
             fmt->video.mastering.primaries[1] )
        {
            float x = (float)fmt->video.mastering.primaries[0] / 50000.f;
            float y = (float)fmt->video.mastering.primaries[1] / 50000.f;
-           info_category_AddInfo( p_cat, _("Mastering Primary G"), "x=%.4f y=%.4f", x, y );
+           info_category_AddInfo( p_cat, _("Primary G"), "x=%.4f y=%.4f", x, y );
        }
        if ( fmt->video.mastering.primaries[2] &&
             fmt->video.mastering.primaries[3] )
        {
            float x = (float)fmt->video.mastering.primaries[2] / 50000.f;
            float y = (float)fmt->video.mastering.primaries[3] / 50000.f;
-           info_category_AddInfo( p_cat, _("Mastering Primary B"), "x=%.4f y=%.4f", x, y );
+           info_category_AddInfo( p_cat, _("Primary B"), "x=%.4f y=%.4f", x, y );
        }
        if ( fmt->video.mastering.white_point[0] &&
             fmt->video.mastering.white_point[1] )
        {
            float x = (float)fmt->video.mastering.white_point[0] / 50000.f;
            float y = (float)fmt->video.mastering.white_point[1] / 50000.f;
-           info_category_AddInfo( p_cat, _("Mastering White point"), "x=%.4f y=%.4f", x, y );
+           info_category_AddInfo( p_cat, _("White point"), "x=%.4f y=%.4f", x, y );
        }
        if ( fmt->video.lighting.MaxCLL )
        {
-           info_category_AddInfo( p_cat, "MaxCLL", "%" PRIu16 " cd/m²",
+           info_category_AddInfo( p_cat, "MaxCLL", "%d cd/m²",
                                   fmt->video.lighting.MaxCLL );
        }
        if ( fmt->video.lighting.MaxFALL )
        {
-           info_category_AddInfo( p_cat, "MaxFALL", "%" PRIu16 " cd/m²",
+           info_category_AddInfo( p_cat, "MaxFALL", "%d cd/m²",
                                   fmt->video.lighting.MaxFALL );
        }
        break;
@@ -3711,54 +3375,18 @@ static void EsOutUpdateInfo( es_out_t *out, es_out_id_t *es, const vlc_meta_t *p
         free( ppsz_all_keys );
     }
     /* */
-    input_item_ReplaceInfos( p_item, p_cat );
-    if( !input_priv(p_input)->b_preparsing  )
-        input_SendEventMetaInfo( p_input );
+    input_Control( p_input, INPUT_REPLACE_INFOS, p_cat );
 }
 
-static void EsOutDeleteInfoEs( es_out_t *out, es_out_id_t *es )
+static void EsDeleteInfo( es_out_t *out, es_out_id_t *es )
 {
-    es_out_sys_t *p_sys = container_of(out, es_out_sys_t, out);
-    input_thread_t *p_input = p_sys->p_input;
-    input_item_t   *p_item = input_priv(p_input)->p_item;
     char* psz_info_category;
 
     if( likely( psz_info_category = EsInfoCategoryName( es ) ) )
     {
-        int ret = input_item_DelInfo( p_item, psz_info_category, NULL );
+        input_Control( out->p_sys->p_input, INPUT_DEL_INFO,
+          psz_info_category, NULL );
+
         free( psz_info_category );
-
-        if( ret == VLC_SUCCESS && !input_priv(p_input)->b_preparsing  )
-            input_SendEventMetaInfo( p_input );
     }
-}
-
-static inline es_out_id_t *vlc_es_id_get_out(vlc_es_id_t *id)
-{
-    return container_of(id, es_out_id_t, id);
-}
-
-vlc_es_id_t *
-vlc_es_id_Hold(vlc_es_id_t *id)
-{
-    EsHold(vlc_es_id_get_out(id));
-    return id;
-}
-
-void
-vlc_es_id_Release(vlc_es_id_t *id)
-{
-    EsRelease(vlc_es_id_get_out(id));
-}
-
-int
-vlc_es_id_GetInputId(vlc_es_id_t *id)
-{
-    return id->i_id;
-}
-
-enum es_format_category_e
-vlc_es_id_GetCat(vlc_es_id_t *id)
-{
-    return id->i_cat;
 }

@@ -35,6 +35,7 @@
 #include <vlc_plugin.h>
 #include <vlc_codec.h>
 #include <vlc_block_helper.h>
+#include <vlc_memory.h>
 #include <vlc_timestamp_helper.h>
 #include <vlc_threads.h>
 #include <vlc_bits.h>
@@ -68,7 +69,7 @@ typedef void (*dec_on_flush_cb)(decoder_t *);
 typedef int (*dec_process_output_cb)(decoder_t *, mc_api_out *, picture_t **,
                                      block_t **);
 
-typedef struct
+struct decoder_sys_t
 {
     mc_api api;
 
@@ -131,7 +132,7 @@ typedef struct
             int pi_extraction[AOUT_CHAN_MAX];
         } audio;
     };
-} decoder_sys_t;
+};
 
 /*****************************************************************************
  * Local prototypes
@@ -166,8 +167,6 @@ static void RemoveInflightPictures(decoder_t *);
 /*****************************************************************************
  * Module descriptor
  *****************************************************************************/
-#define MEDIACODEC_ENABLE_TEXT N_("Enable hardware acceleration")
-
 #define DIRECTRENDERING_TEXT "Android direct rendering"
 #define DIRECTRENDERING_LONGTEXT \
     "Enable Android direct rendering using opaque buffers."
@@ -184,8 +183,7 @@ vlc_module_begin ()
     set_category(CAT_INPUT)
     set_subcategory(SUBCAT_INPUT_VCODEC)
     set_section(N_("Decoding"), NULL)
-    set_capability("video decoder", 800)
-    add_bool("mediacodec", true, MEDIACODEC_ENABLE_TEXT, NULL, false)
+    set_capability("video decoder", 0) /* Only enabled via commandline arguments */
     add_bool(CFG_PREFIX "dr", true,
              DIRECTRENDERING_TEXT, DIRECTRENDERING_LONGTEXT, true)
     add_bool(CFG_PREFIX "audio", false,
@@ -352,7 +350,6 @@ static int ParseVideoExtraHEVC(decoder_t *p_dec, uint8_t *p_extra, int i_extra)
 
 static int ParseVideoExtraVc1(decoder_t *p_dec, uint8_t *p_extra, int i_extra)
 {
-    decoder_sys_t *p_sys = p_dec->p_sys;
     int offset = 0;
 
     if (i_extra < 4)
@@ -371,7 +368,7 @@ static int ParseVideoExtraVc1(decoder_t *p_dec, uint8_t *p_extra, int i_extra)
     if (offset >= i_extra - 4)
         return VLC_EGENERIC;
 
-    p_sys->pf_on_new_block = VideoVC1_OnNewBlock;
+    p_dec->p_sys->pf_on_new_block = VideoVC1_OnNewBlock;
     return CSDDup(p_dec, p_extra + offset, i_extra - offset);
 }
 
@@ -430,7 +427,7 @@ static int ParseExtra(decoder_t *p_dec)
         break;
     case VLC_CODEC_MPGV:
     case VLC_CODEC_MP2V:
-        p_sys->pf_on_new_block = VideoMPEG2_OnNewBlock;
+        p_dec->p_sys->pf_on_new_block = VideoMPEG2_OnNewBlock;
         break;
     }
     /* Set default CSD */
@@ -474,13 +471,12 @@ static int UpdateVout(decoder_t *p_dec)
     if (p_dummy_hwpic == NULL)
         return VLC_EGENERIC;
 
-    picture_sys_t *p_picsys = p_dummy_hwpic->p_sys;
-    assert(p_picsys);
-    assert(p_picsys->hw.p_surface);
-    assert(p_picsys->hw.p_jsurface);
+    assert(p_dummy_hwpic->p_sys);
+    assert(p_dummy_hwpic->p_sys->hw.p_surface);
+    assert(p_dummy_hwpic->p_sys->hw.p_jsurface);
 
-    p_sys->video.p_surface = p_picsys->hw.p_surface;
-    p_sys->video.p_jsurface = p_picsys->hw.p_jsurface;
+    p_sys->video.p_surface = p_dummy_hwpic->p_sys->hw.p_surface;
+    p_sys->video.p_jsurface = p_dummy_hwpic->p_sys->hw.p_jsurface;
     picture_Release(p_dummy_hwpic);
     return VLC_SUCCESS;
 }
@@ -509,18 +505,13 @@ static int StartMediaCodec(decoder_t *p_dec)
     }
     else
     {
-        date_Set(&p_sys->audio.i_end_date, VLC_TICK_INVALID);
+        date_Set(&p_sys->audio.i_end_date, VLC_TS_INVALID);
 
         args.audio.i_sample_rate    = p_dec->fmt_in.audio.i_rate;
-        args.audio.i_channel_count  = p_sys->audio.i_channels;
+        args.audio.i_channel_count  = p_dec->p_sys->audio.i_channels;
     }
 
-    if (p_sys->api.configure_decoder(&p_sys->api, &args) != 0)
-    {
-        return MC_API_ERROR;
-    }
-
-    return p_sys->api.start(&p_sys->api);
+    return p_sys->api.start(&p_sys->api, &args);
 }
 
 /*****************************************************************************
@@ -544,10 +535,6 @@ static void StopMediaCodec(decoder_t *p_dec)
 static int OpenDecoder(vlc_object_t *p_this, pf_MediaCodecApi_init pf_init)
 {
     decoder_t *p_dec = (decoder_t *)p_this;
-
-    if (!var_InheritBool(p_dec, "mediacodec"))
-        return VLC_EGENERIC;
-
     decoder_sys_t *p_sys;
     int i_ret;
     int i_profile = p_dec->fmt_in.i_profile;
@@ -648,14 +635,14 @@ static int OpenDecoder(vlc_object_t *p_this, pf_MediaCodecApi_init pf_init)
         free(p_sys);
         return VLC_EGENERIC;
     }
-    if (p_sys->api.prepare(&p_sys->api, i_profile) != 0)
+    if (p_sys->api.configure(&p_sys->api, i_profile) != 0)
     {
         /* If the device can't handle video/wvc1,
          * it can probably handle video/x-ms-wmv */
         if (!strcmp(mime, "video/wvc1") && p_dec->fmt_in.i_codec == VLC_CODEC_VC1)
         {
             p_sys->api.psz_mime = "video/x-ms-wmv";
-            if (p_sys->api.prepare(&p_sys->api, i_profile) != 0)
+            if (p_sys->api.configure(&p_sys->api, i_profile) != 0)
             {
                 p_sys->api.clean(&p_sys->api);
                 free(p_sys);
@@ -880,7 +867,7 @@ static void ReleasePicture(decoder_t *p_dec, unsigned i_index, bool b_render)
     p_sys->api.release_out(&p_sys->api, i_index, b_render);
 }
 
-static void ReleasePictureTs(decoder_t *p_dec, unsigned i_index, vlc_tick_t i_ts)
+static void ReleasePictureTs(decoder_t *p_dec, unsigned i_index, mtime_t i_ts)
 {
     decoder_sys_t *p_sys = p_dec->p_sys;
     assert(p_sys->api.release_out_ts);
@@ -964,7 +951,7 @@ static int Video_ProcessOutput(decoder_t *p_dec, mc_api_out *p_out,
             return p_sys->api.release_out(&p_sys->api, p_out->buf.i_index, false);
         }
 
-        if (forced_ts == VLC_TICK_INVALID)
+        if (forced_ts == VLC_TS_INVALID)
             p_pic->date = p_out->buf.i_ts;
         else
             p_pic->date = forced_ts;
@@ -972,8 +959,7 @@ static int Video_ProcessOutput(decoder_t *p_dec, mc_api_out *p_out,
 
         if (p_sys->api.b_direct_rendering)
         {
-            picture_sys_t *p_picsys = p_pic->p_sys;
-            p_picsys->hw.i_index = p_out->buf.i_index;
+            p_pic->p_sys->hw.i_index = p_out->buf.i_index;
             InsertInflightPicture(p_dec, p_pic->p_sys);
         } else {
             unsigned int chroma_div;
@@ -1345,7 +1331,7 @@ static int QueueBlockLocked(decoder_t *p_dec, block_t *p_in_block,
             return VLC_EGENERIC;
 
         bool b_config = false;
-        vlc_tick_t i_ts = 0;
+        mtime_t i_ts = 0;
         p_sys->b_input_dequeued = true;
         const void *p_buf = NULL;
         size_t i_size = 0;
@@ -1427,7 +1413,7 @@ static int QueueBlockLocked(decoder_t *p_dec, block_t *p_in_block,
         /* Wait for the OutThread to stop (and process all remaining output
          * frames. Use a timeout here since we can't know if all decoders will
          * behave correctly. */
-        vlc_tick_t deadline = vlc_tick_now() + INT64_C(3000000);
+        mtime_t deadline = mdate() + INT64_C(3000000);
         while (!p_sys->b_aborted && !p_sys->b_drained
             && vlc_cond_timedwait(&p_sys->dec_cond, &p_sys->lock, deadline) == 0);
 
@@ -1564,7 +1550,7 @@ static int Video_OnNewBlock(decoder_t *p_dec, block_t **pp_block)
     block_t *p_block = *pp_block;
 
     timestamp_FifoPut(p_sys->video.timestamp_fifo,
-                      p_block->i_pts ? VLC_TICK_INVALID : p_block->i_dts);
+                      p_block->i_pts ? VLC_TS_INVALID : p_block->i_dts);
 
     return 1;
 }
@@ -1684,9 +1670,9 @@ static int Audio_OnNewBlock(decoder_t *p_dec, block_t **pp_block)
     block_t *p_block = *pp_block;
 
     /* We've just started the stream, wait for the first PTS. */
-    if (date_Get(&p_sys->audio.i_end_date) == VLC_TICK_INVALID)
+    if (!date_Get(&p_sys->audio.i_end_date))
     {
-        if (p_block->i_pts == VLC_TICK_INVALID)
+        if (p_block->i_pts <= VLC_TS_INVALID)
             return 0;
         date_Set(&p_sys->audio.i_end_date, p_block->i_pts);
     }
@@ -1698,5 +1684,5 @@ static void Audio_OnFlush(decoder_t *p_dec)
 {
     decoder_sys_t *p_sys = p_dec->p_sys;
 
-    date_Set(&p_sys->audio.i_end_date, VLC_TICK_INVALID);
+    date_Set(&p_sys->audio.i_end_date, VLC_TS_INVALID);
 }

@@ -2,6 +2,7 @@
  * tospdif.c : encapsulates A/52 and DTS frames into S/PDIF packets
  *****************************************************************************
  * Copyright (C) 2002, 2006-2016 VLC authors and VideoLAN
+ * $Id: f228b2091dbc5a73c0fe211dd6e3b127d54367ff $
  *
  * Authors: Christophe Massiot <massiot@via.ecp.fr>
  *          Stéphane Borel <stef@via.ecp.fr>
@@ -50,7 +51,7 @@ vlc_module_begin ()
     set_callbacks( Open, Close )
 vlc_module_end ()
 
-typedef struct
+struct filter_sys_t
 {
     block_t *p_out_buf;
     size_t i_out_offset;
@@ -70,7 +71,7 @@ typedef struct
             bool b_skip;
         } dtshd;
     };
-} filter_sys_t;
+};
 
 #define SPDIF_HEADER_SIZE 8
 
@@ -164,10 +165,9 @@ static void write_data( filter_t *p_filter, const void *p_buf, size_t i_size,
 
 static void write_buffer( filter_t *p_filter, block_t *p_in_buf )
 {
-    filter_sys_t *p_sys = p_filter->p_sys;
     write_data( p_filter, p_in_buf->p_buffer, p_in_buf->i_buffer,
                 is_big_endian( p_filter, p_in_buf ) );
-    p_sys->p_out_buf->i_length += p_in_buf->i_length;
+    p_filter->p_sys->p_out_buf->i_length += p_in_buf->i_length;
 }
 
 static int write_init( filter_t *p_filter, block_t *p_in_buf,
@@ -279,7 +279,7 @@ static int write_buffer_eac3( filter_t *p_filter, block_t *p_in_buf )
 
         if( vlc_a52_header_Parse( &a52_dep, dep_buf, dep_size ) != VLC_SUCCESS
          || a52_dep.i_size > dep_size
-         || !a52_dep.b_eac3 || a52_dep.bs.eac3.strmtyp != EAC3_STRMTYP_DEPENDENT
+         || !a52_dep.b_eac3 || a52_dep.eac3.strmtyp != EAC3_STRMTYP_DEPENDENT
          || p_in_buf->i_buffer > a52.i_size + a52_dep.i_size )
             return SPDIF_ERROR;
     }
@@ -386,8 +386,8 @@ static int write_buffer_truehd( filter_t *p_filter, block_t *p_in_buf )
 
 static int write_buffer_dts( filter_t *p_filter, block_t *p_in_buf )
 {
-    uint16_t i_data_type;
     filter_sys_t *p_sys = p_filter->p_sys;
+    uint16_t i_data_type;
 
     /* Only send the DTS core part */
     vlc_dts_header_t core;
@@ -414,8 +414,7 @@ static int write_buffer_dts( filter_t *p_filter, block_t *p_in_buf )
         return SPDIF_ERROR;
     }
 
-    if( core.syncword == DTS_SYNC_CORE_14BITS_BE ||
-        core.syncword == DTS_SYNC_CORE_14BITS_LE )
+    if( core.b_14b )
     {
         if( p_in_buf->i_buffer > p_in_buf->i_nb_samples * 4 )
             return SPDIF_ERROR;
@@ -494,7 +493,7 @@ static int write_buffer_dtshd( filter_t *p_filter, block_t *p_in_buf )
     size_t i_out_size = i_period * 4;
     uint16_t i_data_type = IEC61937_DTSHD | i_subtype << 8;
 
-    if( p_sys->dtshd.b_skip
+    if( p_filter->p_sys->dtshd.b_skip
      || i_in_size + SPDIF_HEADER_SIZE > i_out_size )
     {
         /* The bitrate is too high, pass only the core part */
@@ -505,7 +504,7 @@ static int write_buffer_dtshd( filter_t *p_filter, block_t *p_in_buf )
 
         /* Don't try to send substreams anymore. That way, we avoid to switch
          * back and forth between DTD and DTS-HD */
-        p_sys->dtshd.b_skip = true;
+        p_filter->p_sys->dtshd.b_skip = true;
     }
 
     if( write_init( p_filter, p_in_buf, i_out_size,

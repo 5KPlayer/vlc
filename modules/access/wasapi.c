@@ -31,7 +31,6 @@
 #include <assert.h>
 #include <stdlib.h>
 
-#define _DECL_DLLMAIN
 #include <vlc_common.h>
 #include <vlc_aout.h>
 #include <vlc_demux.h>
@@ -41,7 +40,9 @@
 
 static LARGE_INTEGER freq; /* performance counters frequency */
 
-BOOL WINAPI DllMain(HANDLE dll, DWORD reason, LPVOID reserved)
+BOOL WINAPI DllMain(HINSTANCE, DWORD, LPVOID); /* avoid warning */
+
+BOOL WINAPI DllMain(HINSTANCE dll, DWORD reason, LPVOID reserved)
 {
     (void) dll;
     (void) reserved;
@@ -56,7 +57,7 @@ BOOL WINAPI DllMain(HANDLE dll, DWORD reason, LPVOID reserved)
     return TRUE;
 }
 
-static msftime_t GetQPC(void)
+static UINT64 GetQPC(void)
 {
     LARGE_INTEGER counter;
 
@@ -142,7 +143,7 @@ static int vlc_FromWave(const WAVEFORMATEX *restrict wf,
     if (wfe->dwChannelMask & SPEAKER_LOW_FREQUENCY)
         fmt->i_physical_channels |= AOUT_CHAN_LFE;
 
-    assert(vlc_popcount(wfe->dwChannelMask) == wf->nChannels);
+    assert(popcount(wfe->dwChannelMask) == wf->nChannels);
 
     if (IsEqualIID(&wfe->SubFormat, &KSDATAFORMAT_SUBTYPE_PCM))
     {
@@ -222,7 +223,7 @@ static int vlc_FromWave(const WAVEFORMATEX *restrict wf,
 }
 
 static es_out_id_t *CreateES(demux_t *demux, IAudioClient *client, bool loop,
-                             vlc_tick_t caching, size_t *restrict frame_size)
+                             mtime_t caching, size_t *restrict frame_size)
 {
     es_format_t fmt;
     WAVEFORMATEX *pwf;
@@ -253,7 +254,7 @@ static es_out_id_t *CreateES(demux_t *demux, IAudioClient *client, bool loop,
         flags |= AUDCLNT_STREAMFLAGS_LOOPBACK;
 
     /* Request at least thrice the PTS delay */
-    REFERENCE_TIME bufsize = MSFTIME_FROM_VLC_TICK( caching ) * 3;
+    REFERENCE_TIME bufsize = caching * INT64_C(10) * 3;
 
     hr = IAudioClient_Initialize(client, AUDCLNT_SHAREMODE_SHARED, flags,
                                  bufsize, 0, pwf, NULL);
@@ -266,21 +267,21 @@ static es_out_id_t *CreateES(demux_t *demux, IAudioClient *client, bool loop,
     return es_out_Add(demux->out, &fmt);
 }
 
-typedef struct
+struct demux_sys_t
 {
     IAudioClient *client;
     es_out_id_t *es;
 
     size_t frame_size;
-    vlc_tick_t caching;
-    vlc_tick_t start_time;
+    mtime_t caching;
+    mtime_t start_time;
 
     HANDLE events[2];
     union {
         HANDLE thread;
         HANDLE ready;
     };
-} demux_sys_t;
+};
 
 static unsigned __stdcall Thread(void *data)
 {
@@ -313,18 +314,18 @@ static unsigned __stdcall Thread(void *data)
     while (WaitForMultipleObjects(2, sys->events, FALSE, INFINITE)
             != WAIT_OBJECT_0)
     {
-        BYTE *buf;
+        BYTE *data;
         UINT32 frames;
         DWORD flags;
         UINT64 qpc;
-        vlc_tick_t pts;
+        mtime_t pts;
 
-        hr = IAudioCaptureClient_GetBuffer(capture, &buf, &frames, &flags,
+        hr = IAudioCaptureClient_GetBuffer(capture, &data, &frames, &flags,
                                            NULL, &qpc);
         if (hr != S_OK)
             continue;
 
-        pts = vlc_tick_now() - VLC_TICK_FROM_MSFTIME(GetQPC() - qpc);
+        pts = mdate() - ((GetQPC() - qpc) / 10);
 
         es_out_SetPCR(demux->out, pts);
 
@@ -332,7 +333,7 @@ static unsigned __stdcall Thread(void *data)
         block_t *block = block_Alloc(bytes);
 
         if (likely(block != NULL)) {
-            memcpy(block->p_buffer, buf, bytes);
+            memcpy(block->p_buffer, data, bytes);
             block->i_nb_samples = frames;
             block->i_pts = block->i_dts = pts;
             es_out_Send(demux->out, sys->es, block);
@@ -355,11 +356,11 @@ static int Control(demux_t *demux, int query, va_list ap)
     switch (query)
     {
         case DEMUX_GET_TIME:
-            *(va_arg(ap, vlc_tick_t *)) = vlc_tick_now() - sys->start_time;
+            *(va_arg(ap, int64_t *)) = mdate() - sys->start_time;
             break;
 
         case DEMUX_GET_PTS_DELAY:
-            *(va_arg(ap, vlc_tick_t *)) = sys->caching;
+            *(va_arg(ap, int64_t *)) = sys->caching;
             break;
 
         case DEMUX_HAS_UNSUPPORTED_META:
@@ -383,9 +384,6 @@ static int Open(vlc_object_t *obj)
     demux_t *demux = (demux_t *)obj;
     HRESULT hr;
 
-    if (demux->out == NULL)
-        return VLC_EGENERIC;
-
     if (demux->psz_location != NULL && *demux->psz_location != '\0')
         return VLC_EGENERIC; /* TODO non-default device */
 
@@ -395,8 +393,8 @@ static int Open(vlc_object_t *obj)
 
     sys->client = NULL;
     sys->es = NULL;
-    sys->caching = VLC_TICK_FROM_MS( var_InheritInteger(obj, "live-caching") );
-    sys->start_time = vlc_tick_now();
+    sys->caching = INT64_C(1000) * var_InheritInteger(obj, "live-caching");
+    sys->start_time = mdate();
     for (unsigned i = 0; i < 2; i++)
         sys->events[i] = NULL;
 
@@ -490,7 +488,7 @@ static void Close (vlc_object_t *obj)
 vlc_module_begin()
     set_shortname(N_("WASAPI"))
     set_description(N_("Windows Audio Session API input"))
-    set_capability("access", 0)
+    set_capability("access_demux", 0)
     set_category(CAT_INPUT)
     set_subcategory(SUBCAT_INPUT_ACCESS)
 

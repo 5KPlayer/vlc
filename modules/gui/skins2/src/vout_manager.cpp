@@ -2,6 +2,7 @@
  * vout_manager.cpp
  *****************************************************************************
  * Copyright (C) 2009 the VideoLAN team
+ * $Id: e555e5e6f9acae915ce761b166a4bb9490abc490 $
  *
  * Authors: Erwan Tulou <brezhoneg1 at yahoo.fr>
  *
@@ -347,8 +348,4 @@ void VoutManager::configureFullscreen( VoutWindow& rWindow )
     {
         m_pFscWindow->moveTo( x, y, w, h );
     }
-
-    // place voutWindow within fullscreen
-    rWindow.move( x, y );
-    rWindow.resize( w, h );
 }

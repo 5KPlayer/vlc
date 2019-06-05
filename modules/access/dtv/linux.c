@@ -57,15 +57,16 @@ typedef struct
 
 static int icmp (const void *a, const void *b)
 {
-    const int *key = a;
+    int key = (intptr_t)a;
     const dvb_int_map_t *entry = b;
-    return *key - entry->vlc;
+    return key - entry->vlc;
 }
 
 /** Maps a VLC config integer to a Linux DVB enum value */
 static int dvb_parse_int (int i, const dvb_int_map_t *map, size_t n, int def)
 {
-    const dvb_int_map_t *p = bsearch(&i, map, n, sizeof (*map), icmp);
+    const void *k = (const void *)(intptr_t)i;
+    const dvb_int_map_t *p = bsearch (k, map, n, sizeof (*map), icmp);
     return (p != NULL) ? p->linux_ : def;
 }
 
@@ -476,7 +477,6 @@ static int dvb_open_frontend (dvb_device_t *d)
  */
 unsigned dvb_enum_systems (dvb_device_t *d)
 {
-    unsigned systems = 0;
     if (dvb_open_frontend (d))
         return 0;
 #if DVBv5(5)
@@ -517,6 +517,7 @@ unsigned dvb_enum_systems (dvb_device_t *d)
         //[SYS_TURBO]
         [SYS_DVBC_ANNEX_C] = DTV_DELIVERY_ISDB_C, // another name for ISDB-C?
     };
+    unsigned systems = 0;
 
     msg_Dbg (d->obj, "probing frontend (kernel API v%u.%u, user API v%u.%u)",
              prop[0].u.data >> 8, prop[0].u.data & 0xFF,
@@ -546,6 +547,7 @@ legacy:
         .num = 1,
         .props = prop
     };
+    unsigned systems = 0;
 #endif
     if (ioctl (d->frontend, FE_GET_PROPERTY, &props) < 0)
     {
@@ -820,7 +822,7 @@ known:
     unsigned satno = var_InheritInteger (d->obj, "dvb-satno");
     if (satno > 0)
     {
-#undef vlc_tick_sleep /* we know what we are doing! */
+#undef msleep /* we know what we are doing! */
 
         /* DiSEqC Bus Specification:
  http://www.eutelsat.com/satellites/pdf/Diseqc/Reference%20docs/bus_spec.pdf */
@@ -842,7 +844,7 @@ known:
         cmd.msg[4] = cmd.msg[5] = 0; /* unused */
         cmd.msg_len = 4; /* length */
 
-        vlc_tick_sleep (VLC_TICK_FROM_MS(15)); /* wait 15 ms before DiSEqC command */
+        msleep (15000); /* wait 15 ms before DiSEqC command */
         unsigned uncommitted = var_InheritInteger (d->obj, "dvb-uncommitted");
         if (uncommitted > 0)
         {
@@ -871,7 +873,7 @@ known:
                        vlc_strerror_c(errno));
               return -1;
           }
-          vlc_tick_sleep(VLC_TICK_FROM_MS(125)); /* wait 125 ms before committed DiSEqC command */
+          msleep(125000); /* wait 125 ms before committed DiSEqC command */
         }
         if (ioctl (d->frontend, FE_DISEQC_SEND_MASTER_CMD, &cmd) < 0)
         {
@@ -879,7 +881,7 @@ known:
                      vlc_strerror_c(errno));
             return -1;
         }
-        vlc_tick_sleep (VLC_TICK_FROM_MS(54 + 15));
+        msleep (54000 + 15000);
 
         /* Mini-DiSEqC */
         satno &= 1;
@@ -890,7 +892,7 @@ known:
                      vlc_strerror_c(errno));
             return -1;
         }
-        vlc_tick_sleep (VLC_TICK_FROM_MS(15));
+        msleep (15000);
     }
 
     /* Continuous tone (to select high oscillator frequency) */
