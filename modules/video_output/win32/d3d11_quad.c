@@ -41,6 +41,8 @@
 #define nbLatBands SPHERE_SLICES
 #define nbLonBands SPHERE_SLICES
 
+extern int showType;
+
 void D3D11_RenderQuad(d3d11_device_t *d3d_dev, d3d_quad_t *quad,
                       ID3D11ShaderResourceView *resourceView[D3D11_MAX_SHADER_VIEW],
                       ID3D11RenderTargetView *d3drenderTargetView)
@@ -229,6 +231,34 @@ static void orientationVertexOrder(video_orientation_t orientation, int vertex_o
             vertex_order[3] = 3;
             break;
     }
+
+    if(showType == 1)
+    {
+        int tmp = vertex_order[0];
+        vertex_order[0] = vertex_order[1];
+        vertex_order[1] = tmp;
+        tmp = vertex_order[2];
+        vertex_order[2] = vertex_order[3];
+        vertex_order[3] = tmp;
+
+    }else if(showType == 2)
+    {
+        int tmp = vertex_order[0];
+        vertex_order[0] = vertex_order[3];
+        vertex_order[3] = tmp;
+        tmp = vertex_order[1];
+        vertex_order[1] = vertex_order[2];
+        vertex_order[2] = tmp;
+
+    } else if(showType == 3)
+    {  // v&hflip
+        int tmp = vertex_order[0];
+        vertex_order[0] = vertex_order[2];
+        vertex_order[2] = tmp;
+        tmp = vertex_order[1];
+        vertex_order[1] = vertex_order[3];
+        vertex_order[3] = tmp;
+    }
 }
 
 static void SetupQuadFlat(d3d_vertex_t *dst_data, const RECT *output,
@@ -352,7 +382,7 @@ static void SetupQuadFlat(d3d_vertex_t *dst_data, const RECT *output,
     dst_data[3].texture.y = 0.0f;
 
     /* Make sure surfaces are facing the right way */
-    if( orientation == ORIENT_TOP_RIGHT || orientation == ORIENT_BOTTOM_LEFT
+    if( showType == 1 || showType == 2 || orientation == ORIENT_TOP_RIGHT || orientation == ORIENT_BOTTOM_LEFT
      || orientation == ORIENT_LEFT_TOP  || orientation == ORIENT_RIGHT_BOTTOM )
     {
         triangle_pos[0] = 0;

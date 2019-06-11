@@ -74,7 +74,8 @@ vlc_module_begin ()
     set_subcategory(SUBCAT_VIDEO_VOUT)
 
     add_bool("direct3d11-hw-blending", true, HW_BLENDING_TEXT, HW_BLENDING_LONGTEXT, true)
-
+    add_integer("d3d-rotate-angle", 0, "rotate angle","value: [0,90,180,270]",true)
+    add_integer("d3d-flip-type", 0, "flip type","value:[0:close  1:hflip  2:vflip]",true)   //
 #if VLC_WINSTORE_APP
     add_integer("winrt-d3dcontext",    0x0, NULL, NULL, true); /* ID3D11DeviceContext* */
     add_integer("winrt-swapchain",     0x0, NULL, NULL, true); /* IDXGISwapChain1*     */
@@ -150,6 +151,9 @@ static void UpdatePicQuadPosition(vout_display_t *);
 
 static int Control(vout_display_t *, int, va_list);
 static void Manage(vout_display_t *vd);
+
+int showAngle = -1;
+int showType = -1;
 
 static int Direct3D11MapPoolTexture(picture_t *picture)
 {
@@ -786,8 +790,56 @@ static void UpdateSize(vout_display_t *vd)
 
     UpdatePicQuadPosition(vd);
 
+    int tmpAngle = 0;
+    switch (vd->fmt.orientation) {
+    case ORIENT_ROTATED_90:
+        tmpAngle = 90;
+        break;
+    case ORIENT_ROTATED_180:
+        tmpAngle = 180;
+        break;
+    case ORIENT_ROTATED_270:
+        tmpAngle = 270;
+        break;
+    default:
+        break;
+    }
+    if(showAngle == -1)
+    {
+        showAngle = tmpAngle;
+    }
+
+    int rotateAngle = var_InheritInteger(vd, "d3d-rotate-angle");
+    int transType   = var_InheritInteger(vd, "d3d-flip-type");
+    if(showType != transType) {
+        showType = transType;
+        b_d3d_changed = true;
+    }
+    rotateAngle += tmpAngle;
+    while(rotateAngle >= 360)
+        rotateAngle -= 360;
+    if(rotateAngle != showAngle)
+    {
+        showAngle = rotateAngle;
+        switch (rotateAngle) {
+        case 90:
+            vd->source.orientation = ORIENT_ROTATED_90;
+            break;
+        case 180:
+            vd->source.orientation = ORIENT_ROTATED_180;
+            break;
+        case 270:
+            vd->source.orientation = ORIENT_ROTATED_270;
+            break;
+        default:
+            vd->source.orientation = ORIENT_NORMAL;
+            break;
+        }
+        b_d3d_changed = true;
+    }
+
     D3D11_UpdateQuadPosition(vd, &sys->d3d_dev, &sys->picQuad, &sys->sys.rect_src_clipped,
-                             vd->fmt.orientation);
+                             vd->source.orientation);
 
     d3d11_device_unlock( &sys->d3d_dev );
 }
@@ -829,6 +881,24 @@ static int Control(vout_display_t *vd, int query, va_list args)
 
 static void Manage(vout_display_t *vd)
 {
+    int tmpAngle = 0;
+    switch (vd->fmt.orientation) {
+    case ORIENT_ROTATED_90:
+        tmpAngle = 90;
+        break;
+    case ORIENT_ROTATED_180:
+        tmpAngle = 180;
+        break;
+    case ORIENT_ROTATED_270:
+        tmpAngle = 270;
+        break;
+    default:
+        break;
+    }
+    int rotateAngle = var_InheritInteger(vd, "d3d-rotate-angle");
+    rotateAngle += tmpAngle;
+    while(rotateAngle >= 360)
+        rotateAngle -= 360;
     vout_display_sys_t *sys = vd->sys;
     RECT before_src_clipped  = sys->sys.rect_src_clipped;
     RECT before_dest_clipped = sys->sys.rect_dest_clipped;

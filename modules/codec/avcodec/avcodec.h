@@ -49,7 +49,7 @@ void EndSubtitleDec( vlc_object_t * );
 /* Initialize decoder */
 AVCodecContext *ffmpeg_AllocContext( decoder_t *, const AVCodec ** );
 int ffmpeg_OpenCodec( decoder_t *p_dec, AVCodecContext *, const AVCodec * );
-
+extern bool b_use_cuvid;
 /*****************************************************************************
  * Module descriptor help strings
  *****************************************************************************/

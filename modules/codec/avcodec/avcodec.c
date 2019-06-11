@@ -138,7 +138,9 @@ vlc_module_begin ()
     add_integer( "avcodec-threads", 0, THREADS_TEXT, THREADS_LONGTEXT, true );
 #endif
     add_string( "avcodec-options", NULL, AV_OPTIONS_TEXT, AV_OPTIONS_LONGTEXT, true )
-
+    add_integer("view-point", 0, "360","value:[0:close  1:open]",true)   //
+    add_integer("view-mult", 0, "360","value:[0:2D 1:3DTB 2:3DLR]",true)   //
+    add_integer( "windows-version", 0, N_("Windows version"), N_("Set Windows's version"), true )
 
 #ifdef ENABLE_SOUT
     /* encoder submodule */
@@ -246,7 +248,7 @@ vlc_module_begin ()
         AVPARSER_MODULE
 #endif
 vlc_module_end ()
-
+bool b_use_cuvid = false;
 AVCodecContext *ffmpeg_AllocContext( decoder_t *p_dec,
                                      const AVCodec **restrict codecp )
 {
@@ -269,6 +271,11 @@ AVCodecContext *ffmpeg_AllocContext( decoder_t *p_dec,
     if( psz_decoder != NULL )
     {
         p_codec = avcodec_find_decoder_by_name( psz_decoder );
+        if(strcmp(psz_decoder,"h264_cuvid") == 0 || strcmp(psz_decoder,"hevc_cuvid") == 0) {
+            b_use_cuvid = true;
+        } else {
+            b_use_cuvid = false;
+        }
         if( !p_codec )
             msg_Err( p_dec, "Decoder `%s' not found", psz_decoder );
         else if( p_codec->id != i_codec_id )

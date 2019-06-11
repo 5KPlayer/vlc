@@ -94,6 +94,8 @@ vlc_module_begin ()
     set_subcategory(SUBCAT_VIDEO_VOUT)
 
     add_bool("direct3d9-hw-blending", true, HW_BLENDING_TEXT, HW_BLENDING_LONGTEXT, true)
+    add_integer("d3d-rotate-angle", 0, "rotate angle","value: [0,90,180,270]",true)
+    add_integer("d3d-flip-type", 0, "flip type","value:[0:close  1:hflip  2:vflip]",true)   //
 
     add_string("direct3d9-shader", "", PIXEL_SHADER_TEXT, PIXEL_SHADER_LONGTEXT, true)
         change_string_cb(FindShadersCallback)
@@ -1324,7 +1326,7 @@ static void Direct3D9DestroyShaders(vout_display_t *vd)
  * Vertex 0 should be assigned coordinates at index 2 from the
  * unrotated order and so on, thus yielding order: 2 3 0 1.
  */
-static void orientationVertexOrder(video_orientation_t orientation, int vertex_order[static 4])
+static void orientationVertexOrder(video_orientation_t orientation, int vertex_order[static 4], int flip_type)
 {
     switch (orientation) {
         case ORIENT_ROTATED_90:      /* ORIENT_RIGHT_TOP */
@@ -1376,13 +1378,32 @@ static void orientationVertexOrder(video_orientation_t orientation, int vertex_o
             vertex_order[3] = 3;
             break;
     }
+    if(flip_type == 1)
+    {
+        int tmp = vertex_order[0];
+        vertex_order[0] = vertex_order[1];
+        vertex_order[1] = tmp;
+        tmp = vertex_order[2];
+        vertex_order[2] = vertex_order[3];
+        vertex_order[3] = tmp;
+
+    }else if(flip_type == 2)
+    {
+        int tmp = vertex_order[0];
+        vertex_order[0] = vertex_order[3];
+        vertex_order[3] = tmp;
+        tmp = vertex_order[1];
+        vertex_order[1] = vertex_order[2];
+        vertex_order[2] = tmp;
+
+    }
 }
 
 static void  Direct3D9SetupVertices(CUSTOMVERTEX *vertices,
                                   const RECT *src, const RECT *src_clipped,
                                   const RECT *dst,
                                   int alpha,
-                                  video_orientation_t orientation)
+                                  video_orientation_t orientation, int flip_type)
 {
     /* Vertices of the dst rectangle in the unrotated (clockwise) order. */
     const int vertices_coords[4][2] = {
@@ -1394,7 +1415,7 @@ static void  Direct3D9SetupVertices(CUSTOMVERTEX *vertices,
 
     /* Compute index remapping necessary to implement the rotation. */
     int vertex_order[4];
-    orientationVertexOrder(orientation, vertex_order);
+    orientationVertexOrder(orientation, vertex_order, flip_type);
 
     for (int i = 0; i < 4; ++i) {
         vertices[i].x  = vertices_coords[vertex_order[i]][0];
@@ -1471,11 +1492,58 @@ static int Direct3D9ImportPicture(vout_display_t *vd,
                 (LPVOID)source, hr);
         return VLC_EGENERIC;
     }
+    static int showAngle = -1;
+
+    int tmpAngle = 0;
+    switch (vd->fmt.orientation) {
+    case ORIENT_ROTATED_90:
+        tmpAngle = 90;
+        break;
+    case ORIENT_ROTATED_180:
+        tmpAngle = 180;
+        break;
+    case ORIENT_ROTATED_270:
+        tmpAngle = 270;
+        break;
+    default:
+        break;
+    }
+    if(showAngle == -1)
+        showAngle = tmpAngle;
+
+    int rotateAngle = var_InheritInteger(vd, "d3d-rotate-angle");
+    rotateAngle += tmpAngle;
+    while(rotateAngle >= 360)
+        rotateAngle -= 360;
+
+    if(rotateAngle != showAngle)
+    {
+        showAngle = rotateAngle;
+        b_d3d_changed = true;
+    }
+
+    switch (rotateAngle) {
+    case 90:
+        vd->source.orientation = ORIENT_ROTATED_90;
+        break;
+    case 180:
+        vd->source.orientation = ORIENT_ROTATED_180;
+        break;
+    case 270:
+        vd->source.orientation = ORIENT_ROTATED_270;
+        break;
+    default:
+        vd->source.orientation = ORIENT_NORMAL;
+        break;
+    }
+
+
+    const int i_flip_type = var_InheritInteger(vd, "d3d-flip-type");
 
     /* */
     region->texture = sys->d3dtex;
     Direct3D9SetupVertices(region->vertex, &vd->sys->sys.rect_src, &vd->sys->sys.rect_src_clipped,
-                           &vd->sys->sys.rect_dest_clipped, 255, vd->fmt.orientation);
+                           &vd->sys->sys.rect_dest_clipped, 255, vd->source.orientation, i_flip_type);
     return VLC_SUCCESS;
 }
 
@@ -1605,7 +1673,7 @@ static void Direct3D9ImportSubpicture(vout_display_t *vd,
         src_clipped.bottom = r->fmt.i_y_offset + r->fmt.i_visible_height;
 
         Direct3D9SetupVertices(d3dr->vertex, &src, &src_clipped,
-                              &dst, subpicture->i_alpha * r->i_alpha / 255, ORIENT_NORMAL);
+                              &dst, subpicture->i_alpha * r->i_alpha / 255, ORIENT_NORMAL, 0);
     }
 }
 
