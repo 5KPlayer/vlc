@@ -51,6 +51,8 @@
 # include <dxgidebug.h>
 #endif
 
+bool b_d3d_changed = false;
+
 static void CommonChangeThumbnailClip(vout_display_t *, bool show);
 #if !VLC_WINSTORE_APP
 static int  CommonControlSetFullscreen(vout_display_t *, bool is_fullscreen);
@@ -395,7 +397,8 @@ void CommonManage(vout_display_t *vd)
         ClientToScreen(sys->hparent, &point);
         OffsetRect(&rect_parent, point.x, point.y);
 
-        if (!EqualRect(&rect_parent, &sys->rect_parent)) {
+        if (!EqualRect(&rect_parent, &sys->rect_parent) || b_d3d_changed) {
+            b_d3d_changed = false;
             sys->rect_parent = rect_parent;
 
             /* This code deals with both resize and move

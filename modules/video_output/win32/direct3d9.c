@@ -1396,6 +1396,14 @@ static void orientationVertexOrder(video_orientation_t orientation, int vertex_o
         vertex_order[1] = vertex_order[2];
         vertex_order[2] = tmp;
 
+    } else if(flip_type == 3)
+    {  // v&hflip
+        int tmp = vertex_order[0];
+        vertex_order[0] = vertex_order[2];
+        vertex_order[2] = tmp;
+        tmp = vertex_order[1];
+        vertex_order[1] = vertex_order[3];
+        vertex_order[3] = tmp;
     }
 }
 

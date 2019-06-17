@@ -299,6 +299,7 @@ input_event_changed( vlc_object_t * p_this, char const * psz_cmd,
     libvlc_media_player_t * p_mi = p_userdata;
     libvlc_event_t event;
 
+    static bool i_end = false;
     assert( !strcmp( psz_cmd, "intf-event" ) );
 
     if( newval.i_int == INPUT_EVENT_STATE )
@@ -316,6 +317,7 @@ input_event_changed( vlc_object_t * p_this, char const * psz_cmd,
                 event.type = libvlc_MediaPlayerOpening;
                 break;
             case PLAYING_S:
+                i_end = false;
                 libvlc_state = libvlc_Playing;
                 event.type = libvlc_MediaPlayerPlaying;
                 break;
@@ -324,10 +326,16 @@ input_event_changed( vlc_object_t * p_this, char const * psz_cmd,
                 event.type = libvlc_MediaPlayerPaused;
                 break;
             case END_S:
+                if(i_end)
+                return VLC_EGENERIC;
+                i_end = true;
                 libvlc_state = libvlc_Ended;
                 event.type = libvlc_MediaPlayerEndReached;
                 break;
             case ERROR_S:
+                if(i_end)
+                return VLC_EGENERIC;
+                i_end = true;
                 libvlc_state = libvlc_Error;
                 event.type = libvlc_MediaPlayerEncounteredError;
                 break;
@@ -341,6 +349,9 @@ input_event_changed( vlc_object_t * p_this, char const * psz_cmd,
     }
     else if( newval.i_int == INPUT_EVENT_DEAD )
     {
+        if(i_end)
+            return VLC_EGENERIC;
+        i_end = true;
         libvlc_state_t libvlc_state = libvlc_Ended;
         event.type = libvlc_MediaPlayerStopped;
 
@@ -446,7 +457,8 @@ input_event_changed( vlc_object_t * p_this, char const * psz_cmd,
             }
         }
     }
-
+    if(i_end)
+        return VLC_EGENERIC;
     return VLC_SUCCESS;
 }
 

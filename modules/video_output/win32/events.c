@@ -158,6 +158,17 @@ static inline bool isKeyEvent( WPARAM type )
  * The main goal of this thread is to isolate the Win32 PeekMessage function
  * because this one can block for a long time.
  *****************************************************************************/
+
+static void customPostMessage(MSG *msg, vout_display_t *vd)
+{
+    POINT pt;
+    pt.x = GET_X_LPARAM(msg->lParam);
+    pt.y = GET_Y_LPARAM(msg->lParam);
+    ClientToScreen(msg->hwnd, &pt);
+    ScreenToClient(vd->sys->hparent, &pt);
+    PostMessage(vd->sys->hparent, msg->message, msg->wParam, MAKELPARAM(pt.x, pt.y));
+}
+
 static void *EventThread( void *p_this )
 {
     event_thread_t *p_event = (event_thread_t *)p_this;
@@ -257,32 +268,41 @@ static void *EventThread( void *p_this )
                     (int64_t)(GET_Y_LPARAM(msg.lParam) - place.y) * source.i_height / place.height;
                 vout_display_SendEventMouseMoved(vd, x, y);
             }
+            customPostMessage(&msg, vd);
             break;
         case WM_NCMOUSEMOVE:
+            customPostMessage(&msg, vd);
             break;
 
         case WM_LBUTTONDOWN:
             MousePressed( p_event, msg.hwnd, MOUSE_BUTTON_LEFT );
+            customPostMessage(&msg, vd);
             break;
         case WM_LBUTTONUP:
             MouseReleased( p_event, MOUSE_BUTTON_LEFT );
+            customPostMessage(&msg, vd);
             break;
         case WM_LBUTTONDBLCLK:
             vout_display_SendEventMouseDoubleClick(vd);
+            customPostMessage(&msg, vd);
             break;
 
         case WM_MBUTTONDOWN:
             MousePressed( p_event, msg.hwnd, MOUSE_BUTTON_CENTER );
+            customPostMessage(&msg, vd);
             break;
         case WM_MBUTTONUP:
             MouseReleased( p_event, MOUSE_BUTTON_CENTER );
+            customPostMessage(&msg, vd);
             break;
 
         case WM_RBUTTONDOWN:
             MousePressed( p_event, msg.hwnd, MOUSE_BUTTON_RIGHT );
+            customPostMessage(&msg, vd);
             break;
         case WM_RBUTTONUP:
             MouseReleased( p_event, MOUSE_BUTTON_RIGHT );
+            customPostMessage(&msg, vd);
             break;
 
         case WM_KEYDOWN:
@@ -345,6 +365,7 @@ static void *EventThread( void *p_this )
                 }
                 vout_display_SendEventKey(vd, i_key);
             }
+            customPostMessage(&msg, vd);
             break;
         }
 

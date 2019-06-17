@@ -899,16 +899,24 @@ static void Manage(vout_display_t *vd)
     rotateAngle += tmpAngle;
     while(rotateAngle >= 360)
         rotateAngle -= 360;
+    int transType   = var_InheritInteger(vd, "d3d-flip-type");
+    if(rotateAngle != showAngle || showType != transType)
+    {
+        b_d3d_changed = true;
+    }
     vout_display_sys_t *sys = vd->sys;
     RECT before_src_clipped  = sys->sys.rect_src_clipped;
     RECT before_dest_clipped = sys->sys.rect_dest_clipped;
     RECT before_dest         = sys->sys.rect_dest;
 
     CommonManage(vd);
-
+    if(rotateAngle != showAngle || showType != transType)
+    {
+        b_d3d_changed = true;
+    }
     if (!RectEquals(&before_src_clipped, &sys->sys.rect_src_clipped) ||
         !RectEquals(&before_dest_clipped, &sys->sys.rect_dest_clipped) ||
-        !RectEquals(&before_dest, &sys->sys.rect_dest))
+        !RectEquals(&before_dest, &sys->sys.rect_dest) || b_d3d_changed)
     {
         UpdateSize(vd);
     }

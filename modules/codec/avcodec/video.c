@@ -2,7 +2,7 @@
  * video.c: video decoder using the libavcodec library
  *****************************************************************************
  * Copyright (C) 1999-2001 VLC authors and VideoLAN
- * $Id: 8cb4003561532c72bc405f051b7e26a14bf773f6 $
+ * $Id: 097e7cb11ad5ed24766038a765da84376d69ea3d $
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *          Gildas Bazin <gbazin@videolan.org>
@@ -337,11 +337,26 @@ static int lavc_UpdateVideoFormat(decoder_t *dec, AVCodecContext *ctx,
     es_format_Change(&dec->fmt_out, VIDEO_ES, fmt_out.i_chroma);
     dec->fmt_out.video = fmt_out;
     dec->fmt_out.video.orientation = dec->fmt_in.video.orientation;
-    dec->fmt_out.video.projection_mode = dec->fmt_in.video.projection_mode;
-    dec->fmt_out.video.multiview_mode = dec->fmt_in.video.multiview_mode;
     int viewPoint = var_InheritInteger(dec, "view-point");
     if(viewPoint == 1) {
         dec->fmt_out.video.projection_mode = PROJECTION_MODE_EQUIRECTANGULAR;
+        int viewMult = var_InheritInteger(dec, "view-mult");
+        switch (viewMult) {
+        case 0:
+            dec->fmt_out.video.multiview_mode = MULTIVIEW_2D;
+            break;
+        case 1:
+            dec->fmt_out.video.multiview_mode = MULTIVIEW_STEREO_SBS;
+            break;
+        case 2:
+            dec->fmt_out.video.multiview_mode = MULTIVIEW_STEREO_TB;
+            break;
+        default:
+            break;
+        }
+    } else {
+        dec->fmt_out.video.projection_mode = dec->fmt_in.video.projection_mode;
+        dec->fmt_out.video.multiview_mode = dec->fmt_in.video.multiview_mode;
     }
 
     dec->fmt_out.video.pose = dec->fmt_in.video.pose;
@@ -1017,17 +1032,7 @@ static picture_t *DecodeBlock( decoder_t *p_dec, block_t **pp_block, bool *error
         {
             pkt.data = p_block->p_buffer;
             pkt.size = p_block->i_buffer;
-            if(b_use_cuvid) {
-                mtime_t usePkt = p_block->i_pts > VLC_TS_INVALID ? p_block->i_pts : AV_NOPTS_VALUE;
-                if(usePkt == AV_NOPTS_VALUE) {
-                    usePkt = p_block->i_dts > 200000 ? p_block->i_dts - 200000:p_block->i_dts;
-                }
-
-                pkt.pts = usePkt > VLC_TS_INVALID ? usePkt : AV_NOPTS_VALUE;
-            } else {
-                pkt.pts = p_block->i_pts > VLC_TS_INVALID ? p_block->i_pts : AV_NOPTS_VALUE;
-            }
-//            pkt.pts = p_block->i_pts > VLC_TS_INVALID ? p_block->i_pts : AV_NOPTS_VALUE;
+            pkt.pts = p_block->i_pts > VLC_TS_INVALID ? p_block->i_pts : AV_NOPTS_VALUE;
             pkt.dts = p_block->i_dts > VLC_TS_INVALID ? p_block->i_dts : AV_NOPTS_VALUE;
         }
         else
@@ -1543,10 +1548,8 @@ static enum PixelFormat ffmpeg_GetFormat( AVCodecContext *p_context,
             can_hwaccel = true;
     }
 
-    if (p_sys->pix_fmt == AV_PIX_FMT_NONE) {
-        msg_Dbg( p_dec, "AV_PIX_FMT_NONE %d", p_sys->pix_fmt);
+    if (p_sys->pix_fmt == AV_PIX_FMT_NONE)
         goto no_reuse;
-    }
 
     /* If the format did not actually change (e.g. seeking), try to reuse the
      * existing output format, and if present, hardware acceleration back-end.
@@ -1574,8 +1577,11 @@ static enum PixelFormat ffmpeg_GetFormat( AVCodecContext *p_context,
      for (size_t i = 0; pi_fmt[i] != AV_PIX_FMT_NONE; i++)
         if (pi_fmt[i] == p_sys->pix_fmt)
         {
-            msg_Dbg(p_dec, "reusing decoder output format %d", pi_fmt[i]);
-            return p_sys->pix_fmt;
+            if (lavc_UpdateVideoFormat(p_dec, p_context, p_sys->pix_fmt, swfmt) == 0)
+            {
+                msg_Dbg(p_dec, "reusing decoder output format %d", pi_fmt[i]);
+                return p_sys->pix_fmt;
+            }
         }
 
 no_reuse:
@@ -1607,10 +1613,10 @@ no_reuse:
     static const enum PixelFormat hwfmts[] =
     {
 #ifdef _WIN32
-        AV_PIX_FMT_DXVA2_VLD,
 #if LIBAVUTIL_VERSION_CHECK(54, 13, 1, 24, 100)
         AV_PIX_FMT_D3D11VA_VLD,
 #endif
+        AV_PIX_FMT_DXVA2_VLD,
 #endif
         AV_PIX_FMT_VAAPI_VLD,
 #if (LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(52, 4, 0))
@@ -1618,7 +1624,6 @@ no_reuse:
 #endif
         AV_PIX_FMT_NONE,
     };
-
 
     for( size_t i = 0; hwfmts[i] != AV_PIX_FMT_NONE; i++ )
     {
